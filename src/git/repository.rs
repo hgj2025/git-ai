@@ -801,6 +801,7 @@ pub struct Repository {
     pub storage: RepoStorage,
     pub pre_command_base_commit: Option<String>,
     pub pre_command_refname: Option<String>,
+    pub pre_reset_target_commit: Option<String>,
     workdir: PathBuf,
     /// Canonical (absolute, resolved) version of workdir for reliable path comparisons
     /// On Windows, this uses the \\?\ UNC prefix format
@@ -1764,6 +1765,7 @@ pub fn find_repository(global_args: &Vec<String>) -> Result<Repository, GitAiErr
         git_dir,
         pre_command_base_commit: None,
         pre_command_refname: None,
+        pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
     })
@@ -1785,6 +1787,7 @@ pub fn from_bare_repository(git_dir: &Path) -> Result<Repository, GitAiError> {
         git_dir: git_dir.to_path_buf(),
         pre_command_base_commit: None,
         pre_command_refname: None,
+        pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
     })
