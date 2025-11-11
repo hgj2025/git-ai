@@ -920,6 +920,7 @@ impl Repository {
 
     /// Get the canonical (absolute, resolved) path of the working directory
     /// On Windows, this uses the \\?\ UNC prefix format for reliable path comparisons
+    #[allow(dead_code)]
     pub fn canonical_workdir(&self) -> &Path {
         &self.canonical_workdir
     }
@@ -1768,6 +1769,7 @@ pub fn find_repository(global_args: &Vec<String>) -> Result<Repository, GitAiErr
     })
 }
 
+#[allow(dead_code)]
 pub fn from_bare_repository(git_dir: &Path) -> Result<Repository, GitAiError> {
     let workdir = git_dir
         .parent()
