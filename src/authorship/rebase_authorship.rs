@@ -926,12 +926,14 @@ pub fn reconstruct_working_log_after_reset(
 
     // Step 6: Convert to INITIAL (everything is uncommitted after reset)
     // Pass same SHA for parent and commit to get empty diff (no committed hunks)
+    // IMPORTANT: Pass pathspecs to limit diff to only changed files (major performance optimization)
+    let pathspecs_set: std::collections::HashSet<String> = pathspecs.iter().cloned().collect();
     let (authorship_log, initial_attributions) = merged_va
         .to_authorship_log_and_initial_working_log(
             repo,
             target_commit_sha,
             target_commit_sha,
-            None,
+            Some(&pathspecs_set),
         )?;
 
     debug_log(&format!(
