@@ -190,15 +190,14 @@ impl AgentCheckpointPreset for CursorPreset {
         }
 
         // Locate Cursor storage
-        let user_dir = Self::cursor_user_dir()?;
-        let global_db = user_dir.join("globalStorage").join("state.vscdb");
+        let global_db = Self::cursor_global_database_path()?;
         if !global_db.exists() {
             return Err(GitAiError::PresetError(format!(
                 "Cursor global state database not found at {:?}. \
                 Make sure Cursor is installed and has been used at least once. \
                 Expected location: {:?}",
                 global_db,
-                user_dir.join("globalStorage")
+                global_db,
             )));
         }
 
@@ -313,10 +312,7 @@ impl CursorPreset {
     fn fetch_latest_cursor_conversation(
         conversation_id: &str,
     ) -> Result<Option<(AiTranscript, String)>, GitAiError> {
-        // Get Cursor user directory
-        let user_dir = Self::cursor_user_dir()?;
-        let global_db = user_dir.join("globalStorage").join("state.vscdb");
-
+        let global_db = Self::cursor_global_database_path()?;
         if !global_db.exists() {
             return Ok(None);
         }
@@ -332,6 +328,16 @@ impl CursorPreset {
         )?;
 
         Ok(transcript_data)
+    }
+
+    // Get the Cursor database path
+    fn cursor_global_database_path() -> Result<PathBuf, GitAiError> {
+        if let Ok(global_db_path) = std::env::var("GIT_AI_CURSOR_GLOBAL_DB_PATH") {
+            return Ok(PathBuf::from(global_db_path));
+        }
+        let user_dir = Self::cursor_user_dir()?;
+        let global_db = user_dir.join("globalStorage").join("state.vscdb");
+        Ok(global_db)
     }
 
     fn cursor_user_dir() -> Result<PathBuf, GitAiError> {

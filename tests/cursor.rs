@@ -1,5 +1,9 @@
+#[macro_use]
+mod repos;
 mod test_utils;
 
+use repos::test_file::ExpectedLineExt;
+use repos::test_repo::TestRepo;
 use rusqlite::{Connection, OpenFlags};
 use test_utils::fixture_path;
 
@@ -251,4 +255,104 @@ fn test_cursor_preset_human_checkpoint_no_filepath() {
     );
     // Human checkpoints should not have edited_filepaths even if file_path is present
     assert!(result.edited_filepaths.is_none());
+}
+
+#[test]
+fn test_cursor_e2e_with_attribution() {
+    use std::fs;
+
+    let repo = TestRepo::new();
+    let db_path = fixture_path("cursor_test.vscdb");
+    let db_path_str = db_path.to_string_lossy().to_string();
+
+    // Create parent directory for the test file
+    let src_dir = repo.path().join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+
+    // Create initial file with some base content
+    let file_path = repo.path().join("src/main.rs");
+    let base_content = "fn main() {\n    println!(\"Hello, World!\");\n}\n";
+    fs::write(&file_path, base_content).unwrap();
+
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // Simulate cursor making edits to the file
+    let edited_content = "fn main() {\n    println!(\"Hello, World!\");\n    // This is from Cursor\n    println!(\"Additional line from Cursor\");\n}\n";
+    fs::write(&file_path, edited_content).unwrap();
+
+    // Run checkpoint with the cursor database environment variable
+    let hook_input = format!(
+        r##"{{
+        "conversation_id": "{}",
+        "workspace_roots": ["{}"],
+        "hook_event_name": "afterFileEdit",
+        "file_path": "{}"
+    }}"##,
+        TEST_CONVERSATION_ID,
+        repo.canonical_path().to_string_lossy(),
+        file_path.to_string_lossy()
+    );
+
+    let result = repo
+        .git_ai_with_env(
+            &["checkpoint", "cursor", "--hook-input", &hook_input],
+            &[("GIT_AI_CURSOR_GLOBAL_DB_PATH", &db_path_str)],
+        )
+        .unwrap();
+
+    println!("Checkpoint output: {}", result);
+
+    // Commit the changes
+    let commit = repo.stage_all_and_commit("Add cursor edits").unwrap();
+
+    // Verify attribution using TestFile
+    let mut file = repo.filename("src/main.rs");
+    file.assert_lines_and_blame(lines![
+        "fn main() {".human(),
+        "    println!(\"Hello, World!\");".human(),
+        "    // This is from Cursor".ai(),
+        "    println!(\"Additional line from Cursor\");".ai(),
+        "}".human(),
+    ]);
+
+    // Verify the authorship log contains attestations and prompts
+    assert!(
+        commit.authorship_log.attestations.len() > 0,
+        "Should have at least one attestation"
+    );
+
+    // Verify the metadata has prompts with transcript data
+    assert!(
+        commit.authorship_log.metadata.prompts.len() > 0,
+        "Should have at least one prompt record in metadata"
+    );
+
+    // Get the first prompt record
+    let prompt_record = commit
+        .authorship_log
+        .metadata
+        .prompts
+        .values()
+        .next()
+        .expect("Should have at least one prompt record");
+
+    // Verify that the prompt record has messages (transcript)
+    assert!(
+        prompt_record.messages.len() > 0,
+        "Prompt record should contain messages from the cursor database"
+    );
+
+    // Based on the test database, we expect 31 messages
+    assert_eq!(
+        prompt_record.messages.len(),
+        31,
+        "Should have exactly 31 messages from the test conversation"
+    );
+
+    // Verify the model was extracted
+    assert_eq!(
+        prompt_record.agent_id.model,
+        "gpt-5",
+        "Model should be 'gpt-5' from test database"
+    );
 }
