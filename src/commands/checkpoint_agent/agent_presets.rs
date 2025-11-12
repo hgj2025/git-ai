@@ -259,57 +259,8 @@ impl AgentCheckpointPreset for CursorPreset {
 }
 
 impl CursorPreset {
-    /// Update Cursor conversations in working logs to their latest versions
-    /// This helps prevent race conditions where we miss the last message in a conversation
-    pub fn update_cursor_conversations_to_latest(
-        checkpoints: &mut [crate::authorship::working_log::Checkpoint],
-    ) -> Result<(), GitAiError> {
-        use std::collections::HashMap;
-
-        // Group checkpoints by Cursor conversation ID
-        let mut cursor_conversations: HashMap<
-            String,
-            Vec<&mut crate::authorship::working_log::Checkpoint>,
-        > = HashMap::new();
-
-        for checkpoint in checkpoints.iter_mut() {
-            if let Some(agent_id) = &checkpoint.agent_id {
-                if agent_id.tool == "cursor" {
-                    cursor_conversations
-                        .entry(agent_id.id.clone())
-                        .or_insert_with(Vec::new)
-                        .push(checkpoint);
-                }
-            }
-        }
-
-        // For each unique Cursor conversation, fetch the latest version
-        for (conversation_id, conversation_checkpoints) in cursor_conversations {
-            // Fetch the latest conversation data
-            match Self::fetch_latest_cursor_conversation(&conversation_id) {
-                Ok(Some((latest_transcript, latest_model))) => {
-                    // Update all checkpoints for this conversation
-                    for checkpoint in conversation_checkpoints {
-                        if let Some(agent_id) = &mut checkpoint.agent_id {
-                            agent_id.model = latest_model.clone();
-                        }
-                        checkpoint.transcript = Some(latest_transcript.clone());
-                    }
-                }
-                Ok(None) => {
-                    // No latest conversation data found, continue with existing data
-                }
-                Err(_) => {
-                    // Failed to fetch latest conversation, continue with existing data
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Fetch the latest version of a Cursor conversation from the database
-    fn fetch_latest_cursor_conversation(
+    pub fn fetch_latest_cursor_conversation(
         conversation_id: &str,
     ) -> Result<Option<(AiTranscript, String)>, GitAiError> {
         let global_db = Self::cursor_global_database_path()?;

@@ -5,6 +5,7 @@ mod test_utils;
 use repos::test_file::ExpectedLineExt;
 use repos::test_repo::TestRepo;
 use rusqlite::{Connection, OpenFlags};
+use serde_json;
 use test_utils::fixture_path;
 
 const TEST_CONVERSATION_ID: &str = "00812842-49fe-4699-afae-bb22cda3f6e1";
@@ -281,17 +282,13 @@ fn test_cursor_e2e_with_attribution() {
     fs::write(&file_path, edited_content).unwrap();
 
     // Run checkpoint with the cursor database environment variable
-    let hook_input = format!(
-        r##"{{
-        "conversation_id": "{}",
-        "workspace_roots": ["{}"],
+    // Use serde_json to properly escape paths (especially important on Windows)
+    let hook_input = serde_json::json!({
+        "conversation_id": TEST_CONVERSATION_ID,
+        "workspace_roots": [repo.canonical_path().to_string_lossy().to_string()],
         "hook_event_name": "afterFileEdit",
-        "file_path": "{}"
-    }}"##,
-        TEST_CONVERSATION_ID,
-        repo.canonical_path().to_string_lossy(),
-        file_path.to_string_lossy()
-    );
+        "file_path": file_path.to_string_lossy().to_string()
+    }).to_string();
 
     let result = repo
         .git_ai_with_env(
