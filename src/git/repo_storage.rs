@@ -26,6 +26,7 @@ pub struct RepoStorage {
     pub working_logs: PathBuf,
     pub rewrite_log: PathBuf,
     pub logs: PathBuf,
+    pub first_note: PathBuf,
 }
 
 impl RepoStorage {
@@ -33,6 +34,7 @@ impl RepoStorage {
         let ai_dir = repo_path.join("ai");
         let working_logs_dir = ai_dir.join("working_logs");
         let rewrite_log_file = ai_dir.join("rewrite_log");
+        let first_note = ai_dir.join("first_note");
         let logs_dir = ai_dir.join("logs");
 
         let config = RepoStorage {
@@ -41,11 +43,9 @@ impl RepoStorage {
             working_logs: working_logs_dir,
             rewrite_log: rewrite_log_file,
             logs: logs_dir,
+            first_note: first_note,
         };
 
-        // @todo - @acunniffe, make this lazy on a read or write.
-        // it's probably fine to run this when Repository is loaded but there
-        // are many git commands for which it is not needed
         config.ensure_config_directory().unwrap();
         return config;
     }
@@ -138,6 +138,7 @@ pub struct PersistedWorkingLog {
     #[allow(dead_code)]
     pub canonical_workdir: PathBuf,
     pub dirty_files: Option<HashMap<String, String>>,
+    pub initial_file: PathBuf,
 }
 
 impl PersistedWorkingLog {
@@ -148,12 +149,14 @@ impl PersistedWorkingLog {
         canonical_workdir: PathBuf,
         dirty_files: Option<HashMap<String, String>>,
     ) -> Self {
+        let initial_file = dir.join("INITIAL");
         Self {
             dir,
             base_commit: base_commit.to_string(),
             repo_workdir: repo_root,
             canonical_workdir,
             dirty_files,
+            initial_file,
         }
     }
 
@@ -398,9 +401,8 @@ impl PersistedWorkingLog {
             prompts,
         };
 
-        let initial_file = self.dir.join("INITIAL");
         let json = serde_json::to_string_pretty(&initial_data)?;
-        fs::write(initial_file, json)?;
+        fs::write(&self.initial_file, json)?;
 
         Ok(())
     }
@@ -408,13 +410,11 @@ impl PersistedWorkingLog {
     /// Read initial attributions from the INITIAL file.
     /// Returns empty attributions and prompts if the file doesn't exist.
     pub fn read_initial_attributions(&self) -> InitialAttributions {
-        let initial_file = self.dir.join("INITIAL");
-
-        if !initial_file.exists() {
+        if !self.initial_file.exists() {
             return InitialAttributions::default();
         }
 
-        match fs::read_to_string(&initial_file) {
+        match fs::read_to_string(&self.initial_file) {
             Ok(content) => match serde_json::from_str(&content) {
                 Ok(initial_data) => initial_data,
                 Err(e) => {
