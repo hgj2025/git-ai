@@ -808,8 +808,6 @@ pub struct Repository {
     /// Canonical (absolute, resolved) version of workdir for reliable path comparisons
     /// On Windows, this uses the \\?\ UNC prefix format
     canonical_workdir: PathBuf,
-    /// Lazily-loaded cache for the first note date from refs/notes/ai
-    first_note_date: OnceLock<DateTime<FixedOffset>>,
 }
 
 impl Repository {
@@ -1792,7 +1790,6 @@ pub fn find_repository(global_args: &Vec<String>) -> Result<Repository, GitAiErr
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
-        first_note_date: OnceLock::new(),
     })
 }
 
@@ -1815,7 +1812,6 @@ pub fn from_bare_repository(git_dir: &Path) -> Result<Repository, GitAiError> {
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
-        first_note_date: OnceLock::new(),
     })
 }
 
