@@ -326,6 +326,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
+      - name: Install Rust toolchain
+        if: inputs.release_production == true
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
       - name: Bump version in Cargo.toml
         if: inputs.release_production == true
         id: bump-version
@@ -346,6 +353,9 @@ jobs:
           sed -i.bak "s/^version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/" Cargo.toml
           rm Cargo.toml.bak
           
+          # Update Cargo.lock
+          cargo check
+          
           echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Commit and push version bump
@@ -353,6 +363,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml
+          git add Cargo.toml Cargo.lock
           git commit -m "chore: bump version to ${{ steps.bump-version.outputs.new_version }} [skip ci]"
           git push origin main
