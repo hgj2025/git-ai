@@ -190,15 +190,14 @@ impl AgentCheckpointPreset for CursorPreset {
         }
 
         // Locate Cursor storage
-        let user_dir = Self::cursor_user_dir()?;
-        let global_db = user_dir.join("globalStorage").join("state.vscdb");
+        let global_db = Self::cursor_global_database_path()?;
         if !global_db.exists() {
             return Err(GitAiError::PresetError(format!(
                 "Cursor global state database not found at {:?}. \
                 Make sure Cursor is installed and has been used at least once. \
                 Expected location: {:?}",
                 global_db,
-                user_dir.join("globalStorage")
+                global_db,
             )));
         }
 
@@ -260,63 +259,11 @@ impl AgentCheckpointPreset for CursorPreset {
 }
 
 impl CursorPreset {
-    /// Update Cursor conversations in working logs to their latest versions
-    /// This helps prevent race conditions where we miss the last message in a conversation
-    pub fn update_cursor_conversations_to_latest(
-        checkpoints: &mut [crate::authorship::working_log::Checkpoint],
-    ) -> Result<(), GitAiError> {
-        use std::collections::HashMap;
-
-        // Group checkpoints by Cursor conversation ID
-        let mut cursor_conversations: HashMap<
-            String,
-            Vec<&mut crate::authorship::working_log::Checkpoint>,
-        > = HashMap::new();
-
-        for checkpoint in checkpoints.iter_mut() {
-            if let Some(agent_id) = &checkpoint.agent_id {
-                if agent_id.tool == "cursor" {
-                    cursor_conversations
-                        .entry(agent_id.id.clone())
-                        .or_insert_with(Vec::new)
-                        .push(checkpoint);
-                }
-            }
-        }
-
-        // For each unique Cursor conversation, fetch the latest version
-        for (conversation_id, conversation_checkpoints) in cursor_conversations {
-            // Fetch the latest conversation data
-            match Self::fetch_latest_cursor_conversation(&conversation_id) {
-                Ok(Some((latest_transcript, latest_model))) => {
-                    // Update all checkpoints for this conversation
-                    for checkpoint in conversation_checkpoints {
-                        if let Some(agent_id) = &mut checkpoint.agent_id {
-                            agent_id.model = latest_model.clone();
-                        }
-                        checkpoint.transcript = Some(latest_transcript.clone());
-                    }
-                }
-                Ok(None) => {
-                    // No latest conversation data found, continue with existing data
-                }
-                Err(_) => {
-                    // Failed to fetch latest conversation, continue with existing data
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Fetch the latest version of a Cursor conversation from the database
-    fn fetch_latest_cursor_conversation(
+    pub fn fetch_latest_cursor_conversation(
         conversation_id: &str,
     ) -> Result<Option<(AiTranscript, String)>, GitAiError> {
-        // Get Cursor user directory
-        let user_dir = Self::cursor_user_dir()?;
-        let global_db = user_dir.join("globalStorage").join("state.vscdb");
-
+        let global_db = Self::cursor_global_database_path()?;
         if !global_db.exists() {
             return Ok(None);
         }
@@ -332,6 +279,16 @@ impl CursorPreset {
         )?;
 
         Ok(transcript_data)
+    }
+
+    // Get the Cursor database path
+    fn cursor_global_database_path() -> Result<PathBuf, GitAiError> {
+        if let Ok(global_db_path) = std::env::var("GIT_AI_CURSOR_GLOBAL_DB_PATH") {
+            return Ok(PathBuf::from(global_db_path));
+        }
+        let user_dir = Self::cursor_user_dir()?;
+        let global_db = user_dir.join("globalStorage").join("state.vscdb");
+        Ok(global_db)
     }
 
     fn cursor_user_dir() -> Result<PathBuf, GitAiError> {

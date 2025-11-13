@@ -341,6 +341,28 @@ impl PersistedWorkingLog {
         Ok(checkpoints)
     }
 
+    /// Write all checkpoints to the JSONL file, replacing any existing content
+    pub fn write_all_checkpoints(&self, checkpoints: &[Checkpoint]) -> Result<(), GitAiError> {
+        let checkpoints_file = self.dir.join("checkpoints.jsonl");
+
+        // Serialize all checkpoints to JSONL
+        let mut lines = Vec::new();
+        for checkpoint in checkpoints {
+            let json_line = serde_json::to_string(checkpoint)?;
+            lines.push(json_line);
+        }
+
+        // Write all lines to file
+        let content = lines.join("\n");
+        if !content.is_empty() {
+            fs::write(&checkpoints_file, format!("{}\n", content))?;
+        } else {
+            fs::write(&checkpoints_file, "")?;
+        }
+
+        Ok(())
+    }
+
     pub fn all_touched_files(&self) -> Result<HashSet<String>, GitAiError> {
         let checkpoints = self.read_all_checkpoints()?;
         let mut touched_files = HashSet::new();

@@ -6,7 +6,7 @@ use crate::commands::checkpoint_agent::agent_presets::CursorPreset;
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
 use crate::git::repository::Repository;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub fn post_commit(
     repo: &Repository,
@@ -25,19 +25,21 @@ pub fn post_commit(
 
     // Pull all working log entries from the parent commit
 
-    let parent_working_log = working_log.read_all_checkpoints()?;
+    let mut parent_working_log = working_log.read_all_checkpoints()?;
 
     // debug_log(&format!(
     //     "edited files: {:?}",
     //     parent_working_log.edited_files
     // ));
 
-    // Filter out untracked files from the working log
-    let mut filtered_working_log =
-        filter_untracked_files(repo, &parent_working_log, &commit_sha, None)?;
+    // Update prompts/transcripts to their latest versions and persist to disk
+    // Do this BEFORE filtering so that all checkpoints (including untracked files) are updated
+    update_prompts_to_latest(&mut parent_working_log)?;
+    working_log.write_all_checkpoints(&parent_working_log)?;
 
-    // mutates inline
-    CursorPreset::update_cursor_conversations_to_latest(&mut filtered_working_log)?;
+    // Filter out untracked files from the working log
+    let filtered_working_log =
+        filter_untracked_files(repo, &parent_working_log, &commit_sha, None)?;
 
     // Create VirtualAttributions from working log (fast path - no blame)
     // We don't need to run blame because we only care about the working log data
@@ -126,6 +128,80 @@ fn filter_untracked_files(
     }
 
     Ok(filtered_checkpoints)
+}
+
+/// Update prompts/transcripts in working log checkpoints to their latest versions.
+/// This helps prevent race conditions where we miss the last message in a conversation.
+/// 
+/// For each unique prompt/conversation (identified by agent_id), only the LAST checkpoint
+/// with that agent_id is updated. This prevents duplicating the same full transcript
+/// across multiple checkpoints when only the final version matters.
+fn update_prompts_to_latest(
+    checkpoints: &mut [Checkpoint],
+) -> Result<(), GitAiError> {
+    // Group checkpoints by agent ID (tool + id), tracking indices
+    let mut agent_checkpoint_indices: HashMap<String, Vec<usize>> = HashMap::new();
+
+    for (idx, checkpoint) in checkpoints.iter().enumerate() {
+        if let Some(agent_id) = &checkpoint.agent_id {
+            let key = format!("{}:{}", agent_id.tool, agent_id.id);
+            agent_checkpoint_indices
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(idx);
+        }
+    }
+
+    // For each unique agent/conversation, update only the LAST checkpoint
+    for (_agent_key, indices) in agent_checkpoint_indices {
+        if indices.is_empty() {
+            continue;
+        }
+
+        // Get the last checkpoint index for this agent
+        let last_idx = *indices.last().unwrap();
+        let checkpoint = &checkpoints[last_idx];
+        
+        if let Some(agent_id) = &checkpoint.agent_id {
+            // Dispatch to tool-specific update logic
+            let updated_data = match agent_id.tool.as_str() {
+                "cursor" => {
+                    let res = CursorPreset::fetch_latest_cursor_conversation(&agent_id.id);
+                    match res {
+                        Ok(Some((latest_transcript, latest_model))) => {
+                            Some((latest_transcript, latest_model))
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            // TODO Log to sentry
+                            eprintln!("Error fetching latest prompt for cursor: {}", e);
+                            None
+                        }
+                    }
+                }
+                // TODO: Implement for GitHub Copilot
+                // "github_copilot" => {
+                //     GithubCopilotPreset::fetch_latest_prompt(&agent_id.id)?
+                // }
+                // TODO: Implement for other AI tools (Windsurf, etc.)
+                _ => {
+                    // Unknown tool, skip updating
+                    None
+                }
+            };
+
+            // Apply the update to the last checkpoint only
+            if let Some((latest_transcript, latest_model)) = updated_data {
+                let checkpoint = &mut checkpoints[last_idx];
+                checkpoint.transcript = Some(latest_transcript);
+                if let Some(agent_id) = &mut checkpoint.agent_id {
+                    agent_id.model = latest_model;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
