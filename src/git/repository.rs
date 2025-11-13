@@ -6,11 +6,9 @@ use crate::git::refs::get_authorship;
 use crate::git::repo_storage::RepoStorage;
 use crate::git::rewrite_log::RewriteLogEvent;
 use crate::git::sync_authorship::{fetch_authorship_notes, push_authorship_notes};
-use chrono::{DateTime, FixedOffset, TimeZone};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::OnceLock;
 
 pub struct Object<'a> {
     repo: &'a Repository,
