@@ -3,7 +3,7 @@ use crate::authorship::attribution_tracker::{
 };
 use crate::authorship::authorship_log::{LineRange, PromptRecord};
 use crate::authorship::working_log::CheckpointKind;
-use crate::commands::blame::GitAiBlameOptions;
+use crate::commands::blame::{GitAiBlameOptions, OLDEST_AI_BLAME_DATE};
 use crate::error::GitAiError;
 use crate::git::repository::Repository;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -33,10 +33,6 @@ impl VirtualAttributions {
         pathspecs: &[String],
         blame_start_commit: Option<String>,
     ) -> Result<Self, GitAiError> {
-        // If blame_start_commit is not provided, use the first commit with authorship
-        let blame_start_commit =
-            blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
-
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -433,10 +429,6 @@ impl VirtualAttributions {
         human_author: Option<String>,
         blame_start_commit: Option<String>,
     ) -> Result<Self, GitAiError> {
-        // If blame_start_commit is not provided, use the first commit with authorship
-        let blame_start_commit =
-            blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
-
         // Step 1: Build base VirtualAttributions using blame (gets ALL prompts from history)
         let blame_va = Self::new_for_base_commit(
             repo.clone(),
@@ -1357,16 +1349,14 @@ fn compute_attributions_for_file(
     ts: u128,
     blame_start_commit: Option<String>,
 ) -> Result<Option<(String, String, Vec<Attribution>, Vec<LineAttribution>)>, GitAiError> {
-    // If blame_start_commit is not provided, use the first commit with authorship
-    let blame_start_commit = blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
-
     // Set up blame options
     let mut ai_blame_opts = GitAiBlameOptions::default();
     ai_blame_opts.no_output = true;
     ai_blame_opts.return_human_authors_as_human = true;
     ai_blame_opts.use_prompt_hashes_as_names = true;
     ai_blame_opts.newest_commit = Some(base_commit.to_string());
-    ai_blame_opts.oldest_commit = blame_start_commit.clone();
+    ai_blame_opts.oldest_commit = blame_start_commit;
+    ai_blame_opts.oldest_date = Some(OLDEST_AI_BLAME_DATE.clone());
 
     // Run blame at the base commit
     let ai_blame = repo.blame(file_path, &ai_blame_opts);

@@ -6,6 +6,7 @@ use crate::git::refs::get_authorship;
 use crate::git::repo_storage::RepoStorage;
 use crate::git::rewrite_log::RewriteLogEvent;
 use crate::git::sync_authorship::{fetch_authorship_notes, push_authorship_notes};
+use chrono::{DateTime, FixedOffset, TimeZone};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -807,8 +808,8 @@ pub struct Repository {
     /// Canonical (absolute, resolved) version of workdir for reliable path comparisons
     /// On Windows, this uses the \\?\ UNC prefix format
     canonical_workdir: PathBuf,
-    /// Lazily-loaded cache for the first note SHA from refs/notes/ai
-    first_note_sha: OnceLock<Option<String>>,
+    /// Lazily-loaded cache for the first note date from refs/notes/ai
+    first_note_date: OnceLock<DateTime<FixedOffset>>,
 }
 
 impl Repository {
@@ -1349,83 +1350,6 @@ impl Repository {
         })
     }
 
-    /// Lazily retrieves and caches the first commit with authorship from refs/notes/ai
-    ///
-    /// Three-tier lookup strategy:
-    /// 1. Check in-memory cache (OnceLock) - fastest
-    /// 2. Read from disk file (FIRST_NOTE) - medium
-    /// 3. Run git ls-tree command - slowest, then write to cache and disk
-    ///
-    /// Returns None if refs/notes/ai doesn't exist or has no entries.
-    pub fn get_first_commit_with_authorship(&self) -> Option<String> {
-        // Tier 1: Check if already in memory cache
-        if let Some(cached) = self.first_note_sha.get() {
-            return cached.clone();
-        }
-
-        // Tier 2: Try reading from disk file
-        if let Ok(contents) = std::fs::read_to_string(&self.storage.first_note) {
-            let sha = contents.trim().to_string();
-            if !sha.is_empty() {
-                // Store in cache for next time
-                let _ = self.first_note_sha.set(Some(sha.clone()));
-                return Some(sha);
-            }
-        }
-
-        // Tier 3: Run git ls-tree to get the first note
-        let result = {
-            // Run: git ls-tree refs/notes/ai
-            let mut args = self.global_args_for_exec();
-            args.push("ls-tree".to_string());
-            args.push("refs/notes/ai".to_string());
-
-            let output = match exec_git(&args) {
-                Ok(output) => output,
-                Err(_) => {
-                    // refs/notes/ai doesn't exist or is inaccessible
-                    let _ = self.first_note_sha.set(None);
-                    return None;
-                }
-            };
-
-            // Parse the first line to get the SHA
-            // Format: <mode> <type> <sha>\t<name>
-            let stdout = match String::from_utf8(output.stdout) {
-                Ok(s) => s,
-                Err(_) => {
-                    let _ = self.first_note_sha.set(None);
-                    return None;
-                }
-            };
-            let first_line = stdout.lines().next();
-
-            match first_line {
-                Some(line) => {
-                    // Extract SHA (third field)
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 3 {
-                        Some(parts[2].to_string())
-                    } else {
-                        None
-                    }
-                }
-                None => None,
-            }
-        };
-
-        // Store in memory cache (ignore error if another thread already set it)
-        let _ = self.first_note_sha.set(result.clone());
-
-        // Write to disk file for future lookups (only if we found a note)
-        // Don't write anything if result is None (e.g., new repo with no notes yet)
-        if let Some(ref sha) = result {
-            let _ = std::fs::write(&self.storage.first_note, sha);
-        }
-
-        result
-    }
-
     // Non-standard method of getting a 'default' remote
     pub fn get_default_remote(&self) -> Result<Option<String>, GitAiError> {
         let remotes = self.remotes()?;
@@ -1868,7 +1792,7 @@ pub fn find_repository(global_args: &Vec<String>) -> Result<Repository, GitAiErr
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
-        first_note_sha: OnceLock::new(),
+        first_note_date: OnceLock::new(),
     })
 }
 
@@ -1891,7 +1815,7 @@ pub fn from_bare_repository(git_dir: &Path) -> Result<Repository, GitAiError> {
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
-        first_note_sha: OnceLock::new(),
+        first_note_date: OnceLock::new(),
     })
 }
 

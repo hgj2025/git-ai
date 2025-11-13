@@ -26,7 +26,6 @@ pub struct RepoStorage {
     pub working_logs: PathBuf,
     pub rewrite_log: PathBuf,
     pub logs: PathBuf,
-    pub first_note: PathBuf,
 }
 
 impl RepoStorage {
@@ -34,7 +33,6 @@ impl RepoStorage {
         let ai_dir = repo_path.join("ai");
         let working_logs_dir = ai_dir.join("working_logs");
         let rewrite_log_file = ai_dir.join("rewrite_log");
-        let first_note = ai_dir.join("first_note");
         let logs_dir = ai_dir.join("logs");
 
         let config = RepoStorage {
@@ -43,7 +41,6 @@ impl RepoStorage {
             working_logs: working_logs_dir,
             rewrite_log: rewrite_log_file,
             logs: logs_dir,
-            first_note: first_note,
         };
 
         config.ensure_config_directory().unwrap();
