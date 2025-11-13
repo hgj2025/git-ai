@@ -33,6 +33,10 @@ impl VirtualAttributions {
         pathspecs: &[String],
         blame_start_commit: Option<String>,
     ) -> Result<Self, GitAiError> {
+        // If blame_start_commit is not provided, use the first commit with authorship
+        let blame_start_commit =
+            blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
+
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -285,21 +289,6 @@ impl VirtualAttributions {
         &self.repo
     }
 
-    /// Create VirtualAttributions from current repository state (HEAD + working log)
-    #[allow(dead_code)]
-    pub async fn from_repo_state(
-        repo: Repository,
-        pathspecs: &[String],
-    ) -> Result<Self, GitAiError> {
-        // Step 1: Get HEAD SHA
-        let head_ref = repo.head()?;
-        let head_sha = head_ref.target()?;
-
-        // Step 2: Use new_for_base_commit to establish authorship for all pathspecs
-        // This will run blame to find all old authorship and discover prompts from history
-        Self::new_for_base_commit(repo, head_sha, pathspecs, None).await
-    }
-
     /// Create VirtualAttributions from just the working log (no blame)
     ///
     /// This is a fast path that skips the expensive blame operation.
@@ -444,6 +433,10 @@ impl VirtualAttributions {
         human_author: Option<String>,
         blame_start_commit: Option<String>,
     ) -> Result<Self, GitAiError> {
+        // If blame_start_commit is not provided, use the first commit with authorship
+        let blame_start_commit =
+            blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
+
         // Step 1: Build base VirtualAttributions using blame (gets ALL prompts from history)
         let blame_va = Self::new_for_base_commit(
             repo.clone(),
@@ -1364,6 +1357,9 @@ fn compute_attributions_for_file(
     ts: u128,
     blame_start_commit: Option<String>,
 ) -> Result<Option<(String, String, Vec<Attribution>, Vec<LineAttribution>)>, GitAiError> {
+    // If blame_start_commit is not provided, use the first commit with authorship
+    let blame_start_commit = blame_start_commit.or_else(|| repo.get_first_commit_with_authorship());
+
     // Set up blame options
     let mut ai_blame_opts = GitAiBlameOptions::default();
     ai_blame_opts.no_output = true;

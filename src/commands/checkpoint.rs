@@ -459,6 +459,7 @@ fn get_checkpoint_entry_for_file(
     initial_attributions: Arc<HashMap<String, Vec<LineAttribution>>>,
     ts: u128,
 ) -> Result<Option<WorkingLogEntry>, GitAiError> {
+    let first_commit_with_authorship = repo.get_first_commit_with_authorship();
     let current_content = working_log
         .read_current_file_content(&file_path)
         .unwrap_or_default();
@@ -534,6 +535,7 @@ fn get_checkpoint_entry_for_file(
         ai_blame_opts.return_human_authors_as_human = true;
         ai_blame_opts.use_prompt_hashes_as_names = true;
         ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
+        ai_blame_opts.oldest_commit = first_commit_with_authorship.clone();
         let ai_blame = repo.blame(&file_path, &ai_blame_opts);
 
         // Start with INITIAL attributions (they win)
