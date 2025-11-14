@@ -24,6 +24,9 @@ pub fn run(
     agent_run_result: Option<AgentRunResult>,
     is_pre_commit: bool,
 ) -> Result<(usize, usize, usize), GitAiError> {
+    let start_total = Instant::now();
+    println!("🔍 [PROFILE] Starting checkpoint run");
+
     // Robustly handle zero-commit repos
     let base_commit = match repo.head() {
         Ok(head) => match head.target() {
@@ -42,8 +45,13 @@ pub fn run(
     }
 
     // Initialize the new storage system
+    let start_storage = Instant::now();
     let repo_storage = RepoStorage::for_repo_path(repo.path(), &repo.workdir()?);
     let mut working_log = repo_storage.working_log_for_base_commit(&base_commit);
+    println!(
+        "🔍 [PROFILE] Storage initialization: {:?}",
+        start_storage.elapsed()
+    );
 
     // Set dirty files if available
     if let Some(dirty_files) = agent_run_result
@@ -124,6 +132,7 @@ pub fn run(
         })
     });
 
+    let start_get_files = Instant::now();
     let files = get_all_tracked_files(
         repo,
         &base_commit,
@@ -131,7 +140,13 @@ pub fn run(
         pathspec_filter,
         is_pre_commit,
     )?;
+    println!(
+        "🔍 [PROFILE] get_all_tracked_files (found {} files): {:?}",
+        files.len(),
+        start_get_files.elapsed()
+    );
 
+    let start_read_checkpoints = Instant::now();
     let mut checkpoints = if reset {
         // If reset flag is set, start with an empty working log
         working_log.reset_working_log()?;
@@ -139,6 +154,11 @@ pub fn run(
     } else {
         working_log.read_all_checkpoints()?
     };
+    println!(
+        "🔍 [PROFILE] Read checkpoints (found {} checkpoints): {:?}",
+        checkpoints.len(),
+        start_read_checkpoints.elapsed()
+    );
 
     if show_working_log {
         if checkpoints.is_empty() {
@@ -196,7 +216,12 @@ pub fn run(
     }
 
     // Save current file states and get content hashes
+    let start_save_states = Instant::now();
     let file_content_hashes = save_current_file_states(&working_log, &files)?;
+    println!(
+        "🔍 [PROFILE] save_current_file_states: {:?}",
+        start_save_states.elapsed()
+    );
 
     // Order file hashes by key and create a hash of the ordered hashes
     let mut ordered_hashes: Vec<_> = file_content_hashes.iter().collect();
@@ -213,6 +238,7 @@ pub fn run(
     // when converting working log -> authorship log
 
     // Get checkpoint entries using unified function that handles both initial and subsequent checkpoints
+    let start_get_entries = Instant::now();
     let entries = smol::block_on(get_checkpoint_entries(
         kind,
         repo,
@@ -223,6 +249,11 @@ pub fn run(
         agent_run_result.as_ref(),
         ts,
     ))?;
+    println!(
+        "🔍 [PROFILE] get_checkpoint_entries (created {} entries): {:?}",
+        entries.len(),
+        start_get_entries.elapsed()
+    );
 
     // Skip adding checkpoint if there are no changes
     if !entries.is_empty() {
@@ -234,8 +265,14 @@ pub fn run(
         );
 
         // Aggregate line stats from entries (stats already computed during entry creation)
+        let start_line_stats = Instant::now();
         checkpoint.line_stats =
             compute_line_stats(repo, &working_log, &files, &entries, &checkpoints, kind)?;
+        println!(
+            "🔍 [PROFILE] compute_line_stats: {:?}",
+            start_line_stats.elapsed()
+        );
+
         // Set transcript and agent_id if provided and not a human checkpoint
         if kind != CheckpointKind::Human
             && let Some(agent_run) = &agent_run_result
@@ -245,9 +282,19 @@ pub fn run(
         }
 
         // Append checkpoint to the working log
+        let start_persist = Instant::now();
         working_log.append_checkpoint(&checkpoint)?;
+        println!(
+            "🔍 [PROFILE] append_checkpoint (persist): {:?}",
+            start_persist.elapsed()
+        );
         checkpoints.push(checkpoint);
     }
+
+    println!(
+        "🔍 [PROFILE] ⏱️  TOTAL checkpoint run time: {:?}",
+        start_total.elapsed()
+    );
 
     let agent_tool = if kind != CheckpointKind::Human
         && let Some(agent_run_result) = &agent_run_result
@@ -309,6 +356,7 @@ fn get_status_of_files(
     edited_filepaths: HashSet<String>,
     skip_untracked: bool,
 ) -> Result<Vec<String>, GitAiError> {
+    let start_status = Instant::now();
     let mut files = Vec::new();
 
     // Use porcelain v2 format to get status
@@ -319,7 +367,12 @@ fn get_status_of_files(
         Some(&edited_filepaths)
     };
 
+    let start_git_status = Instant::now();
     let statuses = repo.status(edited_filepaths_option, skip_untracked)?;
+    println!(
+        "    🔍 [PROFILE] repo.status() call: {:?}",
+        start_git_status.elapsed()
+    );
 
     for entry in statuses {
         // Skip ignored files
@@ -354,6 +407,11 @@ fn get_status_of_files(
         }
     }
 
+    println!(
+        "  🔍 [PROFILE] get_status_of_files (found {} files): {:?}",
+        files.len(),
+        start_status.elapsed()
+    );
     Ok(files)
 }
 
@@ -458,6 +516,8 @@ fn get_checkpoint_entry_for_file(
     initial_attributions: Arc<HashMap<String, Vec<LineAttribution>>>,
     ts: u128,
 ) -> Result<Option<WorkingLogEntry>, GitAiError> {
+    let start_file = Instant::now();
+
     let current_content = working_log
         .read_current_file_content(&file_path)
         .unwrap_or_default();
@@ -534,10 +594,13 @@ fn get_checkpoint_entry_for_file(
         ai_blame_opts.use_prompt_hashes_as_names = true;
         ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
         ai_blame_opts.oldest_date = Some(OLDEST_AI_BLAME_DATE.clone());
-        let start = Instant::now();
+        let start_blame = Instant::now();
         let ai_blame = repo.blame(&file_path, &ai_blame_opts);
-        let end = Instant::now();
-        println!("Initial blame taken: {:?}", end.duration_since(start));
+        println!(
+            "    🔍 [PROFILE] Initial blame for {}: {:?}",
+            file_path,
+            start_blame.elapsed()
+        );
 
         // Start with INITIAL attributions (they win)
         let mut prev_line_attributions = initial_attrs_for_file.clone();
@@ -615,6 +678,7 @@ fn get_checkpoint_entry_for_file(
         return Ok(None);
     }
 
+    let start_make_entry = Instant::now();
     let entry = make_entry_for_file(
         &file_path,
         &file_content_hash,
@@ -624,7 +688,17 @@ fn get_checkpoint_entry_for_file(
         &current_content,
         ts,
     )?;
+    println!(
+        "    🔍 [PROFILE] make_entry_for_file {}: {:?}",
+        file_path,
+        start_make_entry.elapsed()
+    );
 
+    println!(
+        "  🔍 [PROFILE] Total for file {}: {:?}",
+        file_path,
+        start_file.elapsed()
+    );
     Ok(Some(entry))
 }
 
