@@ -1,8 +1,8 @@
-use crate::authorship::authorship_log::LineRange;
 use crate::authorship::transcript::Message;
 use crate::error::GitAiError;
 use crate::git::refs::get_authorship;
 use crate::git::repository::Repository;
+use crate::{authorship::authorship_log::LineRange, utils::debug_log};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -89,10 +89,10 @@ pub fn stats_command(
         (target, name)
     };
 
-    eprintln!(
-        "[DEBUG] Stats command found commit: {} refname: {}",
+    debug_log(&format!(
+        "Stats command found commit: {} refname: {}",
         target, refname
-    );
+    ));
 
     let stats = stats_for_commit_stats(repo, &target)?;
 
