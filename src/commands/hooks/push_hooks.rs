@@ -73,8 +73,6 @@ pub fn push_pre_command_hook(parsed_args: &mut ParsedGitInvocation, repository: 
 }
 
 /// Injects the authorship refspec into push command arguments.
-/// Returns None if we should skip injection (e.g., --dry-run, --delete, --mirror, --all, --tags).
-/// Returns Some(Vec<String>) with the modified args including our refspec.
 fn inject_authorship_refspec(
     args: &[String],
     remote: &str,
