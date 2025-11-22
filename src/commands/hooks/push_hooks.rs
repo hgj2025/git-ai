@@ -61,10 +61,6 @@ pub fn push_pre_command_hook(parsed_args: &mut ParsedGitInvocation, repository: 
             inject_authorship_refspec(&parsed_args.command_args, &remote, &remote_names)
         {
             debug_log(&format!(
-                "injecting authorship refspec into push to remote: {}",
-                remote
-            ));
-            debug_log(&format!(
                 "old args: git push {}",
                 parsed_args.command_args.join(" ")
             ));
