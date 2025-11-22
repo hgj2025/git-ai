@@ -489,11 +489,28 @@ mod tests {
         assert!(result_args.contains(&"refs/notes/ai:refs/notes/ai".to_string()));
     }
 
+    // This test ensures we don't try to modify any manual notes pushes
     #[test]
     fn test_skip_if_authorship_refspec_already_present() {
         // git push origin HEAD refs/notes/ai:refs/notes/ai -> should return None (already has it)
         let args = args_vec(&["origin", "HEAD", "refs/notes/ai:refs/notes/ai"]);
         let result = inject_authorship_refspec(&args, "origin", &["origin".to_string()]);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_push_all_notes_refs() {
+        // git push origin refs/notes/*:refs/notes/* -> should inject our refspec
+        // This ensures we explicitly push our authorship notes even with glob patterns
+        let args = args_vec(&["origin", "refs/notes/*:refs/notes/*"]);
+        let result = inject_authorship_refspec(&args, "origin", &["origin".to_string()]);
+        assert_eq!(
+            result,
+            Some(args_vec(&[
+                "origin",
+                "refs/notes/*:refs/notes/*",
+                "refs/notes/ai:refs/notes/ai"
+            ]))
+        );
     }
 }
