@@ -413,11 +413,28 @@ fn test_push_to_fork() {
 
     println!("✅ Created and pushed initial commit to origin");
 
-    // Add a second remote (simulating a fork)
-    // We'll use the same repo as a fake fork for testing purposes
+    // Create a second repository to simulate a fork
+    let fork_repo = match GitHubTestRepo::new("test_push_to_fork_target") {
+        Some(repo) => repo,
+        None => {
+            println!("⏭️  Test skipped - GitHub CLI not available for fork");
+            return;
+        }
+    };
+
+    if let Err(e) = fork_repo.create_on_github() {
+        panic!("Failed to create fork repository: {}", e);
+    }
+
+    println!(
+        "✅ Created fork repository: {}/{}",
+        fork_repo.github_owner, fork_repo.github_repo_name
+    );
+
+    // Add the fork as a remote
     let fork_url = format!(
         "https://github.com/{}/{}.git",
-        test_repo.github_owner, test_repo.github_repo_name
+        fork_repo.github_owner, fork_repo.github_repo_name
     );
 
     test_repo
@@ -425,7 +442,7 @@ fn test_push_to_fork() {
         .git(&["remote", "add", "fork", &fork_url])
         .expect("Failed to add fork remote");
 
-    println!("✅ Added 'fork' remote");
+    println!("✅ Added fork as remote");
 
     // Create a new branch
     test_repo
@@ -449,13 +466,22 @@ fn test_push_to_fork() {
 
     println!("✅ Pushed to fork remote");
 
-    // Verify notes exist on the fork remote
+    // Verify notes exist on the fork remote (using the fork's repo path)
     assert!(
         notes_exist_on_remote(test_repo.repo.path(), "fork"),
         "Notes should exist on fork remote"
     );
 
+    // Also verify by fetching from the fork repository directly
+    fetch_notes_from_remote(fork_repo.repo.path(), "origin")
+        .expect("Failed to fetch notes from fork");
+
     println!("✅ Test completed successfully - notes were pushed to fork");
+
+    // Cleanup fork repo explicitly (test_repo will be cleaned up by Drop)
+    if std::env::var("GIT_AI_TEST_NO_CLEANUP").is_err() {
+        let _ = fork_repo.delete_from_github();
+    }
 }
 
 #[test]
