@@ -45,7 +45,7 @@ jobs:
           CARGO_INCREMENTAL: 0
 
   test-ignored:
-    name: Test ignored tests on Ubuntu
+    name: Test SCM e2e tests on just Ubuntu
     runs-on: ubuntu-latest
 
     steps:
