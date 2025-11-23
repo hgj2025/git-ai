@@ -25,6 +25,7 @@ pub fn post_clone_hook(parsed_args: &ParsedGitInvocation, exit_status: std::proc
         target_dir
     ));
 
+    print!("Fetching git-ai authorship notes");
     // Open the newly cloned repository
     let repository = match find_repository_in_path(&target_dir) {
         Ok(repo) => repo,
@@ -40,7 +41,9 @@ pub fn post_clone_hook(parsed_args: &ParsedGitInvocation, exit_status: std::proc
     // Fetch authorship notes from origin
     if let Err(e) = fetch_authorship_notes(&repository, "origin") {
         debug_log(&format!("authorship fetch from origin failed: {}", e));
+        print!(", failed.\n");
     } else {
         debug_log("successfully fetched authorship notes from origin");
+        print!(", done.\n");
     }
 }
