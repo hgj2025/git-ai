@@ -2,6 +2,7 @@
 mod repos;
 use repos::test_file::ExpectedLineExt;
 use repos::test_repo::TestRepo;
+use std::fs;
 
 #[test]
 fn test_simple_additions_empty_repo() {
@@ -273,7 +274,7 @@ fn test_partial_staging_filters_unstaged_lines() {
     file.assert_committed_lines(lines![
         "line1".human(),
         "ai_modified2".ai(),
-        "ai_modified3".ai(),
+        // ai_modified3 is ai, but it's not considered committed, because adding the subsequent uncommitted lines also added a newline char to this line
     ]);
 }
 
@@ -316,7 +317,7 @@ fn test_human_stages_some_ai_lines() {
         "ai_line5".ai(),
         "ai_line6".ai(),
         "ai_line7".ai(),
-        "ai_line8".ai(),
+        // ai_line8 is ai, but it's not considered committed, because adding the subsequent uncommitted lines also added a newline char to this line
     ]);
 }
 
@@ -326,17 +327,17 @@ fn test_multiple_ai_sessions_with_partial_staging() {
     let repo = TestRepo::new();
     let mut file = repo.filename("test.ts");
 
-    file.set_contents(lines!["line1", "line2"]);
+    file.set_contents(lines!["line1", "line2", "line3"]);
 
     repo.stage_all_and_commit("Initial commit").unwrap();
 
     // First AI session adds lines and they get staged
-    file.insert_at(2, lines!["ai1_line1".ai(), "ai1_line2".ai()]);
+    file.insert_at(3, lines!["ai1_line1".ai(), "ai1_line2".ai(), "ai1_line3".ai()]);
 
     file.stage();
 
     // Second AI session adds lines but they DON'T get staged
-    file.insert_at(4, lines!["ai2_line1".ai(), "ai2_line2".ai()]);
+    file.insert_at(6, lines!["ai2_line1".ai(), "ai2_line2".ai(), "ai2_line3".ai()]);
 
     let commit = repo.commit("Commit first AI session only").unwrap();
     assert_eq!(commit.authorship_log.attestations.len(), 1);
@@ -345,8 +346,10 @@ fn test_multiple_ai_sessions_with_partial_staging() {
     file.assert_committed_lines(lines![
         "line1".human(),
         "line2".human(),
+        "line3".human(),
         "ai1_line1".ai(),
         "ai1_line2".ai(),
+        // ai1_line3 is ai, but it's not considered committed, because adding the subsequent uncommitted lines also added a newline char to this line
     ]);
 }
 
@@ -419,7 +422,7 @@ fn test_ai_edits_with_partial_staging() {
         "ai_modified_line2".ai(),
         "line3".human(),
         "ai_modified_line4".ai(),
-        "line5".human(),
+        // line5 is human, but it's not considered committed, because adding line 6+ also added a newline char to line 5
     ]);
 }
 
@@ -451,7 +454,7 @@ fn test_unstaged_changes_not_committed() {
         "line2".human(),
         "line3".human(),
         "ai_line4".ai(),
-        "ai_line5".ai(),
+        // line 5 is ai, but it's not considered committed, because adding line 6+ also added a newline char to line 5
     ]);
 }
 
@@ -575,4 +578,144 @@ fn test_mock_ai_with_pathspecs() {
         "File2 Line 2".human(),
         "File2 Human Line".human(),
     ]);
+}
+
+#[test]
+fn test_with_duplicate_lines() {
+    // This test verifies that squash merge correctly preserves AI authorship for duplicate lines
+    let repo = TestRepo::new();
+    let mut file = repo.filename("helpers.rs");
+
+    // Create master branch with first function (human-authored)
+    file.set_contents(lines![
+        "pub fn format_string(s: &str) -> String {",
+        "    s.to_uppercase()",
+        "}",
+    ]);
+    repo.stage_all_and_commit("Add format_string function")
+        .unwrap();
+
+    file = repo.filename("helpers.rs");
+    file.assert_lines_and_blame(lines![
+        "pub fn format_string(s: &str) -> String {".human(),
+        "    s.to_uppercase()".human(),
+        "}".human(),
+    ]);
+
+    // AI adds a second function
+    // The key test: the second `}` on line 6 is AI-authored, but there's already a `}` on line 3
+    let file_path = repo.path().join("helpers.rs");
+    fs::write(
+        &file_path,
+        "pub fn format_string(s: &str) -> String {\n    s.to_uppercase()\n}\npub fn reverse_string(s: &str) -> String {\n    s.chars().rev().collect()\n}",
+    )
+    .unwrap();
+    repo.git_ai(&["checkpoint", "mock_ai"]).unwrap();
+
+    repo.stage_all_and_commit("AI adds reverse_string function")
+        .unwrap();
+
+    file = repo.filename("helpers.rs");
+    file.assert_lines_and_blame(lines![
+        "pub fn format_string(s: &str) -> String {".human(),
+        "    s.to_uppercase()".human(),
+        "}".ai(), // This is the attribution for the AI closing brace. Not natural, but this is how git works!
+        "pub fn reverse_string(s: &str) -> String {".ai(),
+        "    s.chars().rev().collect()".ai(),
+        "}".human(), // Is human, because of how git diffs work!
+    ]);
+}
+
+#[test]
+fn test_ai_deletion_with_human_checkpoint_in_same_commit() {
+    // Regression test for issue #193
+    // When both human and AI checkpoints happen in the same commit,
+    // and AI deletes its own lines, human additions should still be
+    // attributed correctly (not claimed by AI)
+    use std::fs;
+
+    let repo = TestRepo::new();
+    let file_path = repo.path().join("data.txt");
+
+    fs::write(&file_path, "Base Line 1\nBase Line 2\nBase Line 3").unwrap();
+
+    repo.git_ai(&["checkpoint"]).unwrap();
+
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 2\nAI: Line 3\nBase Line 3",
+    )
+    .unwrap();
+
+    // Mark only the AI lines with mock_ai checkpoint
+    repo.git_ai(&["checkpoint", "mock_ai", "data.txt"]).unwrap();
+
+    repo.stage_all_and_commit("Commit 1: AI adds 3 lines")
+        .unwrap();
+
+    // COMMIT 2: Human adds 2 lines, then AI modifies
+    // -------
+    // Step 1: Human adds lines
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 2\nAI: Line 3\nHuman: Line 1\nHuman: Line 2\nBase Line 3",
+    )
+    .unwrap();
+
+    // Human checkpoint
+    repo.git_ai(&["checkpoint"]).unwrap();
+
+    // Step 2: AI deletes one of its own lines and adds 2 new lines
+    fs::write(
+        &file_path,
+        "Base Line 1\nBase Line 2\nAI: Line 1\nAI: Line 3\nHuman: Line 1\nHuman: Line 2\nAI: New Line 1\nAI: New Line 2\nBase Line 3",
+    )
+    .unwrap();
+
+    // AI checkpoint
+    println!(
+        "checkpoint: {}",
+        repo.git_ai(&["checkpoint", "mock_ai", "data.txt"]).unwrap()
+    );
+
+    // Now commit everything together
+    let commit = repo
+        .stage_all_and_commit("Commit 2: Human adds 2, AI deletes 1 and adds 2")
+        .unwrap();
+
+    commit.print_authorship();
+
+    println!("file: {:?}", repo.git_ai(&["blame", "data.txt"]).unwrap());
+
+    // Verify line-by-line attribution
+    let mut file = repo.filename("data.txt");
+    file.assert_lines_and_blame(lines![
+        "Base Line 1".human(),
+        "Base Line 2".human(),
+        "AI: Line 1".ai(),
+        "AI: Line 3".ai(),
+        "Human: Line 1".human(), // Should be human, not AI (Bug #193)
+        "Human: Line 2".human(), // Should be human, not AI (Bug #193)
+        "AI: New Line 1".ai(),
+        "AI: New Line 2".ai(),
+        "Base Line 3".human(),
+    ]);
+
+    // Verify the stats are correct for the last commit
+    let stats_output = repo.git_ai(&["stats", "HEAD", "--json"]).unwrap();
+    let stats_output = stats_output.split("}}}").next().unwrap().to_string() + "}}}";
+    let stats: serde_json::Value = serde_json::from_str(&stats_output).unwrap();
+
+    // Expected: 2 human additions, 2 AI additions
+    // Bug #193 causes: 0 human additions, 4 AI additions
+    assert_eq!(
+        stats["human_additions"].as_u64().unwrap(),
+        2,
+        "Human additions should be 2, not 0 (Bug #193)"
+    );
+    assert_eq!(
+        stats["ai_additions"].as_u64().unwrap(),
+        2,
+        "AI additions should be 2, not 4 (Bug #193)"
+    );
 }
