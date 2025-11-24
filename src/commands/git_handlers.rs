@@ -1,4 +1,5 @@
 use crate::commands::hooks::cherry_pick_hooks;
+use crate::commands::hooks::clone_hooks;
 use crate::commands::hooks::commit_hooks;
 use crate::commands::hooks::fetch_hooks;
 use crate::commands::hooks::merge_hooks;
@@ -102,6 +103,13 @@ pub fn handle_git(args: &[String]) {
         debug_log(
             "Skipping git-ai hooks because repository is excluded or not in allow_repositories list",
         );
+    }
+
+    // Handle clone separately since repo doesn't exist before the command
+    if parsed_args.command.as_deref() == Some("clone") && !parsed_args.is_help && !skip_hooks {
+        let exit_status = proxy_to_git(&parsed_args.to_invocation_vec(), false);
+        clone_hooks::post_clone_hook(&parsed_args, exit_status);
+        exit_with_status(exit_status);
     }
 
     // run with hooks
