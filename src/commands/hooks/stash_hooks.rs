@@ -54,8 +54,11 @@ pub fn post_stash_hook(
 
     // Handle different subcommands
     if subcommand == "push" || subcommand == "save" {
+        // Extract pathspecs from command
+        let pathspecs = extract_stash_pathspecs(parsed_args);
+
         // Stash was created - save authorship log as git note
-        if let Err(e) = save_stash_authorship_log(repository) {
+        if let Err(e) = save_stash_authorship_log(repository, &pathspecs) {
             debug_log(&format!("Failed to save stash authorship log: {}", e));
         }
     } else if subcommand == "pop" || subcommand == "apply" {
@@ -83,7 +86,7 @@ pub fn post_stash_hook(
 }
 
 /// Save the current working log as an authorship log in git notes (refs/notes/ai-stash)
-fn save_stash_authorship_log(repo: &Repository) -> Result<(), GitAiError> {
+fn save_stash_authorship_log(repo: &Repository, pathspecs: &[String]) -> Result<(), GitAiError> {
     let head_sha = repo.head()?.target()?.to_string();
 
     // Get the stash SHA that was just created (stash@{0})
@@ -94,15 +97,41 @@ fn save_stash_authorship_log(repo: &Repository) -> Result<(), GitAiError> {
     let working_log_va =
         VirtualAttributions::from_just_working_log(repo.clone(), head_sha.clone(), None)?;
 
-    // If there are no attributions, just clean up working log
-    if working_log_va.files().is_empty() {
+    // Filter attributions to only include files that match the pathspecs
+    let filtered_files: Vec<String> = if pathspecs.is_empty() {
+        // No pathspecs means all files
+        working_log_va
+            .files()
+            .into_iter()
+            .map(|f| f.to_string())
+            .collect()
+    } else {
+        working_log_va
+            .files()
+            .into_iter()
+            .filter(|file| file_matches_pathspecs(file, pathspecs, repo))
+            .map(|f| f.to_string())
+            .collect()
+    };
+
+    // If there are no attributions, just clean up working log for filtered files
+    if filtered_files.is_empty() {
         debug_log("No attributions to save for stash");
-        repo.storage.delete_working_log_for_base_commit(&head_sha)?;
+        delete_working_log_for_files(repo, &head_sha, &filtered_files)?;
         return Ok(());
     }
 
-    // Convert to authorship log
-    let authorship_log = working_log_va.to_authorship_log()?;
+    debug_log(&format!(
+        "Saving attributions for {} files (pathspecs: {:?})",
+        filtered_files.len(),
+        pathspecs
+    ));
+
+    // Convert to authorship log, filtering to only include matched files
+    let mut authorship_log = working_log_va.to_authorship_log()?;
+    authorship_log
+        .attestations
+        .retain(|a| filtered_files.contains(&a.file_path));
 
     // Save as git note at refs/notes/ai-stash
     let json = authorship_log
@@ -115,9 +144,12 @@ fn save_stash_authorship_log(repo: &Repository) -> Result<(), GitAiError> {
         stash_sha
     ));
 
-    // Delete the working log for HEAD (changes are now in the stash)
-    repo.storage.delete_working_log_for_base_commit(&head_sha)?;
-    debug_log(&format!("Deleted working log for HEAD {}", head_sha));
+    // Delete the working log entries for files that were stashed
+    delete_working_log_for_files(repo, &head_sha, &filtered_files)?;
+    debug_log(&format!(
+        "Deleted working log entries for {} files",
+        filtered_files.len()
+    ));
 
     Ok(())
 }
@@ -196,15 +228,6 @@ fn restore_stash_attributions(
         let working_log = repo.storage.working_log_for_base_commit(&head_sha);
         working_log.write_initial_attributions(initial_files.clone(), initial_prompts.clone())?;
 
-        let _ = std::fs::write(
-            "/tmp/stash_write_success.txt",
-            format!(
-                "Wrote initial attributions successfully\nFiles: {:?}\nPrompts: {:?}\n",
-                initial_files.keys().collect::<Vec<_>>(),
-                initial_prompts.keys().collect::<Vec<_>>()
-            ),
-        );
-
         debug_log(&format!(
             "✓ Wrote INITIAL attributions to working log for {}",
             head_sha
@@ -277,4 +300,127 @@ fn resolve_stash_to_sha(repo: &Repository, stash_ref: &str) -> Result<String, Gi
     let sha = stdout.trim().to_string();
 
     Ok(sha)
+}
+
+/// Extract pathspecs from stash push/save command
+/// Format: git stash push [options] [--] [<pathspec>...]
+fn extract_stash_pathspecs(parsed_args: &ParsedGitInvocation) -> Vec<String> {
+    let mut pathspecs = Vec::new();
+    let mut found_separator = false;
+    let mut skip_next = false;
+
+    for (i, arg) in parsed_args.command_args.iter().enumerate() {
+        // Skip if this was consumed by a previous flag
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        // Found separator, everything after is pathspec
+        if arg == "--" {
+            found_separator = true;
+            continue;
+        }
+
+        // After separator, everything is a pathspec
+        if found_separator {
+            pathspecs.push(arg.clone());
+            continue;
+        }
+
+        // Skip flags and their values
+        if arg.starts_with('-') {
+            // Check if this flag consumes the next argument
+            if stash_option_consumes_value(arg) {
+                skip_next = true;
+            }
+            continue;
+        }
+
+        // Skip the subcommand (push/save/pop/apply)
+        if i == 0 && (arg == "push" || arg == "save" || arg == "pop" || arg == "apply") {
+            continue;
+        }
+
+        // Skip stash reference for pop/apply (e.g., stash@{0})
+        if i == 1 && arg.starts_with("stash@") {
+            continue;
+        }
+
+        // Everything else is a pathspec
+        pathspecs.push(arg.clone());
+    }
+
+    debug_log(&format!("Extracted pathspecs: {:?}", pathspecs));
+    pathspecs
+}
+
+/// Check if a stash option consumes the next value
+fn stash_option_consumes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-m" | "--message" | "--pathspec-from-file" | "--pathspec-file-nul"
+    )
+}
+
+/// Check if a file path matches any of the given pathspecs
+fn file_matches_pathspecs(file: &str, pathspecs: &[String], _repo: &Repository) -> bool {
+    if pathspecs.is_empty() {
+        return true; // No pathspecs means match all
+    }
+
+    for pathspec in pathspecs {
+        // Handle exact matches
+        if file == pathspec {
+            return true;
+        }
+
+        // Handle directory matches (pathspec/ matches pathspec/file.txt)
+        if pathspec.ends_with('/') && file.starts_with(pathspec) {
+            return true;
+        }
+
+        // Handle directory without trailing slash
+        if file.starts_with(&format!("{}/", pathspec)) {
+            return true;
+        }
+
+        // Simple glob matching - check if path starts with prefix before *
+        if let Some(prefix) = pathspec.strip_suffix('*') {
+            if file.starts_with(prefix) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Delete working log entries for specific files
+fn delete_working_log_for_files(
+    repo: &Repository,
+    base_commit: &str,
+    files: &[String],
+) -> Result<(), GitAiError> {
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let working_log = repo.storage.working_log_for_base_commit(base_commit);
+
+    // Read current initial attributions
+    let mut initial_attrs = working_log.read_initial_attributions();
+
+    // Remove entries for the specified files
+    for file in files {
+        initial_attrs.files.remove(file);
+    }
+
+    // Write back the modified attributions
+    working_log.write_initial_attributions(initial_attrs.files, initial_attrs.prompts)?;
+
+    // Note: We're not modifying checkpoints here as they're historical records
+    // The files were stashed, so we just remove them from the initial attributions
+
+    Ok(())
 }
