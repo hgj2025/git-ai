@@ -6,6 +6,7 @@ use crate::commands::hooks::merge_hooks;
 use crate::commands::hooks::push_hooks;
 use crate::commands::hooks::rebase_hooks;
 use crate::commands::hooks::reset_hooks;
+use crate::commands::hooks::stash_hooks;
 use crate::config;
 use crate::git::cli_parser::{ParsedGitInvocation, parse_git_cli_args};
 use crate::git::find_repository;
@@ -75,6 +76,7 @@ pub struct CommandHooksContext {
     pub rebase_original_head: Option<String>,
     pub _rebase_onto: Option<String>,
     pub fetch_authorship_handle: Option<std::thread::JoinHandle<()>>,
+    pub stash_sha: Option<String>,
 }
 
 pub fn handle_git(args: &[String]) {
@@ -99,6 +101,7 @@ pub fn handle_git(args: &[String]) {
     let config = config::Config::get();
 
     let skip_hooks = !config.is_allowed_repository(&repository_option);
+
     if skip_hooks {
         debug_log(
             "Skipping git-ai hooks because repository is excluded or not in allow_repositories list",
@@ -119,6 +122,7 @@ pub fn handle_git(args: &[String]) {
             rebase_original_head: None,
             _rebase_onto: None,
             fetch_authorship_handle: None,
+            stash_sha: None,
         };
 
         let repository = repository_option.as_mut().unwrap();
@@ -188,6 +192,13 @@ fn run_pre_command_hooks(
                 command_hooks_context.fetch_authorship_handle =
                     fetch_hooks::fetch_pull_pre_command_hook(parsed_args, repository);
             }
+            Some("stash") => {
+                let config = config::Config::get();
+
+                if config.feature_flags().rewrite_stash {
+                    stash_hooks::pre_stash_hook(parsed_args, repository, command_hooks_context);
+                }
+            }
             _ => {}
         }
     }));
@@ -248,6 +259,18 @@ fn run_post_command_hooks(
                 exit_status,
                 repository,
             ),
+            Some("stash") => {
+                let config = config::Config::get();
+
+                if config.feature_flags().rewrite_stash {
+                    stash_hooks::post_stash_hook(
+                        &command_hooks_context,
+                        parsed_args,
+                        repository,
+                        exit_status,
+                    );
+                }
+            }
             _ => {}
         }
     }));
