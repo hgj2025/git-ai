@@ -1,7 +1,8 @@
 use crate::commands::upgrade;
+use crate::config;
 use crate::git::cli_parser::{ParsedGitInvocation, is_dry_run};
 use crate::git::repository::Repository;
-use crate::git::sync_authorship::{NotesExistence, fetch_authorship_notes};
+use crate::git::sync_authorship::{NotesExistence, fetch_authorship_notes, push_authorship_notes};
 use crate::utils::debug_log;
 
 const AUTHORSHIP_REFSPEC: &str = "refs/notes/ai:refs/notes/ai";
@@ -63,19 +64,35 @@ pub fn push_pre_command_hook(parsed_args: &mut ParsedGitInvocation, repository: 
                 false // On error, don't force (safer default)
             }
         };
-        // Try to inject the authorship refspec into the push command
-        if let Some(new_args) = inject_authorship_refspec(
-            &parsed_args.command_args,
-            &remote,
-            &remote_names,
-            force_notes,
-        ) {
-            debug_log(&format!(
-                "old args: git push {}",
-                parsed_args.command_args.join(" ")
-            ));
-            debug_log(&format!("new args: git push {}", new_args.join(" ")));
-            parsed_args.command_args = new_args;
+
+        let config = config::Config::get();
+        if config.feature_flags().proxy_push_notes_with_head {
+            // Try to inject the authorship refspec into the push command
+            if let Some(new_args) = inject_authorship_refspec(
+                &parsed_args.command_args,
+                &remote,
+                &remote_names,
+                force_notes,
+            ) {
+                debug_log(&format!(
+                    "old args: git push {}",
+                    parsed_args.command_args.join(" ")
+                ));
+                debug_log(&format!("new args: git push {}", new_args.join(" ")));
+                parsed_args.command_args = new_args;
+            }
+        } else {
+            match push_authorship_notes(repository, &remote) {
+                Ok(_) => {
+                    debug_log(&format!("pushed authorship notes for remote: {}", remote));
+                }
+                Err(e) => {
+                    debug_log(&format!(
+                        "failed to push authorship notes for remote: {}",
+                        e
+                    ));
+                }
+            }
         }
     } else {
         debug_log("no remotes found for authorship push; skipping");
