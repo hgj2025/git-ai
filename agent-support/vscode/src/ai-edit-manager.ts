@@ -119,12 +119,26 @@ export class AIEditManager {
             } else {
               const chatSessionPath = path.join(storagePath, 'chatSessions', `${sessionId}.json`);
               console.log('[git-ai] AIEditManager: AI edit detected for', filePath, '- triggering AI checkpoint (sessionId:', sessionId, ', requestId:', requestId, ', chatSessionPath:', chatSessionPath, ', workspaceFolder:', workspaceFolder.uri.fsPath, ')');
+              
+              // Get dirty files and ensure the saved file is included with its content from VS Code
+              const dirtyFiles = this.getDirtyFiles();
+              console.log('[git-ai] AIEditManager: Dirty files:', dirtyFiles);
+              
+              // Get the content of the saved file from VS Code (not from FS) to handle codespaces lag
+              const savedFileDoc = vscode.workspace.textDocuments.find(doc => 
+                doc.uri.fsPath === filePath && doc.uri.scheme === "file"
+              );
+              if (savedFileDoc) {
+                dirtyFiles[filePath] = savedFileDoc.getText();
+              }
+              
+              console.log('[git-ai] AIEditManager: Dirty files with saved file content:', dirtyFiles);
               this.checkpoint("ai", JSON.stringify({
                 chatSessionPath,
                 sessionId,
                 requestId,
                 workspaceFolder: workspaceFolder.uri.fsPath,
-                dirtyFiles: this.getDirtyFiles(),
+                dirtyFiles,
               }));
               checkpointTriggered = true;
             }
