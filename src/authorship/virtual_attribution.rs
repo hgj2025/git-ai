@@ -523,6 +523,11 @@ impl VirtualAttributions {
             // Group line attributions by author
             let mut author_lines: HashMap<String, Vec<u32>> = HashMap::new();
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI attributions
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 for line in line_attr.start_line..=line_attr.end_line {
                     author_lines
                         .entry(line_attr.author_id.clone())
@@ -818,6 +823,11 @@ impl VirtualAttributions {
             let file_committed_hunks = committed_hunks.get(file_path);
 
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI attributions
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 // Check each line individually
                 for workdir_line_num in line_attr.start_line..=line_attr.end_line {
                     // Check if this line is unstaged (in working directory but not in commit)
@@ -1036,6 +1046,11 @@ impl VirtualAttributions {
             let mut committed_lines_map: StdHashMap<String, Vec<u32>> = StdHashMap::new();
 
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI attributions
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 // Since we're not dealing with unstaged hunks, the line numbers in VirtualAttributions
                 // are already in the right coordinates (working log coordinates = commit coordinates)
                 for line_num in line_attr.start_line..=line_attr.end_line {
@@ -1185,6 +1200,11 @@ impl VirtualAttributions {
         let mut session_accepted_lines: HashMap<String, u32> = HashMap::new();
         for (_file_path, (_char_attrs, line_attrs)) in attributions {
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI prompt metrics
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 let line_count = line_attr.end_line - line_attr.start_line + 1;
                 *session_accepted_lines
                     .entry(line_attr.author_id.clone())
@@ -1195,6 +1215,11 @@ impl VirtualAttributions {
         // Calculate overridden_lines: count lines where overrode field matches session_id
         let mut session_overridden_lines: HashMap<String, u32> = HashMap::new();
         for line_attr in &all_line_attributions {
+            // Skip human attributions - we only track AI prompt metrics
+            if line_attr.author_id == CheckpointKind::Human.to_str() {
+                continue;
+            }
+
             if let Some(overrode_id) = &line_attr.overrode {
                 let mut overridden_lines: HashSet<u32> = HashSet::new();
                 for line in line_attr.start_line..=line_attr.end_line {
