@@ -217,11 +217,12 @@ fn build_config() -> Config {
         .as_ref()
         .and_then(|c| c.telemetry_enterprise_dsn.clone())
         .filter(|s| !s.is_empty());
-    
+
     // Default to disabled (true) unless this is an OSS build
     // OSS builds set OSS_BUILD env var at compile time to "1", which enables auto-updates by default
-    let auto_update_flags_default_disabled = option_env!("OSS_BUILD").is_none() || option_env!("OSS_BUILD").unwrap() != "1";
-    
+    let auto_update_flags_default_disabled =
+        option_env!("OSS_BUILD").is_none() || option_env!("OSS_BUILD").unwrap() != "1";
+
     let disable_version_checks = file_cfg
         .as_ref()
         .and_then(|c| c.disable_version_checks)
@@ -237,7 +238,7 @@ fn build_config() -> Config {
         .unwrap_or_default();
 
     let git_path = resolve_git_path(&file_cfg);
-    
+
     // Build feature flags from file config
     let feature_flags = build_feature_flags(&file_cfg);
 
@@ -256,16 +257,14 @@ fn build_config() -> Config {
 }
 
 fn build_feature_flags(file_cfg: &Option<FileConfig>) -> FeatureFlags {
-    let file_flags_value = file_cfg
-        .as_ref()
-        .and_then(|c| c.feature_flags.as_ref());
-    
+    let file_flags_value = file_cfg.as_ref().and_then(|c| c.feature_flags.as_ref());
+
     // Try to deserialize the feature flags from the JSON value
     let file_flags = file_flags_value.and_then(|value| {
         // Use from_value to deserialize, but ignore any errors and fall back to defaults
         serde_json::from_value(value.clone()).ok()
     });
-    
+
     FeatureFlags::from_file_config(file_flags)
 }
 
