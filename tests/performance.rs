@@ -15,6 +15,7 @@ use repos::test_repo::TestRepo;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git_ai::observability::wrapper_performance_targets::PERFORMANCE_FLOOR_MS;
     use rstest::rstest;
 
     #[rstest]
@@ -39,15 +40,6 @@ mod tests {
             files_to_edit.len() >= 3,
             "Should have at least 3 random files to edit"
         );
-
-        println!(
-            "\n=== Testing {} - Editing {} files ===",
-            repo_name,
-            files_to_edit.len()
-        );
-        for (i, file) in files_to_edit.iter().enumerate() {
-            println!("  {}. {}", i + 1, file);
-        }
 
         // Create a sampler that runs 10 times
         let sampler = Sampler::new(10);
@@ -80,54 +72,110 @@ mod tests {
 
         // Print the results
         result.print_summary(&format!("Human-only edits + commit ({})", repo_name));
+
+        let (percent_overhead, average_overhead) = result.average_overhead();
+
+        assert!(
+            percent_overhead < 10.0 || average_overhead < PERFORMANCE_FLOOR_MS,
+            "Average overhead should be less than 10% or under 70ms"
+        );
     }
 
-    #[test]
-    fn test_find_random_files() {
+    #[rstest]
+    #[case("chromium")]
+    #[case("react")]
+    #[case("node")]
+    #[case("chakracore")]
+    fn test_human_only_edits_in_big_files_then_commit(#[case] repo_name: &str) {
         let repos = get_performance_repos();
-        let react_repo = repos.get("react").expect("React repo should be available");
+        let test_repo = repos
+            .get(repo_name)
+            .expect(&format!("{} repo should be available", repo_name));
 
         // Find random files for testing
-        let random_files = find_random_files(react_repo).expect("Should find random files");
+        let random_files = find_random_files(test_repo).expect("Should find random files");
 
-        println!("\n=== Random Files ===");
-        for (i, file) in random_files.random_files.iter().enumerate() {
-            println!("  {}. {}", i + 1, file);
-        }
+        // Use large files for testing
+        let files_to_edit: Vec<String> = random_files.large_files.clone();
 
-        println!("\n=== Large Files ===");
-        for (i, file) in random_files.large_files.iter().enumerate() {
-            println!("  {}. {}", i + 1, file);
-        }
-
-        // Verify we got files
         assert!(
-            !random_files.random_files.is_empty(),
-            "Should have random files"
+            !files_to_edit.is_empty(),
+            "Should have at least 1 large file to edit"
         );
-        assert!(
-            !random_files.large_files.is_empty(),
-            "Should have at least some large files"
-        );
-    }
 
-    #[test]
-    fn test_benchmark_git() {
-        let repos = get_performance_repos();
-        let react_repo = repos
-            .get("chromium")
-            .expect("React repo should be available");
-
-        // Create a sampler that runs 5 times
+        // Create a sampler that runs 10 times
         let sampler = Sampler::new(10);
 
-        // Sample the performance of git log
-        let result = sampler.sample(react_repo, |repo| {
-            repo.benchmark_git(&["status"]).expect("log should succeed")
+        // Sample the performance of human-only edits + commit on large files
+        let result = sampler.sample(test_repo, |repo| {
+            // Append "# Human Line" to each file
+            for file_path in &files_to_edit {
+                let full_path = repo.path().join(file_path);
+
+                let mut file = OpenOptions::new()
+                    .append(true)
+                    .open(&full_path)
+                    .expect(&format!("Should be able to open file: {}", file_path));
+
+                file.write_all(b"\n# Human Line\n")
+                    .expect(&format!("Should be able to write to file: {}", file_path));
+            }
+
+            // Stage the files (regular git, no benchmark)
+            for file_path in &files_to_edit {
+                repo.git(&["add", file_path])
+                    .expect(&format!("Should be able to stage file: {}", file_path));
+            }
+
+            // Benchmark the commit operation (where pre-commit hook runs)
+            repo.benchmark_git(&["commit", "-m", "Human-only edits in big files"])
+                .expect("Commit should succeed")
         });
 
         // Print the results
-        result.print_summary("git log (100 commits)");
+        result.print_summary(&format!(
+            "Human-only edits in big files + commit ({})",
+            repo_name
+        ));
+
+        let (percent_overhead, average_overhead) = result.average_overhead();
+
+        assert!(
+            percent_overhead < 10.0 || average_overhead < PERFORMANCE_FLOOR_MS,
+            "Average overhead should be less than 10% or under 70ms"
+        );
+    }
+
+    #[rstest]
+    #[case("chromium")]
+    #[case("react")]
+    #[case("node")]
+    #[case("chakracore")]
+    fn test_git_reset_head_5(#[case] repo_name: &str) {
+        let repos = get_performance_repos();
+        let test_repo = repos
+            .get(repo_name)
+            .expect(&format!("{} repo should be available", repo_name));
+
+        // Create a sampler that runs 10 times
+        let sampler = Sampler::new(10);
+
+        // Sample the performance of git reset HEAD~5
+        let result = sampler.sample(test_repo, |repo| {
+            // Benchmark the reset operation (--mixed is the default)
+            repo.benchmark_git(&["reset", "HEAD~5"])
+                .expect("Reset should succeed")
+        });
+
+        // Print the results
+        result.print_summary(&format!("git reset HEAD~5 ({})", repo_name));
+
+        let (percent_overhead, _) = result.average_overhead();
+
+        assert!(
+            percent_overhead < 20.0,
+            "Average overhead should be less than 20%"
+        );
     }
 }
 
@@ -389,6 +437,42 @@ pub struct BenchmarkSampleResult {
 }
 
 impl BenchmarkSampleResult {
+    pub fn average_overhead(&self) -> (f64, Duration) {
+        // Calculate overhead statistics (where total > git)
+        let overhead_results: Vec<_> = self
+            .results
+            .iter()
+            .filter(|r| r.total_duration > r.git_duration)
+            .collect();
+
+        if overhead_results.is_empty() {
+            return (0.0, Duration::ZERO);
+        }
+
+        // Calculate average absolute overhead
+        let total_overhead: Duration = overhead_results
+            .iter()
+            .map(|r| r.total_duration - r.git_duration)
+            .sum();
+        let avg_absolute_overhead = total_overhead / overhead_results.len() as u32;
+
+        // Calculate average percentage overhead
+        let total_percentage_overhead: f64 = overhead_results
+            .iter()
+            .map(|r| {
+                let overhead = r.total_duration.as_secs_f64() - r.git_duration.as_secs_f64();
+                let git_time = r.git_duration.as_secs_f64();
+                if git_time > 0.0 {
+                    (overhead / git_time) * 100.0
+                } else {
+                    0.0
+                }
+            })
+            .sum();
+        let avg_percentage_overhead = total_percentage_overhead / overhead_results.len() as f64;
+
+        (avg_percentage_overhead, avg_absolute_overhead)
+    }
     /// Print a formatted summary of the benchmark sample results
     pub fn print_summary(&self, operation_name: &str) {
         println!("\n=== Benchmark Summary: {} ===", operation_name);
