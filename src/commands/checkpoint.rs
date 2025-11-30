@@ -1,6 +1,7 @@
 use crate::authorship::attribution_tracker::{
     Attribution, AttributionTracker, INITIAL_ATTRIBUTION_TS, LineAttribution,
 };
+use crate::authorship::authorship_log::PromptRecord;
 use crate::authorship::working_log::CheckpointKind;
 use crate::authorship::working_log::{Checkpoint, WorkingLogEntry};
 use crate::commands::blame::{GitAiBlameOptions, OLDEST_AI_BLAME_DATE};
@@ -657,7 +658,6 @@ fn get_checkpoint_entry_for_file(
         (content, attrs)
     } else {
         // File doesn't exist in any previous checkpoint - need to initialize from git + INITIAL
-
         // Get previous content from HEAD tree
         let previous_content = if let Some(tree_id) = head_tree_id.as_ref().as_ref() {
             let head_tree = repo.find_tree(tree_id.clone()).ok();
@@ -698,49 +698,54 @@ fn get_checkpoint_entry_for_file(
         let mut prev_line_attributions = initial_attrs_for_file.clone();
         let mut blamed_lines: HashSet<u32> = HashSet::new();
 
-        if feature_flag_inter_commit_move {
-            // Get blame for lines not in INITIAL
-            let blame_start = Instant::now();
-            let mut ai_blame_opts = GitAiBlameOptions::default();
-            ai_blame_opts.no_output = true;
-            ai_blame_opts.return_human_authors_as_human = true;
-            ai_blame_opts.use_prompt_hashes_as_names = true;
-            ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
-            ai_blame_opts.oldest_date = Some(OLDEST_AI_BLAME_DATE.clone());
-            let ai_blame = repo.blame(&file_path, &ai_blame_opts);
-            debug_log(&format!(
-                "[BENCHMARK] Blame for {} took {:?}",
-                file_path,
-                blame_start.elapsed()
-            ));
-
-            // Add blame results for lines NOT covered by INITIAL
-            if let Ok((blames, _)) = ai_blame {
-                for (line, author) in blames {
-                    blamed_lines.insert(line);
-                    // Skip if INITIAL already has this line
-                    if initial_covered_lines.contains(&line) {
-                        continue;
-                    }
-
-                    // Skip human-authored lines - they should remain human
-                    if author == CheckpointKind::Human.to_str() {
-                        continue;
-                    }
-
-                    prev_line_attributions.push(LineAttribution {
-                        start_line: line,
-                        end_line: line,
-                        author_id: author.clone(),
-                        overrode: None,
-                    });
-                }
-            }
+        // Get blame for lines not in INITIAL
+        let blame_start = Instant::now();
+        let mut ai_blame_opts = GitAiBlameOptions::default();
+        ai_blame_opts.no_output = true;
+        ai_blame_opts.return_human_authors_as_human = true;
+        ai_blame_opts.use_prompt_hashes_as_names = true;
+        ai_blame_opts.newest_commit = head_commit_sha.as_ref().clone();
+        ai_blame_opts.oldest_date = Some(OLDEST_AI_BLAME_DATE.clone());
+        let ai_blame = if feature_flag_inter_commit_move {
+            repo.blame(&file_path, &ai_blame_opts).ok()
         } else {
-            debug_log(&format!(
-                "Inter-commit move feature flag is disabled, skipping blame for {}",
-                &file_path
-            ));
+            // When skipping blame, default all lines to "human"
+            let total_lines = previous_content.lines().count() as u32;
+            let mut line_authors: HashMap<u32, String> = HashMap::new();
+            for line_num in 1..=total_lines {
+                line_authors.insert(line_num, CheckpointKind::Human.to_str());
+            }
+            let prompt_records: HashMap<String, PromptRecord> = HashMap::new();
+            Some((line_authors, prompt_records))
+        };
+
+        debug_log(&format!(
+            "[BENCHMARK] Blame for {} took {:?}",
+            file_path,
+            blame_start.elapsed()
+        ));
+
+        // Add blame results for lines NOT covered by INITIAL
+        if let Some((blames, _)) = ai_blame {
+            for (line, author) in blames {
+                blamed_lines.insert(line);
+                // Skip if INITIAL already has this line
+                if initial_covered_lines.contains(&line) {
+                    continue;
+                }
+
+                // Skip human-authored lines - they should remain human
+                if author == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
+                prev_line_attributions.push(LineAttribution {
+                    start_line: line,
+                    end_line: line,
+                    author_id: author.clone(),
+                    overrode: None,
+                });
+            }
         }
 
         // For AI checkpoints, attribute any lines NOT in INITIAL and NOT returned by ai_blame
