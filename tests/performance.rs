@@ -220,47 +220,8 @@ fn clone_and_init_repos() -> HashMap<String, TestRepo> {
             }
         }
 
-        // Checkout the default branch (try main first, fallback to master)
-        let checkout_main = Command::new("git")
-            .args(&["checkout", "main"])
-            .current_dir(&repo_path)
-            .output();
-
-        if checkout_main.is_err() || !checkout_main.unwrap().status.success() {
-            // Try master if main doesn't exist
-            let checkout_master = Command::new("git")
-                .args(&["checkout", "master"])
-                .current_dir(&repo_path)
-                .output()
-                .expect(&format!("Failed to checkout default branch for {}", name));
-
-            if !checkout_master.status.success() {
-                eprintln!("Warning: Could not checkout main or master for {}", name);
-            }
-        }
-
-        // Create a test branch with timestamp to ensure clean state
-        let timestamp_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_nanos();
-        let branch_name = format!("test-cases/{}", timestamp_nanos);
-
-        let create_branch = Command::new("git")
-            .args(&["checkout", "-b", &branch_name])
-            .current_dir(&repo_path)
-            .output()
-            .expect(&format!("Failed to create test branch for {}", name));
-
-        if !create_branch.status.success() {
-            let stderr = String::from_utf8_lossy(&create_branch.stderr);
-            eprintln!(
-                "Warning: Could not create test branch for {}: {}",
-                name, stderr
-            );
-        }
-
         // Create TestRepo wrapper for the cloned repository
+        // Note: Branch creation and checkout is handled by the Sampler before each benchmark run
         let test_repo = TestRepo::new_at_path(&repo_path);
         repos_map.insert(name.to_string(), test_repo);
     }
@@ -558,6 +519,11 @@ impl Sampler {
 
     /// Sample a benchmark operation over multiple runs
     ///
+    /// Automatically resets the repository to a clean state before each run:
+    /// - Resets with --hard to clean any changes
+    /// - Checks out main or master branch
+    /// - Creates a new timestamped branch for isolation
+    ///
     /// # Arguments
     /// * `test_repo` - The test repository to pass to the operation
     /// * `operation` - A closure that takes a &TestRepo and returns a BenchmarkResult
@@ -578,9 +544,101 @@ impl Sampler {
     where
         F: Fn(&TestRepo) -> BenchmarkResult,
     {
+        self.sample_with_setup(
+            test_repo,
+            |repo| {
+                // Default setup: Reset to clean state before each run (not timed)
+
+                // 1. Clean any untracked files and directories
+                repo.git(&["clean", "-fd"]).expect("Clean should succeed");
+
+                // 2. Reset --hard to clean any changes
+                repo.git(&["reset", "--hard"])
+                    .expect("Reset --hard should succeed");
+
+                // 3. Get the default branch from the remote
+                // Try to get the symbolic ref for origin/HEAD to find the default branch
+                let default_branch = repo
+                    .git(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+                    .ok()
+                    .and_then(|output| {
+                        // Extract branch name from "refs/remotes/origin/main"
+                        output
+                            .trim()
+                            .strip_prefix("refs/remotes/origin/")
+                            .map(|b| b.to_string())
+                    })
+                    .unwrap_or_else(|| {
+                        // Fallback: try main, then master
+                        if repo.git(&["rev-parse", "--verify", "main"]).is_ok() {
+                            "main".to_string()
+                        } else {
+                            "master".to_string()
+                        }
+                    });
+
+                // 4. Checkout the default branch
+                repo.git(&["checkout", &default_branch])
+                    .expect(&format!("Checkout {} should succeed", default_branch));
+
+                // 5. Create a new branch with timestamp for isolation
+                let timestamp_nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_nanos();
+                let branch_name = format!("test-bench/{}", timestamp_nanos);
+                repo.git(&["checkout", "-b", &branch_name])
+                    .expect("Create branch should succeed");
+            },
+            operation,
+        )
+    }
+
+    /// Sample a benchmark operation over multiple runs with a setup function
+    /// that runs before each benchmark but is not included in timing
+    ///
+    /// # Arguments
+    /// * `test_repo` - The test repository to pass to the operation
+    /// * `setup` - A closure that runs before each benchmark (not timed)
+    /// * `operation` - A closure that takes a &TestRepo and returns a BenchmarkResult
+    ///
+    /// # Returns
+    /// A `BenchmarkSampleResult` containing averaged statistics about the benchmark results
+    ///
+    /// # Example
+    /// ```ignore
+    /// let sampler = Sampler::new(5);
+    /// let result = sampler.sample_with_setup(
+    ///     test_repo,
+    ///     |repo| {
+    ///         // Setup code that runs before each benchmark (not timed)
+    ///         repo.git(&["reset", "--hard"]).expect("reset should succeed");
+    ///     },
+    ///     |repo| {
+    ///         // The actual benchmark
+    ///         repo.benchmark_git(&["log", "--oneline", "-n", "100"])
+    ///             .expect("log should succeed")
+    ///     }
+    /// );
+    /// result.print_summary("git log (100 commits)");
+    /// ```
+    pub fn sample_with_setup<S, F>(
+        &self,
+        test_repo: &TestRepo,
+        setup: S,
+        operation: F,
+    ) -> BenchmarkSampleResult
+    where
+        S: Fn(&TestRepo),
+        F: Fn(&TestRepo) -> BenchmarkResult,
+    {
         let mut results = Vec::with_capacity(self.num_runs);
 
         for _i in 0..self.num_runs {
+            // Run setup before each benchmark (not timed)
+            setup(test_repo);
+
+            // Run the actual benchmark
             let benchmark_result = operation(test_repo);
             results.push(benchmark_result);
         }
