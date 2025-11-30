@@ -74,9 +74,16 @@ pub fn run(
             .map(|files| files.is_empty())
             .unwrap_or(true);
 
+        // Also check for INITIAL attributions - these are AI attributions from previous
+        // commits that weren't staged (e.g., after an amend). We must process these.
+        let has_initial_attributions = !working_log.read_initial_attributions().files.is_empty();
+
         // we can only skip the work here if inter_commit_move is not enabled.
         // otherwise we might miss an AI attribution that was moved by a user ie: copy / pasting
-        if has_no_ai_edits && !Config::get().get_feature_flags().inter_commit_move {
+        if has_no_ai_edits
+            && !has_initial_attributions
+            && !Config::get().get_feature_flags().inter_commit_move
+        {
             debug_log("No AI edits,in pre-commit checkpoint, skipping");
             return Ok((0, 0, 0));
         }
