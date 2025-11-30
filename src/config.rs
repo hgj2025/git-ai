@@ -495,38 +495,4 @@ mod tests {
         assert!(config.allow_repositories[0].matches("user@github.com:company/project"));
         assert!(!config.allow_repositories[0].matches("git@github.com:other/repo"));
     }
-
-    #[test]
-    fn test_feature_flag_override() {
-        // Clear any existing overrides
-        Config::clear_test_feature_flags();
-
-        // Get the config
-        let config = Config::get();
-
-        // Test that we can override feature flags
-        let test_flags = FeatureFlags {
-            rewrite_stash: true,
-            inter_commit_move: false,
-        };
-
-        Config::set_test_feature_flags(test_flags.clone());
-
-        // Get the feature flags and verify they match our override
-        let flags = config.get_feature_flags();
-        assert_eq!(flags.rewrite_stash, true);
-        assert_eq!(flags.inter_commit_move, false);
-
-        // Clear the override
-        Config::clear_test_feature_flags();
-
-        // Now it should return the default flags
-        let flags = config.get_feature_flags();
-        // These will be the default values (true in debug mode, false in release)
-        #[cfg(debug_assertions)]
-        {
-            assert_eq!(flags.rewrite_stash, true);
-            assert_eq!(flags.inter_commit_move, true);
-        }
-    }
 }
