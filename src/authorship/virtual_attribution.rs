@@ -523,6 +523,11 @@ impl VirtualAttributions {
             // Group line attributions by author
             let mut author_lines: HashMap<String, Vec<u32>> = HashMap::new();
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI attributions
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 for line in line_attr.start_line..=line_attr.end_line {
                     author_lines
                         .entry(line_attr.author_id.clone())
@@ -864,6 +869,11 @@ impl VirtualAttributions {
             if !committed_lines_map.is_empty() {
                 // Create attestation entries from committed lines
                 for (author_id, mut lines) in committed_lines_map {
+                    // Skip human attributions - we only track AI attributions in the output
+                    if author_id == CheckpointKind::Human.to_str() {
+                        continue;
+                    }
+
                     lines.sort();
                     lines.dedup();
 
@@ -922,6 +932,11 @@ impl VirtualAttributions {
                 // Convert the map into line attributions
                 let mut uncommitted_line_attrs = Vec::new();
                 for (author_id, mut lines) in uncommitted_lines_map {
+                    // Skip human attributions - we only track AI attributions in the output
+                    if author_id == CheckpointKind::Human.to_str() {
+                        continue;
+                    }
+
                     lines.sort();
                     lines.dedup();
 
@@ -1057,6 +1072,11 @@ impl VirtualAttributions {
             if !committed_lines_map.is_empty() {
                 // Create attestation entries from committed lines
                 for (author_id, mut lines) in committed_lines_map {
+                    // Skip human attributions - we only track AI attributions in the output
+                    if author_id == CheckpointKind::Human.to_str() {
+                        continue;
+                    }
+
                     lines.sort();
                     lines.dedup();
 
@@ -1185,6 +1205,11 @@ impl VirtualAttributions {
         let mut session_accepted_lines: HashMap<String, u32> = HashMap::new();
         for (_file_path, (_char_attrs, line_attrs)) in attributions {
             for line_attr in line_attrs {
+                // Skip human attributions - we only track AI prompt metrics
+                if line_attr.author_id == CheckpointKind::Human.to_str() {
+                    continue;
+                }
+
                 let line_count = line_attr.end_line - line_attr.start_line + 1;
                 *session_accepted_lines
                     .entry(line_attr.author_id.clone())
@@ -1193,6 +1218,8 @@ impl VirtualAttributions {
         }
 
         // Calculate overridden_lines: count lines where overrode field matches session_id
+        // NOTE: We intentionally include human attributions here because when a human
+        // overrides an AI line, the attribution has author_id="human" and overrode="ai_prompt_id"
         let mut session_overridden_lines: HashMap<String, u32> = HashMap::new();
         for line_attr in &all_line_attributions {
             if let Some(overrode_id) = &line_attr.overrode {
