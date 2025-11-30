@@ -9,6 +9,9 @@ use serde::Deserialize;
 use crate::feature_flags::FeatureFlags;
 use crate::git::repository::Repository;
 
+#[cfg(test)]
+use std::sync::RwLock;
+
 /// Centralized configuration for the application
 pub struct Config {
     git_path: String,
@@ -76,6 +79,9 @@ struct FileConfig {
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
+
+#[cfg(test)]
+static TEST_FEATURE_FLAGS_OVERRIDE: RwLock<Option<FeatureFlags>> = RwLock::new(None);
 
 impl Config {
     /// Initialize the global configuration exactly once.
@@ -166,6 +172,44 @@ impl Config {
     }
 
     pub fn feature_flags(&self) -> &FeatureFlags {
+        &self.feature_flags
+    }
+
+    /// Override feature flags for testing purposes.
+    /// This only works in test mode and allows tests to temporarily override the feature flags.
+    #[cfg(test)]
+    pub fn set_test_feature_flags(flags: FeatureFlags) {
+        let mut override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .write()
+            .expect("Failed to acquire write lock on test feature flags");
+        *override_flags = Some(flags);
+    }
+
+    /// Clear any feature flag overrides.
+    /// This should be called in test cleanup to reset to default behavior.
+    #[cfg(test)]
+    pub fn clear_test_feature_flags() {
+        let mut override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .write()
+            .expect("Failed to acquire write lock on test feature flags");
+        *override_flags = None;
+    }
+
+    /// Get feature flags, checking for test overrides first.
+    /// In test mode, this will return overridden flags if set, otherwise the normal flags.
+    #[cfg(test)]
+    pub fn get_feature_flags(&self) -> FeatureFlags {
+        let override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .read()
+            .expect("Failed to acquire read lock on test feature flags");
+        override_flags
+            .clone()
+            .unwrap_or_else(|| self.feature_flags.clone())
+    }
+
+    /// Get feature flags (non-test version, just returns a reference).
+    #[cfg(not(test))]
+    pub fn get_feature_flags(&self) -> &FeatureFlags {
         &self.feature_flags
     }
 }
@@ -448,5 +492,39 @@ mod tests {
         assert!(config.allow_repositories[0].matches("git@github.com:company/repo"));
         assert!(config.allow_repositories[0].matches("user@github.com:company/project"));
         assert!(!config.allow_repositories[0].matches("git@github.com:other/repo"));
+    }
+
+    #[test]
+    fn test_feature_flag_override() {
+        // Clear any existing overrides
+        Config::clear_test_feature_flags();
+
+        // Get the config
+        let config = Config::get();
+
+        // Test that we can override feature flags
+        let test_flags = FeatureFlags {
+            rewrite_stash: true,
+            inter_commit_move: false,
+        };
+
+        Config::set_test_feature_flags(test_flags.clone());
+
+        // Get the feature flags and verify they match our override
+        let flags = config.get_feature_flags();
+        assert_eq!(flags.rewrite_stash, true);
+        assert_eq!(flags.inter_commit_move, false);
+
+        // Clear the override
+        Config::clear_test_feature_flags();
+
+        // Now it should return the default flags
+        let flags = config.get_feature_flags();
+        // These will be the default values (true in debug mode, false in release)
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(flags.rewrite_stash, true);
+            assert_eq!(flags.inter_commit_move, true);
+        }
     }
 }
