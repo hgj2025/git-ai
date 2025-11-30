@@ -47,13 +47,14 @@ pub fn handle_show_prompt(args: &[String]) {
     }
 }
 
-struct ParsedArgs {
-    prompt_id: String,
-    commit: Option<String>,
-    offset: usize,
+#[derive(Debug)]
+pub struct ParsedArgs {
+    pub prompt_id: String,
+    pub commit: Option<String>,
+    pub offset: usize,
 }
 
-fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
+pub fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     let mut prompt_id: Option<String> = None;
     let mut commit: Option<String> = None;
     let mut offset: Option<usize> = None;
