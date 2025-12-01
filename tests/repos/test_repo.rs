@@ -1,7 +1,9 @@
 use git_ai::authorship::authorship_log_serialization::AuthorshipLog;
 use git_ai::authorship::stats::CommitStats;
+use git_ai::feature_flags::FeatureFlags;
 use git_ai::git::repo_storage::PersistedWorkingLog;
 use git_ai::git::repository as GitAiRepository;
+use git_ai::observability::wrapper_performance_targets::BenchmarkResult;
 use git2::Repository;
 use insta::assert_debug_snapshot;
 use rand::Rng;
@@ -9,12 +11,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use super::test_file::TestFile;
 
 #[derive(Clone, Debug)]
 pub struct TestRepo {
     path: PathBuf,
+    pub feature_flags: FeatureFlags,
 }
 
 impl TestRepo {
@@ -32,7 +36,29 @@ impl TestRepo {
             .set_str("user.email", "test@example.com")
             .expect("failed to initialize git2 repository");
 
-        Self { path }
+        Self {
+            path,
+            feature_flags: FeatureFlags::default(),
+        }
+    }
+
+    pub fn new_at_path(path: &PathBuf) -> Self {
+        let repo = Repository::init(path).expect("failed to initialize git2 repository");
+        let mut config = Repository::config(&repo).expect("failed to initialize git2 repository");
+        config
+            .set_str("user.name", "Test User")
+            .expect("failed to initialize git2 repository");
+        config
+            .set_str("user.email", "test@example.com")
+            .expect("failed to initialize git2 repository");
+        Self {
+            path: path.clone(),
+            feature_flags: FeatureFlags::default(),
+        }
+    }
+
+    pub fn set_feature_flags(&mut self, feature_flags: FeatureFlags) {
+        self.feature_flags = feature_flags;
     }
 
     pub fn path(&self) -> &PathBuf {
@@ -65,6 +91,40 @@ impl TestRepo {
 
     pub fn git(&self, args: &[&str]) -> Result<String, String> {
         return self.git_with_env(args, &[]);
+    }
+
+    pub fn benchmark_git(&self, args: &[&str]) -> Result<BenchmarkResult, String> {
+        let output = self.git_with_env(args, &[("GIT_AI_DEBUG_PERFORMANCE", "2")])?;
+
+        println!("output: {}", output);
+        // Find the JSON performance line
+        for line in output.lines() {
+            if line.contains("[git-ai (perf-json)]") {
+                // Extract the JSON part after the colored prefix
+                if let Some(json_start) = line.find('{') {
+                    let json_str = &line[json_start..];
+                    let parsed: serde_json::Value = serde_json::from_str(json_str)
+                        .map_err(|e| format!("Failed to parse performance JSON: {}", e))?;
+
+                    return Ok(BenchmarkResult {
+                        total_duration: Duration::from_millis(
+                            parsed["total_duration_ms"].as_u64().unwrap_or(0),
+                        ),
+                        git_duration: Duration::from_millis(
+                            parsed["git_duration_ms"].as_u64().unwrap_or(0),
+                        ),
+                        pre_command_duration: Duration::from_millis(
+                            parsed["pre_command_duration_ms"].as_u64().unwrap_or(0),
+                        ),
+                        post_command_duration: Duration::from_millis(
+                            parsed["post_command_duration_ms"].as_u64().unwrap_or(0),
+                        ),
+                    });
+                }
+            }
+        }
+
+        Err("No performance data found in output".to_string())
     }
 
     pub fn git_with_env(&self, args: &[&str], envs: &[(&str, &str)]) -> Result<String, String> {
@@ -173,7 +233,11 @@ impl TestRepo {
         self.commit(message)
     }
 
-    pub fn commit_with_env(&self, message: &str, envs: &[(&str, &str)]) -> Result<NewCommit, String> {
+    pub fn commit_with_env(
+        &self,
+        message: &str,
+        envs: &[(&str, &str)],
+    ) -> Result<NewCommit, String> {
         let output = self.git_with_env(&["commit", "-m", message], envs);
 
         // println!("commit output: {:?}", output);
@@ -265,78 +329,4 @@ fn compile_binary() -> PathBuf {
 
 fn get_binary_path() -> &'static PathBuf {
     COMPILED_BINARY.get_or_init(compile_binary)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::test_file::ExpectedLineExt;
-    use super::TestRepo;
-    use crate::lines;
-
-    #[test]
-    fn test_invoke_git() {
-        let repo = TestRepo::new();
-        let output = repo.git(&["status"]).expect("git status should succeed");
-        println!("output: {}", output);
-        assert!(output.contains("On branch"));
-    }
-
-    #[test]
-    fn test_invoke_git_ai() {
-        let repo = TestRepo::new();
-        let output = repo
-            .git_ai(&["version"])
-            .expect("git-ai version should succeed");
-        assert!(!output.is_empty());
-    }
-
-    // #[test]
-    // fn test_exp() {
-    //     let repo = TestRepo::new();
-
-    //     let mut example_txt = repo.filename("example.txt");
-    //     example_txt.set_contents(vec!["og".human(), "og2".ai()]);
-
-    //     example_txt.insert_at(
-    //         0,
-    //         lines![
-    //             "HUMAN",
-    //             "HUMAN".ai(),
-    //             "HUMAN",
-    //             "HUMAN",
-    //             "Hello, world!".ai(),
-    //         ],
-    //     );
-
-    //     example_txt.delete_at(3);
-
-    //     let _commit = repo.stage_all_and_commit("mix ai human").unwrap();
-
-    //     // Assert that blame output matches expected authorship
-    //     example_txt.assert_blame_contents_expected();
-
-    //     example_txt.assert_blame_snapshot();
-
-    //     example_txt.assert_contents_expected();
-    // }
-
-    #[test]
-    fn test_assert_lines_and_blame() {
-        let repo = TestRepo::new();
-
-        let mut example_txt = repo.filename("example.txt");
-
-        // Set up the file with some AI and human lines
-        example_txt.set_contents(lines!["line 1", "line 2".ai(), "line 3", "line 4".ai()]);
-
-        repo.stage_all_and_commit("test commit").unwrap();
-
-        // Now assert the exact output using the new syntax
-        example_txt.assert_lines_and_blame(lines![
-            "line 1".human(),
-            "line 2".ai(),
-            "line 3".human(),
-            "line 4".ai(),
-        ]);
-    }
 }

@@ -221,7 +221,7 @@ fn test_ai_adds_lines_multiple_commits() {
     let repo = TestRepo::new();
     let mut file = repo.filename("test.ts");
 
-    file.set_contents(lines!["base_line"]);
+    file.set_contents(lines!["base_line", ""]);
 
     repo.stage_all_and_commit("Initial commit").unwrap();
 
@@ -332,12 +332,18 @@ fn test_multiple_ai_sessions_with_partial_staging() {
     repo.stage_all_and_commit("Initial commit").unwrap();
 
     // First AI session adds lines and they get staged
-    file.insert_at(3, lines!["ai1_line1".ai(), "ai1_line2".ai(), "ai1_line3".ai()]);
+    file.insert_at(
+        3,
+        lines!["ai1_line1".ai(), "ai1_line2".ai(), "ai1_line3".ai()],
+    );
 
     file.stage();
 
     // Second AI session adds lines but they DON'T get staged
-    file.insert_at(6, lines!["ai2_line1".ai(), "ai2_line2".ai(), "ai2_line3".ai()]);
+    file.insert_at(
+        6,
+        lines!["ai2_line1".ai(), "ai2_line2".ai(), "ai2_line3".ai()],
+    );
 
     let commit = repo.commit("Commit first AI session only").unwrap();
     assert_eq!(commit.authorship_log.attestations.len(), 1);
@@ -359,7 +365,7 @@ fn test_ai_adds_then_commits_in_batches() {
     let repo = TestRepo::new();
     let mut file = repo.filename("test.ts");
 
-    file.set_contents(lines!["line1", "line2", "line3", "line4"]);
+    file.set_contents(lines!["line1", "line2", "line3", "line4", ""]);
 
     repo.stage_all_and_commit("Initial commit").unwrap();
 
@@ -464,7 +470,7 @@ fn test_unstaged_ai_lines_saved_to_working_log() {
     let repo = TestRepo::new();
     let mut file = repo.filename("test.ts");
 
-    file.set_contents(lines!["line1", "line2", "line3"]);
+    file.set_contents(lines!["line1", "line2", "line3", ""]);
 
     repo.stage_all_and_commit("Initial commit").unwrap();
 

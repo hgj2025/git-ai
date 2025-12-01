@@ -9,6 +9,9 @@ use serde::Deserialize;
 use crate::feature_flags::FeatureFlags;
 use crate::git::repository::Repository;
 
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::RwLock;
+
 /// Centralized configuration for the application
 pub struct Config {
     git_path: String,
@@ -76,6 +79,9 @@ struct FileConfig {
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
+
+#[cfg(any(test, feature = "test-support"))]
+static TEST_FEATURE_FLAGS_OVERRIDE: RwLock<Option<FeatureFlags>> = RwLock::new(None);
 
 impl Config {
     /// Initialize the global configuration exactly once.
@@ -166,6 +172,46 @@ impl Config {
     }
 
     pub fn feature_flags(&self) -> &FeatureFlags {
+        &self.feature_flags
+    }
+
+    /// Override feature flags for testing purposes.
+    /// Only available when the `test-support` feature is enabled or in test mode.
+    /// Must be `pub` to work with integration tests in the `tests/` directory.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_feature_flags(flags: FeatureFlags) {
+        let mut override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .write()
+            .expect("Failed to acquire write lock on test feature flags");
+        *override_flags = Some(flags);
+    }
+
+    /// Clear any feature flag overrides.
+    /// Only available when the `test-support` feature is enabled or in test mode.
+    /// This should be called in test cleanup to reset to default behavior.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_test_feature_flags() {
+        let mut override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .write()
+            .expect("Failed to acquire write lock on test feature flags");
+        *override_flags = None;
+    }
+
+    /// Get feature flags, checking for test overrides first.
+    /// In test mode, this will return overridden flags if set, otherwise the normal flags.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_feature_flags(&self) -> FeatureFlags {
+        let override_flags = TEST_FEATURE_FLAGS_OVERRIDE
+            .read()
+            .expect("Failed to acquire read lock on test feature flags");
+        override_flags
+            .clone()
+            .unwrap_or_else(|| self.feature_flags.clone())
+    }
+
+    /// Get feature flags (non-test version, just returns a reference).
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub fn get_feature_flags(&self) -> &FeatureFlags {
         &self.feature_flags
     }
 }
@@ -265,7 +311,7 @@ fn build_feature_flags(file_cfg: &Option<FileConfig>) -> FeatureFlags {
         serde_json::from_value(value.clone()).ok()
     });
 
-    FeatureFlags::from_file_config(file_flags)
+    FeatureFlags::from_env_and_file(file_flags)
 }
 
 fn resolve_git_path(file_cfg: &Option<FileConfig>) -> String {

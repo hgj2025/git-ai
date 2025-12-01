@@ -118,7 +118,7 @@ fn test_reset_to_same_commit_is_noop() {
     let mut file = repo.filename("test.txt");
 
     // Create commit with AI changes
-    file.set_contents(lines!["line 1", "// AI line".ai()]);
+    file.set_contents(lines!["line 1", "// AI line".ai(), ""]);
     repo.stage_all_and_commit("Commit").unwrap();
 
     // Make uncommitted changes
@@ -151,7 +151,7 @@ fn test_reset_multiple_commits() {
     let mut file = repo.filename("code.js");
 
     // Create base commit
-    file.set_contents(lines!["// Base"]);
+    file.set_contents(lines!["// Base", ""]);
     let base_commit = repo.stage_all_and_commit("Base").unwrap();
 
     // Second commit - AI adds feature
@@ -189,7 +189,7 @@ fn test_reset_preserves_uncommitted_changes() {
     let mut file = repo.filename("app.py");
 
     // Create base commit
-    file.set_contents(lines!["def main():", "    pass"]);
+    file.set_contents(lines!["def main():", "    pass", ""]);
     let base_commit = repo.stage_all_and_commit("Base").unwrap();
 
     // Second commit with AI changes
@@ -230,8 +230,8 @@ fn test_reset_with_pathspec() {
     let mut file2 = repo.filename("file2.txt");
 
     // Create initial commit with multiple files
-    file1.set_contents(lines!["content 1"]);
-    file2.set_contents(lines!["content 2"]);
+    file1.set_contents(lines!["content 1", ""]);
+    file2.set_contents(lines!["content 2", ""]);
     let first_commit = repo.stage_all_and_commit("Initial").unwrap();
 
     // Commit AI changes to both files
@@ -443,8 +443,8 @@ fn test_reset_mixed_pathspec_preserves_ai_authorship() {
     let mut file2 = repo.filename("file2.txt");
 
     // Base commit with two files
-    file1.set_contents(lines!["base content 1"]);
-    file2.set_contents(lines!["base content 2"]);
+    file1.set_contents(lines!["base content 1", ""]);
+    file2.set_contents(lines!["base content 2", ""]);
     let base_commit = repo.stage_all_and_commit("Base commit").unwrap();
 
     // Second commit: AI modifies both files
@@ -494,8 +494,8 @@ fn test_reset_mixed_pathspec_multiple_commits() {
     let mut lib_file = repo.filename("lib.js");
 
     // Base commit
-    app_file.set_contents(lines!["// base"]);
-    lib_file.set_contents(lines!["// base"]);
+    app_file.set_contents(lines!["// base", ""]);
+    lib_file.set_contents(lines!["// base", ""]);
     let base_commit = repo.stage_all_and_commit("Base").unwrap();
 
     // First AI commit - modifies both files

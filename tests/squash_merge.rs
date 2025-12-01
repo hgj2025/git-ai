@@ -11,7 +11,7 @@ fn test_prepare_working_log_simple_squash() {
     let mut file = repo.filename("main.txt");
 
     // Create master branch with initial content
-    file.set_contents(lines!["line 1", "line 2", "line 3"]);
+    file.set_contents(lines!["line 1", "line 2", "line 3", ""]);
     repo.stage_all_and_commit("Initial commit on master")
         .unwrap();
 
@@ -46,15 +46,12 @@ fn test_prepare_working_log_simple_squash() {
 
     // Verify stats for squashed commit
     let stats = repo.stats().unwrap();
-    assert_eq!(
-        stats.git_diff_added_lines, 3,
-        "Squash commit adds 3 lines total (includes newline)"
-    );
+    assert_eq!(stats.git_diff_added_lines, 2, "Squash commit adds 2 lines");
     assert_eq!(stats.ai_additions, 1, "1 AI line from feature branch");
     assert_eq!(stats.ai_accepted, 1, "1 AI line accepted without edits");
     assert_eq!(
-        stats.human_additions, 2,
-        "2 human lines from feature branch"
+        stats.human_additions, 1,
+        "1 human lines from feature branch"
     );
     assert_eq!(stats.mixed_additions, 0, "No mixed edits");
 }
