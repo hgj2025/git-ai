@@ -101,6 +101,84 @@ mod tests {
     #[case("node")]
     #[case("chakracore")]
     #[ignore]
+    fn test_ai_and_human_edits(#[case] repo_name: &str) {
+        let repos = get_performance_repos();
+        let test_repo = repos
+            .get(repo_name)
+            .expect(&format!("{} repo should be available", repo_name));
+        // Find random files for testing
+        let random_files = find_random_files(test_repo).expect("Should find random files");
+
+        // Select 3 random files (not large ones)
+        let files_to_edit: Vec<String> =
+            random_files.random_files.iter().take(3).cloned().collect();
+
+        assert!(
+            files_to_edit.len() >= 3,
+            "Should have at least 3 random files to edit"
+        );
+
+        // Create a sampler that runs 10 times
+        let sampler = Sampler::new(10);
+
+        // Sample the performance of AI and human edits + commit
+        let result = sampler.sample(test_repo, |repo| {
+            for file_path in &files_to_edit {
+                let full_path = repo.path().join(file_path);
+
+                // Step 1: Append "# Human Line" to the file
+                {
+                    let mut file = OpenOptions::new()
+                        .append(true)
+                        .open(&full_path)
+                        .expect(&format!("Should be able to open file: {}", file_path));
+
+                    file.write_all(b"\n# Human Line\n")
+                        .expect(&format!("Should be able to write to file: {}", file_path));
+                }
+
+                // Step 2: Run git-ai checkpoint
+                repo.git_ai(&["checkpoint", file_path])
+                    .expect(&format!("Should be able to checkpoint file: {}", file_path));
+
+                // Step 3: Insert "# AI Line" at the top of the file
+                {
+                    let content = std::fs::read_to_string(&full_path)
+                        .expect(&format!("Should be able to read file: {}", file_path));
+
+                    let new_content = format!("# AI Line\n{}", content);
+
+                    std::fs::write(&full_path, new_content)
+                        .expect(&format!("Should be able to write to file: {}", file_path));
+                }
+
+                // Step 4: Run git-ai mock_ai
+                repo.git_ai(&["checkpoint", "mock_ai", file_path])
+                    .expect(&format!("Should be able to mock_ai file: {}", file_path));
+            }
+
+            // Benchmark the commit operation (where pre-commit hook runs)
+            repo.benchmark_git(&["commit", "-a", "-m", "AI and human edits"])
+                .expect("Commit should succeed")
+        });
+
+        // Print the results
+        result.print_summary(&format!("AI and human edits + commit ({})", repo_name));
+
+        let (percent_overhead, average_overhead) = result.average_overhead();
+
+        assert!(
+            percent_overhead < 10.0 || average_overhead < PERFORMANCE_FLOOR_MS,
+            "Average overhead should be less than 10% or under 70ms"
+        );
+    }
+
+    #[rstest]
+    #[case("chromium")]
+    #[case("react")]
+    #[case("node")]
+    #[case("chakracore")]
+    #[ignore]
     fn test_human_only_edits_in_big_files_then_commit(#[case] repo_name: &str) {
         let repos = get_performance_repos();
         let test_repo = repos
