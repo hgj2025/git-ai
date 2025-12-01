@@ -89,6 +89,7 @@ fn test_blame_after_merge_with_ai_contributions() {
 // }
 
 #[test]
+#[ignore] // TODO: Fix this when we bring move back. Our test rig isn't handling trailing empty lines
 fn test_blame_after_complex_merge_scenario() {
     let repo = TestRepo::new();
     let mut file = repo.filename("test.txt");

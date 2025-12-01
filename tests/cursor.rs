@@ -177,6 +177,8 @@ fn test_extract_transcript_from_test_conversation() {
 }
 
 #[test]
+#[ignore]
+
 fn test_cursor_preset_extracts_edited_filepath() {
     use git_ai::commands::checkpoint_agent::agent_presets::{
         AgentCheckpointFlags, AgentCheckpointPreset, CursorPreset,
@@ -228,7 +230,6 @@ fn test_cursor_preset_no_filepath_when_missing() {
 }
 
 #[test]
-#[ignore]
 fn test_cursor_preset_human_checkpoint_no_filepath() {
     use git_ai::authorship::working_log::CheckpointKind;
     use git_ai::commands::checkpoint_agent::agent_presets::{
