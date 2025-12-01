@@ -174,34 +174,3 @@ fn collect_blob_entries(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::git::find_repository_in_path;
-    use std::time::Instant;
-
-    #[test]
-    fn test_load_ai_touched_files() {
-        smol::block_on(async {
-            let repo = find_repository_in_path(".").unwrap();
-
-            let start = Instant::now();
-            let files = load_all_ai_touched_files(&repo).await.unwrap();
-            let elapsed = start.elapsed();
-
-            println!(
-                "Found {} unique AI-touched files in {:?}",
-                files.len(),
-                elapsed
-            );
-
-            // Show first 10 files
-            let mut sorted_files: Vec<_> = files.iter().collect();
-            sorted_files.sort();
-            for file in sorted_files.iter().take(10) {
-                println!("  {}", file);
-            }
-        });
-    }
-}
