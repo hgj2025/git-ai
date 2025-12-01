@@ -1,8 +1,9 @@
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::authorship::post_commit;
 use crate::error::GitAiError;
+use crate::git::authorship_traversal::load_ai_touched_files_for_commits;
 use crate::git::refs::get_reference_as_authorship_log_v3;
-use crate::git::repository::Repository;
+use crate::git::repository::{CommitRange, Repository};
 use crate::git::rewrite_log::RewriteLogEvent;
 use crate::utils::debug_log;
 use std::collections::{HashMap, HashSet};
@@ -232,6 +233,18 @@ pub fn rewrite_authorship_after_squash_or_rebase(
     // Step 3: Get list of changed files between the two branches
     let changed_files = repo.diff_changed_files(source_head_sha, &target_branch_head_sha)?;
 
+    // Get commits from source branch (from source_head back to merge_base)
+    // Uses git rev-list which safely handles the range without infinite walking
+    let source_commits = if let Some(ref base) = merge_base {
+        let range =
+            CommitRange::new_infer_refname(repo, base.clone(), source_head_sha.to_string(), None)?;
+        range.all_commits()
+    } else {
+        vec![source_head_sha.to_string()]
+    };
+    let changed_files =
+        filter_pathspecs_to_ai_touched_files(repo, &source_commits, &changed_files)?;
+
     if changed_files.is_empty() {
         // No files changed, nothing to do
         debug_log("No files changed in merge, skipping authorship rewrite");
@@ -318,6 +331,7 @@ pub fn rewrite_authorship_after_rebase_v2(
 
     // Step 1: Extract pathspecs from all original commits
     let pathspecs = get_pathspecs_from_commits(repo, original_commits)?;
+    let pathspecs = filter_pathspecs_to_ai_touched_files(repo, original_commits, &pathspecs)?;
 
     if pathspecs.is_empty() {
         // No files were modified, nothing to do
@@ -537,6 +551,7 @@ pub fn rewrite_authorship_after_cherry_pick(
 
     // Step 1: Extract pathspecs from all source commits
     let pathspecs = get_pathspecs_from_commits(repo, source_commits)?;
+    let pathspecs = filter_pathspecs_to_ai_touched_files(repo, source_commits, &pathspecs)?;
 
     if pathspecs.is_empty() {
         // No files were modified, nothing to do
@@ -865,6 +880,17 @@ pub fn reconstruct_working_log_after_reset(
         all_changed_files
     };
 
+    // Get all commits in the range from old_head back to target (exclusive of target)
+    // Uses git rev-list which safely handles the range without infinite walking
+    let range = CommitRange::new_infer_refname(
+        repo,
+        target_commit_sha.to_string(),
+        old_head_sha.to_string(),
+        None,
+    )?;
+    let commits_in_range = range.all_commits();
+    let pathspecs = filter_pathspecs_to_ai_touched_files(repo, &commits_in_range, &pathspecs)?;
+
     if pathspecs.is_empty() {
         debug_log("No files changed between commits, nothing to reconstruct");
         // Still delete old working log
@@ -1008,6 +1034,22 @@ fn get_pathspecs_from_commits(
     }
 
     Ok(pathspecs.into_iter().collect())
+}
+
+fn filter_pathspecs_to_ai_touched_files(
+    repo: &Repository,
+    commit_shas: &[String],
+    pathspecs: &[String],
+) -> Result<Vec<String>, GitAiError> {
+    let touched_files = smol::block_on(load_ai_touched_files_for_commits(
+        repo,
+        commit_shas.to_vec(),
+    ))?;
+    Ok(pathspecs
+        .iter()
+        .filter(|p| touched_files.contains(p.as_str()))
+        .cloned()
+        .collect())
 }
 
 /// Transform VirtualAttributions to match a new final state (single-source variant)
