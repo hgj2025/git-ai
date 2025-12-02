@@ -51,17 +51,28 @@ git-ai stats --json
 git-ai stats <commit-sha> --json
 git-ai stats <start>..<end> --json
 
-# Ignore specific files from stats (e.g., lockfiles)
+# Ignore specific files from stats (e.g., lockfiles, generated files)
+# Exact filename matching
 git-ai stats --ignore Cargo.lock
 git-ai stats --ignore Cargo.lock --ignore package-lock.json --ignore yarn.lock
-git-ai stats <start>..<end> --ignore Cargo.lock --ignore go.sum
+
+# Glob pattern matching
+git-ai stats --ignore "*.lock"                    # All files ending in .lock
+git-ai stats --ignore "*.generated.*"             # All generated files
+git-ai stats --ignore "*.lock" --ignore "**/dist/**"  # Multiple patterns
+
+# Combine exact and glob patterns
+git-ai stats <start>..<end> --ignore Cargo.lock --ignore "*.generated.js"
 ```
 
 **Options:**
 - `<commit-sha>` - Optional commit SHA (defaults to HEAD)
 - `<start>..<end>` - Optional commit range; when provided, stats are computed over the entire range rather than a single commit
 - `--json` - Output statistics in JSON format
-- `--ignore <pattern>` - Exclude files matching the pattern from statistics (can be specified multiple times). Matches exact filename in any directory.
+- `--ignore <pattern>` - Exclude files matching the pattern from statistics (can be specified multiple times). Supports:
+  - **Exact matches**: `Cargo.lock`, `package-lock.json`
+  - **Glob patterns**: `*.lock`, `*.generated.*`, `**/target/**`, `node_modules/**`
+  - Pattern is matched against both the full file path and just the filename
 
 **Output**
 

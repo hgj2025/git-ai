@@ -17,16 +17,25 @@ use std::io::IsTerminal;
 const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Check if a file path should be ignored based on the provided patterns
+/// Supports both exact matches and glob patterns (e.g., "*.lock", "**/*.generated.js")
 pub fn should_ignore_file(path: &str, ignore_patterns: &[String]) -> bool {
+    use glob::Pattern;
+
     let filename = std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
     ignore_patterns.iter().any(|pattern| {
-        // Simple pattern matching: exact filename match
-        // Could be extended to support glob patterns in the future
-        filename == pattern
+        // Try to parse as glob pattern
+        if let Ok(glob_pattern) = Pattern::new(pattern) {
+            // Match against both the full path and just the filename
+            // This allows patterns like "*.lock" (filename) and "**/target/**" (path)
+            glob_pattern.matches(path) || glob_pattern.matches(filename)
+        } else {
+            // Fallback to exact filename match if pattern is invalid
+            filename == pattern
+        }
     })
 }
 
@@ -963,5 +972,160 @@ mod tests {
         let empty_patterns: Vec<String> = vec![];
         assert!(!should_ignore_file("package-lock.json", &empty_patterns));
         assert!(!should_ignore_file("Cargo.lock", &empty_patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_glob_patterns() {
+        // Test wildcard patterns
+        let wildcard_patterns = vec!["*.lock".to_string()];
+
+        // Should match any file ending in .lock
+        assert!(should_ignore_file("Cargo.lock", &wildcard_patterns));
+        assert!(should_ignore_file("package.lock", &wildcard_patterns));
+        assert!(should_ignore_file("yarn.lock", &wildcard_patterns));
+        assert!(should_ignore_file("src/Cargo.lock", &wildcard_patterns));
+        assert!(should_ignore_file("backend/deps.lock", &wildcard_patterns));
+
+        // Should not match files not ending in .lock
+        assert!(!should_ignore_file("Cargo.toml", &wildcard_patterns));
+        assert!(!should_ignore_file("lock.txt", &wildcard_patterns));
+        assert!(!should_ignore_file("locked.rs", &wildcard_patterns));
+
+        // Test multiple wildcards
+        let multi_wildcard = vec!["*.lock".to_string(), "*.generated.*".to_string()];
+        assert!(should_ignore_file("test.generated.js", &multi_wildcard));
+        assert!(should_ignore_file("api.generated.ts", &multi_wildcard));
+        assert!(should_ignore_file("schema.lock", &multi_wildcard));
+        assert!(!should_ignore_file("manual.js", &multi_wildcard));
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_path_glob_patterns() {
+        // Test path-based patterns
+        let path_patterns = vec!["**/target/**".to_string()];
+
+        // Should match files in target directory at any depth
+        assert!(should_ignore_file("target/debug/foo", &path_patterns));
+        assert!(should_ignore_file("backend/target/release/bar", &path_patterns));
+        assert!(should_ignore_file("project/target/file.rs", &path_patterns));
+
+        // Should not match files outside target
+        assert!(!should_ignore_file("src/target.rs", &path_patterns));
+        assert!(!should_ignore_file("target.txt", &path_patterns));
+
+        // Test specific directory patterns
+        let dir_patterns = vec!["node_modules/**".to_string()];
+        assert!(should_ignore_file("node_modules/package/index.js", &dir_patterns));
+        assert!(should_ignore_file("node_modules/foo.js", &dir_patterns));
+        assert!(!should_ignore_file("src/node_modules.rs", &dir_patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_prefix_patterns() {
+        // Test prefix patterns
+        let prefix_patterns = vec!["generated-*".to_string()];
+
+        assert!(should_ignore_file("generated-api.ts", &prefix_patterns));
+        assert!(should_ignore_file("generated-schema.js", &prefix_patterns));
+        assert!(should_ignore_file("src/generated-types.d.ts", &prefix_patterns));
+        assert!(!should_ignore_file("api-generated.ts", &prefix_patterns));
+        assert!(!should_ignore_file("manual.ts", &prefix_patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_complex_glob_patterns() {
+        // Test complex patterns (note: brace expansion like {js,ts} is not supported by glob crate)
+        let complex_patterns = vec![
+            "**/*.generated.js".to_string(),
+            "**/*.generated.ts".to_string(),
+            "*-lock.*".to_string(),
+            "dist/**".to_string(),
+        ];
+
+        // Glob patterns with multiple wildcards
+        assert!(should_ignore_file("src/api.generated.js", &complex_patterns));
+        assert!(should_ignore_file("types.generated.ts", &complex_patterns));
+        assert!(should_ignore_file("package-lock.json", &complex_patterns));
+        assert!(should_ignore_file("yarn-lock.yaml", &complex_patterns));
+        assert!(should_ignore_file("dist/bundle.js", &complex_patterns));
+        assert!(should_ignore_file("dist/nested/file.css", &complex_patterns));
+
+        assert!(!should_ignore_file("src/manual.js", &complex_patterns));
+        assert!(!should_ignore_file("lock.txt", &complex_patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_mixed_exact_and_glob() {
+        // Test mixing exact matches and glob patterns
+        let mixed_patterns = vec![
+            "Cargo.lock".to_string(),      // Exact match
+            "*.generated.js".to_string(),  // Glob pattern
+            "package-lock.json".to_string(), // Exact match
+            "**/target/**".to_string(),    // Path glob
+        ];
+
+        // Exact matches
+        assert!(should_ignore_file("Cargo.lock", &mixed_patterns));
+        assert!(should_ignore_file("package-lock.json", &mixed_patterns));
+
+        // Glob matches
+        assert!(should_ignore_file("api.generated.js", &mixed_patterns));
+        assert!(should_ignore_file("target/debug/foo", &mixed_patterns));
+
+        // Non-matches
+        assert!(!should_ignore_file("Cargo.toml", &mixed_patterns));
+        assert!(!should_ignore_file("manual.js", &mixed_patterns));
+    }
+
+    #[test]
+    fn test_range_authorship_with_glob_patterns() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Initial commit
+        tmp_repo.write_file("src/main.rs", "fn main() {}\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+        let first_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        // Add various files including lockfiles and generated files
+        tmp_repo
+            .write_file("src/main.rs", "fn main() {}\nfn helper() {}\n", true)
+            .unwrap();
+        tmp_repo
+            .write_file("Cargo.lock", "# lock\n".repeat(1000).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .write_file("package-lock.json", "{}\n".repeat(500).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .write_file("api.generated.js", "// generated\n".repeat(200).as_str(), true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Add code and deps").unwrap();
+        let second_sha = tmp_repo.get_head_commit_sha().unwrap();
+
+        let commit_range = CommitRange::new(
+            &tmp_repo.gitai_repo(),
+            first_sha.clone(),
+            second_sha.clone(),
+            "HEAD".to_string(),
+        )
+        .unwrap();
+
+        // Use glob patterns to ignore lockfiles and generated files
+        let glob_patterns = vec![
+            "*.lock".to_string(),
+            "*lock.json".to_string(),  // Matches package-lock.json
+            "*.generated.*".to_string(),
+        ];
+        let stats = range_authorship(commit_range, false, &glob_patterns).unwrap();
+
+        // Should only count the 1 line in main.rs, ignoring 1700 lines in lockfiles and generated files
+        assert_eq!(stats.range_stats.git_diff_added_lines, 1);
+        assert_eq!(stats.range_stats.ai_additions, 1);
     }
 }
