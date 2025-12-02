@@ -1078,6 +1078,235 @@ mod tests {
     }
 
     #[test]
+    fn test_should_ignore_file_case_sensitivity() {
+        // Test that pattern matching is case-sensitive
+        let patterns = vec!["Cargo.lock".to_string(), "*.LOG".to_string()];
+
+        // Exact case matches
+        assert!(should_ignore_file("Cargo.lock", &patterns));
+        assert!(should_ignore_file("file.LOG", &patterns));
+        assert!(should_ignore_file("debug.LOG", &patterns));
+
+        // Different case should NOT match (case-sensitive)
+        assert!(!should_ignore_file("cargo.lock", &patterns));
+        assert!(!should_ignore_file("CARGO.LOCK", &patterns));
+        assert!(!should_ignore_file("file.log", &patterns));
+        assert!(!should_ignore_file("file.Log", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_special_characters() {
+        // Test filenames with special characters
+        let patterns = vec![
+            "file with spaces.txt".to_string(),
+            "*.lock".to_string(),
+            "file-with-dashes.js".to_string(),
+            "file_with_underscores.rs".to_string(),
+        ];
+
+        // Files with spaces
+        assert!(should_ignore_file("file with spaces.txt", &patterns));
+        assert!(should_ignore_file("path/to/file with spaces.txt", &patterns));
+
+        // Files with dashes and underscores
+        assert!(should_ignore_file("file-with-dashes.js", &patterns));
+        assert!(should_ignore_file("file_with_underscores.rs", &patterns));
+
+        // Glob should still work with special chars in other files
+        assert!(should_ignore_file("my-package.lock", &patterns));
+        assert!(should_ignore_file("test_file.lock", &patterns));
+
+        // Non-matches
+        assert!(!should_ignore_file("file with spaces.js", &patterns));
+        assert!(!should_ignore_file("different-file.txt", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_hidden_files() {
+        // Test hidden files (starting with .)
+        let patterns = vec![
+            ".env".to_string(),
+            ".*.swp".to_string(),
+            ".*rc".to_string(),
+        ];
+
+        // Hidden files
+        assert!(should_ignore_file(".env", &patterns));
+        assert!(should_ignore_file("config/.env", &patterns));
+
+        // Vim swap files
+        assert!(should_ignore_file(".file.swp", &patterns));
+        assert!(should_ignore_file(".main.rs.swp", &patterns));
+
+        // RC files
+        assert!(should_ignore_file(".bashrc", &patterns));
+        assert!(should_ignore_file(".vimrc", &patterns));
+        assert!(should_ignore_file("home/.npmrc", &patterns));
+
+        // Non-matches
+        assert!(!should_ignore_file("env", &patterns));
+        assert!(!should_ignore_file("file.swp", &patterns));
+        assert!(!should_ignore_file("bashrc", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_multiple_extensions() {
+        // Test files with multiple extensions
+        let patterns = vec![
+            "*.tar.gz".to_string(),
+            "*.min.js".to_string(),
+            "*.d.ts".to_string(),
+        ];
+
+        // Multiple extensions
+        assert!(should_ignore_file("archive.tar.gz", &patterns));
+        assert!(should_ignore_file("bundle.min.js", &patterns));
+        assert!(should_ignore_file("types.d.ts", &patterns));
+        assert!(should_ignore_file("build/dist/app.min.js", &patterns));
+
+        // Partial matches should not match
+        assert!(!should_ignore_file("file.tar", &patterns));
+        assert!(!should_ignore_file("file.gz", &patterns));
+        assert!(!should_ignore_file("file.js", &patterns));
+        assert!(!should_ignore_file("types.ts", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_no_extension() {
+        // Test files without extensions
+        let patterns = vec![
+            "Makefile".to_string(),
+            "Dockerfile".to_string(),
+            "LICENSE".to_string(),
+            "README".to_string(),
+        ];
+
+        // Files without extensions
+        assert!(should_ignore_file("Makefile", &patterns));
+        assert!(should_ignore_file("Dockerfile", &patterns));
+        assert!(should_ignore_file("LICENSE", &patterns));
+        assert!(should_ignore_file("README", &patterns));
+
+        // In subdirectories
+        assert!(should_ignore_file("project/Makefile", &patterns));
+        assert!(should_ignore_file("docker/Dockerfile", &patterns));
+
+        // Similar names should not match
+        assert!(!should_ignore_file("Makefile.old", &patterns));
+        assert!(!should_ignore_file("README.md", &patterns));
+        assert!(!should_ignore_file("LICENSE.txt", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_deeply_nested_paths() {
+        // Test patterns at various nesting depths
+        let patterns = vec![
+            "**/node_modules/**".to_string(),
+            "**/build/**".to_string(),
+            "**/.git/**".to_string(),
+        ];
+
+        // Deep nesting
+        assert!(should_ignore_file("node_modules/package/index.js", &patterns));
+        assert!(should_ignore_file("a/b/c/node_modules/d/e/f.js", &patterns));
+        assert!(should_ignore_file("project/build/output/bundle.js", &patterns));
+        assert!(should_ignore_file(".git/objects/ab/cdef123", &patterns));
+        assert!(should_ignore_file("repo/.git/hooks/pre-commit", &patterns));
+
+        // Should not match similar names outside pattern
+        assert!(!should_ignore_file("src/node_modules.js", &patterns));
+        assert!(!should_ignore_file("build.sh", &patterns));
+        assert!(!should_ignore_file("git.txt", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_partial_matches() {
+        // Test that partial matches don't incorrectly match
+        let patterns = vec![
+            "lock".to_string(),
+            "*.lock".to_string(),
+        ];
+
+        // Should match
+        assert!(should_ignore_file("lock", &patterns));
+        assert!(should_ignore_file("file.lock", &patterns));
+        assert!(should_ignore_file("package.lock", &patterns));
+
+        // Should NOT match (lock is substring but not filename or extension)
+        assert!(!should_ignore_file("locked.txt", &patterns));
+        assert!(!should_ignore_file("unlock.sh", &patterns));
+        assert!(!should_ignore_file("locksmith.rs", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_with_wildcards_in_middle() {
+        // Test patterns with wildcards in the middle
+        let patterns = vec![
+            "test-*-output.log".to_string(),
+            "backup-*.sql".to_string(),
+        ];
+
+        // Should match
+        assert!(should_ignore_file("test-123-output.log", &patterns));
+        assert!(should_ignore_file("test-foo-output.log", &patterns));
+        assert!(should_ignore_file("backup-daily.sql", &patterns));
+        assert!(should_ignore_file("backup-2024-01-01.sql", &patterns));
+        assert!(should_ignore_file("logs/test-debug-output.log", &patterns));
+
+        // Should not match
+        assert!(!should_ignore_file("test-output.log", &patterns));
+        assert!(!should_ignore_file("test-123-result.log", &patterns));
+        assert!(!should_ignore_file("backup.sql", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_empty_pattern() {
+        // Test with empty pattern string - empty pattern is technically valid glob
+        // that matches empty string, but we test that non-empty files don't match
+        let patterns = vec!["".to_string(), "*.lock".to_string()];
+
+        // Regular files should not match the empty pattern
+        assert!(!should_ignore_file("file.txt", &patterns));
+        assert!(!should_ignore_file("src/main.rs", &patterns));
+
+        // But valid patterns should still work
+        assert!(should_ignore_file("file.lock", &patterns));
+        assert!(should_ignore_file("package.lock", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_directory_traversal() {
+        // Test patterns with ../ or ./ in paths
+        let patterns = vec!["*.lock".to_string()];
+
+        // Should match regardless of ./ prefix
+        assert!(should_ignore_file("./file.lock", &patterns));
+        assert!(should_ignore_file("./path/to/file.lock", &patterns));
+
+        // Complex paths
+        assert!(should_ignore_file("src/../lib/file.lock", &patterns));
+    }
+
+    #[test]
+    fn test_should_ignore_file_numeric_filenames() {
+        // Test numeric filenames
+        let patterns = vec!["[0-9]*".to_string(), "*.123".to_string()];
+
+        // Filenames starting with numbers
+        assert!(should_ignore_file("123.txt", &patterns));
+        assert!(should_ignore_file("456file.log", &patterns));
+        assert!(should_ignore_file("7890.rs", &patterns));
+
+        // Files ending with .123
+        assert!(should_ignore_file("backup.123", &patterns));
+        assert!(should_ignore_file("data.123", &patterns));
+
+        // Should not match
+        assert!(!should_ignore_file("file123.txt", &patterns));
+        assert!(!should_ignore_file("test.456", &patterns));
+    }
+
+    #[test]
     fn test_range_authorship_with_glob_patterns() {
         let tmp_repo = TmpRepo::new().unwrap();
 

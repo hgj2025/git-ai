@@ -54,25 +54,32 @@ git-ai stats <start>..<end> --json
 # Ignore specific files from stats (e.g., lockfiles, generated files)
 # Exact filename matching
 git-ai stats --ignore Cargo.lock
-git-ai stats --ignore Cargo.lock --ignore package-lock.json --ignore yarn.lock
+git-ai stats --ignore Cargo.lock package-lock.json yarn.lock  # Multiple patterns
 
-# Glob pattern matching
+# Glob pattern matching (use quotes to prevent shell expansion)
 git-ai stats --ignore "*.lock"                    # All files ending in .lock
 git-ai stats --ignore "*.generated.*"             # All generated files
-git-ai stats --ignore "*.lock" --ignore "**/dist/**"  # Multiple patterns
+git-ai stats --ignore "*.lock" "**/dist/**"       # Multiple patterns
+
+# Shell glob expansion (no quotes needed if files exist in current directory)
+git-ai stats --ignore *.lock                      # Shell expands to matching files
+git-ai stats <start>..<end> --ignore *.lock *.json
 
 # Combine exact and glob patterns
-git-ai stats <start>..<end> --ignore Cargo.lock --ignore "*.generated.js"
+git-ai stats --ignore Cargo.lock "*.generated.js" package.lock
 ```
 
 **Options:**
 - `<commit-sha>` - Optional commit SHA (defaults to HEAD)
 - `<start>..<end>` - Optional commit range; when provided, stats are computed over the entire range rather than a single commit
 - `--json` - Output statistics in JSON format
-- `--ignore <pattern>` - Exclude files matching the pattern from statistics (can be specified multiple times). Supports:
+- `--ignore <pattern...>` - Exclude files matching the pattern(s) from statistics. Supports:
   - **Exact matches**: `Cargo.lock`, `package-lock.json`
   - **Glob patterns**: `*.lock`, `*.generated.*`, `**/target/**`, `node_modules/**`
+  - **Multiple patterns**: Space-separated patterns after a single `--ignore` flag
+  - **Shell expansion**: Unquoted globs are expanded by the shell (e.g., `*.lock` → `Cargo.lock yarn.lock`)
   - Pattern is matched against both the full file path and just the filename
+  - Quote patterns to prevent shell expansion and use glob matching instead
 
 **Output**
 
