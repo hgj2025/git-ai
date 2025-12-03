@@ -201,10 +201,8 @@ export class AIEditManager {
         return;
       }
 
-      const args = ["checkpoint"];
-      if (author === "ai") {
-        args.push("github-copilot");
-      }
+      const args = ["checkpoint", "github-copilot"];
+      
       if (hookInput) {
         args.push("--hook-input", "stdin");
       }
