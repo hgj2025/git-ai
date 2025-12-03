@@ -569,3 +569,224 @@ fn format_attribution(attribution: &Attribution) -> String {
         Attribution::NoData => "[no-data]".to_string(),
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_diff_args_single_commit() {
+        let args = vec!["abc123".to_string()];
+        let result = parse_diff_args(&args).unwrap();
+
+        match result {
+            DiffSpec::SingleCommit(sha) => {
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("Expected SingleCommit"),
+        }
+    }
+
+    #[test]
+    fn test_parse_diff_args_commit_range() {
+        let args = vec!["abc123..def456".to_string()];
+        let result = parse_diff_args(&args).unwrap();
+
+        match result {
+            DiffSpec::TwoCommit(start, end) => {
+                assert_eq!(start, "abc123");
+                assert_eq!(end, "def456");
+            }
+            _ => panic!("Expected TwoCommit"),
+        }
+    }
+
+    #[test]
+    fn test_parse_diff_args_invalid_range() {
+        let args = vec!["..".to_string()];
+        let result = parse_diff_args(&args);
+        assert!(result.is_err());
+
+        let args = vec!["abc..".to_string()];
+        let result = parse_diff_args(&args);
+        assert!(result.is_err());
+
+        let args = vec!["..def".to_string()];
+        let result = parse_diff_args(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_hunk_line_basic() {
+        let line = "@@ -10,3 +15,5 @@ fn main() {";
+        let result = parse_hunk_line(line, "test.rs").unwrap().unwrap();
+
+        assert_eq!(result.file_path, "test.rs");
+        assert_eq!(result.old_start, 10);
+        assert_eq!(result.old_count, 3);
+        assert_eq!(result.new_start, 15);
+        assert_eq!(result.new_count, 5);
+        assert_eq!(result.deleted_lines, vec![10, 11, 12]);
+        assert_eq!(result.added_lines, vec![15, 16, 17, 18, 19]);
+    }
+
+    #[test]
+    fn test_parse_hunk_line_single_line_deletion() {
+        let line = "@@ -10 +10,2 @@ fn main() {";
+        let result = parse_hunk_line(line, "test.rs").unwrap().unwrap();
+
+        assert_eq!(result.old_start, 10);
+        assert_eq!(result.old_count, 1);
+        assert_eq!(result.new_start, 10);
+        assert_eq!(result.new_count, 2);
+        assert_eq!(result.deleted_lines, vec![10]);
+        assert_eq!(result.added_lines, vec![10, 11]);
+    }
+
+    #[test]
+    fn test_parse_hunk_line_single_line_addition() {
+        let line = "@@ -10,2 +10 @@ fn main() {";
+        let result = parse_hunk_line(line, "test.rs").unwrap().unwrap();
+
+        assert_eq!(result.old_start, 10);
+        assert_eq!(result.old_count, 2);
+        assert_eq!(result.new_start, 10);
+        assert_eq!(result.new_count, 1);
+        assert_eq!(result.deleted_lines, vec![10, 11]);
+        assert_eq!(result.added_lines, vec![10]);
+    }
+
+    #[test]
+    fn test_parse_hunk_line_pure_addition() {
+        let line = "@@ -0,0 +1,3 @@ fn main() {";
+        let result = parse_hunk_line(line, "test.rs").unwrap().unwrap();
+
+        assert_eq!(result.old_start, 0);
+        assert_eq!(result.old_count, 0);
+        assert_eq!(result.new_start, 1);
+        assert_eq!(result.new_count, 3);
+        assert_eq!(result.deleted_lines.len(), 0);
+        assert_eq!(result.added_lines, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_parse_hunk_line_pure_deletion() {
+        let line = "@@ -5,3 +0,0 @@ fn main() {";
+        let result = parse_hunk_line(line, "test.rs").unwrap().unwrap();
+
+        assert_eq!(result.old_start, 5);
+        assert_eq!(result.old_count, 3);
+        assert_eq!(result.new_start, 0);
+        assert_eq!(result.new_count, 0);
+        assert_eq!(result.deleted_lines, vec![5, 6, 7]);
+        assert_eq!(result.added_lines.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_hunk_header_for_line_nums() {
+        let line = "@@ -10,5 +20,3 @@ context";
+        let result = parse_hunk_header_for_line_nums(line).unwrap();
+        assert_eq!(result, (10, 20));
+    }
+
+    #[test]
+    fn test_parse_hunk_header_for_line_nums_single_line() {
+        let line = "@@ -10 +20,3 @@ context";
+        let result = parse_hunk_header_for_line_nums(line).unwrap();
+        assert_eq!(result, (10, 20));
+
+        let line = "@@ -10,5 +20 @@ context";
+        let result = parse_hunk_header_for_line_nums(line).unwrap();
+        assert_eq!(result, (10, 20));
+    }
+
+    #[test]
+    fn test_parse_hunk_header_for_line_nums_invalid() {
+        let line = "not a hunk header";
+        let result = parse_hunk_header_for_line_nums(line);
+        assert!(result.is_none());
+
+        let line = "@@ invalid @@";
+        let result = parse_hunk_header_for_line_nums(line);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_format_attribution_ai() {
+        let attr = Attribution::Ai("cursor".to_string());
+        assert_eq!(format_attribution(&attr), "🤖cursor");
+
+        let attr = Attribution::Ai("claude".to_string());
+        assert_eq!(format_attribution(&attr), "🤖claude");
+    }
+
+    #[test]
+    fn test_format_attribution_human() {
+        let attr = Attribution::Human("alice".to_string());
+        assert_eq!(format_attribution(&attr), "👤alice");
+
+        let attr = Attribution::Human("bob@example.com".to_string());
+        assert_eq!(format_attribution(&attr), "👤bob@example.com");
+    }
+
+    #[test]
+    fn test_format_attribution_no_data() {
+        let attr = Attribution::NoData;
+        assert_eq!(format_attribution(&attr), "[no-data]");
+    }
+
+    #[test]
+    fn test_diff_line_key_equality() {
+        let key1 = DiffLineKey {
+            file: "test.rs".to_string(),
+            line: 10,
+            side: LineSide::Old,
+        };
+
+        let key2 = DiffLineKey {
+            file: "test.rs".to_string(),
+            line: 10,
+            side: LineSide::Old,
+        };
+
+        let key3 = DiffLineKey {
+            file: "test.rs".to_string(),
+            line: 10,
+            side: LineSide::New,
+        };
+
+        assert_eq!(key1, key2);
+        assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn test_parse_diff_hunks_multiple_files() {
+        let diff_text = r#"diff --git a/file1.rs b/file1.rs
+index abc123..def456 100644
+--- a/file1.rs
++++ b/file1.rs
+@@ -10,2 +10,3 @@ fn main() {
+diff --git a/file2.rs b/file2.rs
+index 111222..333444 100644
+--- a/file2.rs
++++ b/file2.rs
+@@ -5,1 +5,2 @@ fn test() {
+"#;
+
+        let result = parse_diff_hunks(diff_text).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].file_path, "file1.rs");
+        assert_eq!(result[1].file_path, "file2.rs");
+    }
+
+    #[test]
+    fn test_parse_diff_hunks_empty() {
+        let diff_text = "";
+        let result = parse_diff_hunks(diff_text).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+}
