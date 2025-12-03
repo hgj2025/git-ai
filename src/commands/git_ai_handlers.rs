@@ -338,6 +338,18 @@ fn handle_checkpoint(args: &[String]) {
         .unwrap_or(CheckpointKind::Human);
 
     if CheckpointKind::Human == checkpoint_kind && agent_run_result.is_none() {
+        // Parse pathspecs after `--` for human checkpoints
+        let will_edit_filepaths = if let Some(separator_pos) = args.iter().position(|a| a == "--") {
+            let paths: Vec<String> = args[separator_pos + 1..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect();
+            if paths.is_empty() { None } else { Some(paths) }
+        } else {
+            Some(get_all_files_for_mock_ai(&final_working_dir))
+        };
+
         agent_run_result = Some(AgentRunResult {
             agent_id: AgentId {
                 tool: "mock_ai".to_string(),
@@ -353,7 +365,7 @@ fn handle_checkpoint(args: &[String]) {
             agent_metadata: None,
             checkpoint_kind: CheckpointKind::Human,
             transcript: None,
-            will_edit_filepaths: Some(get_all_files_for_mock_ai(&final_working_dir)),
+            will_edit_filepaths: Some(will_edit_filepaths.unwrap_or_default()),
             edited_filepaths: None,
             repo_working_dir: Some(final_working_dir),
             dirty_files: None,
