@@ -1,5 +1,6 @@
 use git_ai::authorship::authorship_log_serialization::AuthorshipLog;
 use git_ai::authorship::stats::CommitStats;
+use git_ai::config::ConfigPatch;
 use git_ai::feature_flags::FeatureFlags;
 use git_ai::git::repo_storage::PersistedWorkingLog;
 use git_ai::git::repository as GitAiRepository;
@@ -19,6 +20,7 @@ use super::test_file::TestFile;
 pub struct TestRepo {
     path: PathBuf,
     pub feature_flags: FeatureFlags,
+    config_patch: Option<ConfigPatch>,
 }
 
 impl TestRepo {
@@ -39,6 +41,7 @@ impl TestRepo {
         Self {
             path,
             feature_flags: FeatureFlags::default(),
+            config_patch: None,
         }
     }
 
@@ -54,11 +57,33 @@ impl TestRepo {
         Self {
             path: path.clone(),
             feature_flags: FeatureFlags::default(),
+            config_patch: None,
         }
     }
 
     pub fn set_feature_flags(&mut self, feature_flags: FeatureFlags) {
         self.feature_flags = feature_flags;
+    }
+
+    /// Patch the git-ai config for this test repo
+    /// Allows overriding specific config properties like ignore_prompts, telemetry settings, etc.
+    /// The patch is applied via environment variable when running git-ai commands
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut repo = TestRepo::new();
+    /// repo.patch_git_ai_config(|patch| {
+    ///     patch.ignore_prompts = Some(true);
+    ///     patch.telemetry_oss_disabled = Some(true);
+    /// });
+    /// ```
+    pub fn patch_git_ai_config<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut ConfigPatch),
+    {
+        let mut patch = self.config_patch.take().unwrap_or_default();
+        f(&mut patch);
+        self.config_patch = Some(patch);
     }
 
     pub fn path(&self) -> &PathBuf {
@@ -136,6 +161,13 @@ impl TestRepo {
         let mut command = Command::new(binary_path);
         command.args(&full_args).env("GIT_AI", "git");
 
+        // Add config patch as environment variable if present
+        if let Some(patch) = &self.config_patch {
+            if let Ok(patch_json) = serde_json::to_string(patch) {
+                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+            }
+        }
+
         // Add custom environment variables
         for (key, value) in envs {
             command.env(key, value);
@@ -169,6 +201,13 @@ impl TestRepo {
 
         let mut command = Command::new(binary_path);
         command.args(args).current_dir(&self.path);
+
+        // Add config patch as environment variable if present
+        if let Some(patch) = &self.config_patch {
+            if let Ok(patch_json) = serde_json::to_string(patch) {
+                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+            }
+        }
 
         // Add custom environment variables
         for (key, value) in envs {
@@ -310,7 +349,7 @@ fn compile_binary() -> PathBuf {
 
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let output = Command::new("cargo")
-        .args(&["build", "--bin", "git-ai"])
+        .args(&["build", "--bin", "git-ai", "--features", "test-support"])
         .current_dir(manifest_dir)
         .output()
         .expect("Failed to compile git-ai binary");

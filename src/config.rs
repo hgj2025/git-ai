@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use glob::Pattern;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::feature_flags::FeatureFlags;
 use crate::git::repository::Repository;
@@ -82,6 +82,21 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 
 #[cfg(any(test, feature = "test-support"))]
 static TEST_FEATURE_FLAGS_OVERRIDE: RwLock<Option<FeatureFlags>> = RwLock::new(None);
+
+/// Serializable config patch for test overrides
+/// All fields are optional to allow patching only specific properties
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ConfigPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_prompts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_oss_disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_version_checks: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_auto_updates: Option<bool>,
+}
 
 impl Config {
     /// Initialize the global configuration exactly once.
@@ -288,6 +303,25 @@ fn build_config() -> Config {
     // Build feature flags from file config
     let feature_flags = build_feature_flags(&file_cfg);
 
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        let mut config = Config {
+            git_path,
+            ignore_prompts,
+            allow_repositories,
+            exclude_repositories,
+            telemetry_oss_disabled,
+            telemetry_enterprise_dsn,
+            disable_version_checks,
+            disable_auto_updates,
+            update_channel,
+            feature_flags,
+        };
+        apply_test_config_patch(&mut config);
+        config
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     Config {
         git_path,
         ignore_prompts,
@@ -385,6 +419,28 @@ fn is_executable(path: &Path) -> bool {
     // Basic check: existence is sufficient for our purposes; OS will enforce exec perms.
     // On Unix we could check permissions, but many filesystems differ. Keep it simple.
     true
+}
+
+/// Apply test config patch from environment variable (test-only)
+/// Reads GIT_AI_TEST_CONFIG_PATCH env var containing JSON and applies patches to config
+#[cfg(any(test, feature = "test-support"))]
+fn apply_test_config_patch(config: &mut Config) {
+    if let Ok(patch_json) = env::var("GIT_AI_TEST_CONFIG_PATCH") {
+        if let Ok(patch) = serde_json::from_str::<ConfigPatch>(&patch_json) {
+            if let Some(ignore_prompts) = patch.ignore_prompts {
+                config.ignore_prompts = ignore_prompts;
+            }
+            if let Some(telemetry_oss_disabled) = patch.telemetry_oss_disabled {
+                config.telemetry_oss_disabled = telemetry_oss_disabled;
+            }
+            if let Some(disable_version_checks) = patch.disable_version_checks {
+                config.disable_version_checks = disable_version_checks;
+            }
+            if let Some(disable_auto_updates) = patch.disable_auto_updates {
+                config.disable_auto_updates = disable_auto_updates;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
