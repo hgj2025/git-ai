@@ -321,7 +321,7 @@ impl TestRepo {
 
 impl Drop for TestRepo {
     fn drop(&mut self) {
-        fs::remove_dir_all(self.path.clone()).expect("failed to remove test repo");
+        // fs::remove_dir_all(self.path.clone()).expect("failed to remove test repo");
     }
 }
 
