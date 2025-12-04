@@ -1,8 +1,10 @@
+use crate::authorship::authorship_log::PromptRecord;
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::authorship::stats::{stats_for_commit_stats, write_stats_to_terminal};
 use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::authorship::working_log::Checkpoint;
 use crate::commands::checkpoint_agent::agent_presets::{CursorPreset, GithubCopilotPreset};
+use crate::config::Config;
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
 use crate::git::repository::Repository;
@@ -67,6 +69,11 @@ pub fn post_commit(
         )?;
 
     authorship_log.metadata.base_commit_sha = commit_sha.clone();
+
+    // Strip prompt messages if ignore_prompts is enabled
+    if Config::get().ignore_prompts() {
+        strip_prompt_messages(&mut authorship_log.metadata.prompts);
+    }
 
     // Serialize the authorship log
     let authorship_json = authorship_log
@@ -221,6 +228,14 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
     }
 
     Ok(())
+}
+
+/// Strip messages from prompts if ignore_prompts config is enabled
+/// This is called only in post_commit when writing prompts to git history
+fn strip_prompt_messages(prompts: &mut std::collections::BTreeMap<String, PromptRecord>) {
+    for record in prompts.values_mut() {
+        record.messages.clear();
+    }
 }
 
 #[cfg(test)]
