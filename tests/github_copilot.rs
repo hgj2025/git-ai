@@ -304,3 +304,210 @@ fn test_copilot_returns_empty_transcript_in_remote_containers() {
         }
     }
 }
+
+// ============================================================================
+// Tests for before_edit (human checkpoint) and after_edit (AI checkpoint) logic
+// ============================================================================
+
+#[test]
+fn test_copilot_preset_before_edit_human_checkpoint() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "before_edit",
+        "workspaceFolder": "/Users/test/project",
+        "will_edit_filepaths": ["/Users/test/project/file.ts"],
+        "dirtyFiles": {
+            "/Users/test/project/file.ts": "console.log('hello');"
+        }
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    assert!(result.is_ok());
+    let run_result = result.unwrap();
+
+    // Verify it's a human checkpoint
+    assert_eq!(
+        run_result.checkpoint_kind,
+        git_ai::authorship::working_log::CheckpointKind::Human
+    );
+
+    // Verify will_edit_filepaths is set
+    assert!(run_result.will_edit_filepaths.is_some());
+    assert_eq!(
+        run_result.will_edit_filepaths.unwrap(),
+        vec!["/Users/test/project/file.ts"]
+    );
+
+    // Verify edited_filepaths is None for human checkpoints
+    assert!(run_result.edited_filepaths.is_none());
+
+    // Verify transcript is None for human checkpoints
+    assert!(run_result.transcript.is_none());
+
+    // Verify dirty files are included
+    assert!(run_result.dirty_files.is_some());
+    let dirty_files = run_result.dirty_files.unwrap();
+    assert_eq!(dirty_files.len(), 1);
+    assert_eq!(
+        dirty_files.get("/Users/test/project/file.ts").unwrap(),
+        "console.log('hello');"
+    );
+
+    // Verify agent_id uses "human" tool
+    assert_eq!(run_result.agent_id.tool, "human");
+    assert_eq!(run_result.agent_id.id, "human");
+    assert_eq!(run_result.agent_id.model, "human");
+}
+
+#[test]
+fn test_copilot_preset_before_edit_requires_will_edit_filepaths() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "before_edit",
+        "workspaceFolder": "/Users/test/project",
+        "dirtyFiles": {}
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    // Should fail because will_edit_filepaths is missing
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("will_edit_filepaths is required"));
+}
+
+#[test]
+fn test_copilot_preset_before_edit_requires_non_empty_filepaths() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "before_edit",
+        "workspaceFolder": "/Users/test/project",
+        "will_edit_filepaths": [],
+        "dirtyFiles": {}
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    // Should fail because will_edit_filepaths is empty
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("will_edit_filepaths cannot be empty"));
+}
+
+#[test]
+fn test_copilot_preset_after_edit_requires_session_id() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "after_edit",
+        "workspaceFolder": "/Users/test/project",
+        "dirtyFiles": {}
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    // Should fail because chatSessionPath is missing for after_edit
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("chatSessionPath not found"));
+}
+
+#[test]
+fn test_copilot_preset_invalid_hook_event_name() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "invalid_event",
+        "workspaceFolder": "/Users/test/project"
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    // Should fail with invalid hook event name
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid hook_event_name"));
+}
+
+#[test]
+fn test_copilot_preset_before_edit_multiple_files() {
+    use git_ai::commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset,
+    };
+
+    let hook_input = json!({
+        "hook_event_name": "before_edit",
+        "workspaceFolder": "/Users/test/project",
+        "will_edit_filepaths": [
+            "/Users/test/project/file1.ts",
+            "/Users/test/project/file2.ts",
+            "/Users/test/project/file3.ts"
+        ],
+        "dirtyFiles": {
+            "/Users/test/project/file1.ts": "content1",
+            "/Users/test/project/file2.ts": "content2"
+        }
+    });
+
+    let flags = AgentCheckpointFlags {
+        hook_input: Some(hook_input.to_string()),
+    };
+
+    let preset = GithubCopilotPreset;
+    let result = preset.run(flags);
+
+    assert!(result.is_ok());
+    let run_result = result.unwrap();
+
+    // Verify all files are in will_edit_filepaths
+    assert!(run_result.will_edit_filepaths.is_some());
+    let files = run_result.will_edit_filepaths.unwrap();
+    assert_eq!(files.len(), 3);
+    assert!(files.contains(&"/Users/test/project/file1.ts".to_string()));
+    assert!(files.contains(&"/Users/test/project/file2.ts".to_string()));
+    assert!(files.contains(&"/Users/test/project/file3.ts".to_string()));
+}
