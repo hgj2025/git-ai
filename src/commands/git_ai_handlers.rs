@@ -125,7 +125,9 @@ fn print_help() {
     eprintln!("  show <rev|range>   Display authorship logs for a revision or range");
     eprintln!("  show-prompt <id>   Display a prompt record by its ID");
     eprintln!("    --commit <rev>        Look in a specific commit only");
-    eprintln!("    --offset <n>          Skip n occurrences (0 = most recent, mutually exclusive with --commit)");
+    eprintln!(
+        "    --offset <n>          Skip n occurrences (0 = most recent, mutually exclusive with --commit)"
+    );
     eprintln!("  install-hooks      Install git hooks for AI authorship tracking");
     eprintln!("  ci                 Continuous integration utilities");
     eprintln!("    github                 GitHub CI helpers");
@@ -342,10 +344,18 @@ fn handle_checkpoint(args: &[String]) {
         .unwrap_or(CheckpointKind::Human);
 
     if CheckpointKind::Human == checkpoint_kind && agent_run_result.is_none() {
-        println!(
-            "get_all_files_for_mock_ai HUMAN Checkpoints: {:?}",
-            get_all_files_for_mock_ai(&final_working_dir)
-        );
+        // Parse pathspecs after `--` for human checkpoints
+        let will_edit_filepaths = if let Some(separator_pos) = args.iter().position(|a| a == "--") {
+            let paths: Vec<String> = args[separator_pos + 1..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect();
+            if paths.is_empty() { None } else { Some(paths) }
+        } else {
+            Some(get_all_files_for_mock_ai(&final_working_dir))
+        };
+
         agent_run_result = Some(AgentRunResult {
             agent_id: AgentId {
                 tool: "mock_ai".to_string(),
@@ -361,7 +371,7 @@ fn handle_checkpoint(args: &[String]) {
             agent_metadata: None,
             checkpoint_kind: CheckpointKind::Human,
             transcript: None,
-            will_edit_filepaths: Some(get_all_files_for_mock_ai(&final_working_dir)),
+            will_edit_filepaths: Some(will_edit_filepaths.unwrap_or_default()),
             edited_filepaths: None,
             repo_working_dir: Some(final_working_dir),
             dirty_files: None,
@@ -594,10 +604,7 @@ fn get_all_files_for_mock_ai(working_dir: &str) -> Vec<String> {
         }
     };
     match repo.get_staged_and_unstaged_filenames() {
-        Ok(filenames) => {
-            println!("filenames for mock_ai: {:?}", filenames);
-            filenames.into_iter().collect()
-        }
+        Ok(filenames) => filenames.into_iter().collect(),
         Err(_) => Vec::new(),
     }
 }
