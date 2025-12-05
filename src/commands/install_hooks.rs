@@ -1,10 +1,10 @@
+use crate::authorship::imara_diff_utils::{compute_line_changes, LineChangeTag};
 use crate::error::GitAiError;
 use crate::utils::debug_log;
 use indicatif::{ProgressBar, ProgressStyle};
 use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::CstRootNode;
 use serde_json::{Value, json};
-use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -673,18 +673,18 @@ fn install_claude_code_hooks(dry_run: bool) -> Result<Option<String>, GitAiError
     }
 
     // Generate diff
-    let diff = TextDiff::from_lines(&existing_content, &new_content);
+    let changes = compute_line_changes(&existing_content, &new_content);
     let mut diff_output = String::new();
     diff_output.push_str(&format!("--- {}\n", settings_path.display()));
     diff_output.push_str(&format!("+++ {}\n", settings_path.display()));
 
-    for change in diff.iter_all_changes() {
+    for change in changes {
         let sign = match change.tag() {
-            ChangeTag::Delete => "-",
-            ChangeTag::Insert => "+",
-            ChangeTag::Equal => " ",
+            LineChangeTag::Delete => "-",
+            LineChangeTag::Insert => "+",
+            LineChangeTag::Equal => " ",
         };
-        diff_output.push_str(&format!("{}{}", sign, change));
+        diff_output.push_str(&format!("{}{}", sign, change.value()));
     }
 
     // Write if not dry-run
@@ -840,18 +840,18 @@ fn install_cursor_hooks(binary_path: &Path, dry_run: bool) -> Result<Option<Stri
     }
 
     // Generate diff
-    let diff = TextDiff::from_lines(&existing_content, &new_content);
+    let changes = compute_line_changes(&existing_content, &new_content);
     let mut diff_output = String::new();
     diff_output.push_str(&format!("--- {}\n", hooks_path.display()));
     diff_output.push_str(&format!("+++ {}\n", hooks_path.display()));
 
-    for change in diff.iter_all_changes() {
+    for change in changes {
         let sign = match change.tag() {
-            ChangeTag::Delete => "-",
-            ChangeTag::Insert => "+",
-            ChangeTag::Equal => " ",
+            LineChangeTag::Delete => "-",
+            LineChangeTag::Insert => "+",
+            LineChangeTag::Equal => " ",
         };
-        diff_output.push_str(&format!("{}{}", sign, change));
+        diff_output.push_str(&format!("{}{}", sign, change.value()));
     }
 
     // Write if not dry-run
@@ -1098,20 +1098,20 @@ fn update_git_path_setting(
 
     let new_content = root.to_string();
 
-    let diff = TextDiff::from_lines(&original, &new_content);
+    let changes = compute_line_changes(&original, &new_content);
     let mut diff_output = format!(
         "--- {}\n+++ {}\n",
         settings_path.display(),
         settings_path.display()
     );
 
-    for change in diff.iter_all_changes() {
+    for change in changes {
         let sign = match change.tag() {
-            ChangeTag::Delete => "-",
-            ChangeTag::Insert => "+",
-            ChangeTag::Equal => " ",
+            LineChangeTag::Delete => "-",
+            LineChangeTag::Insert => "+",
+            LineChangeTag::Equal => " ",
         };
-        diff_output.push_str(&format!("{}{}", sign, change));
+        diff_output.push_str(&format!("{}{}", sign, change.value()));
     }
 
     if !dry_run {

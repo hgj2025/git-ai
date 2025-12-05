@@ -11,10 +11,10 @@ use crate::error::GitAiError;
 use crate::git::repo_storage::{PersistedWorkingLog, RepoStorage};
 use crate::git::repository::Repository;
 use crate::git::status::{EntryKind, StatusCode};
+use crate::authorship::imara_diff_utils::{compute_line_changes, LineChangeTag};
 use crate::utils::{debug_log, normalize_to_posix};
 use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
-use similar::{ChangeTag, TextDiff};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -1048,11 +1048,11 @@ fn make_entry_for_file(
 fn compute_file_line_stats(previous_content: &str, current_content: &str) -> FileLineStats {
     let mut stats = FileLineStats::default();
 
-    // Use TextDiff to count line changes
-    let diff = TextDiff::from_lines(previous_content, current_content);
-    for change in diff.iter_all_changes() {
+    // Use imara_diff to count line changes (matches git's diff algorithm)
+    let changes = compute_line_changes(previous_content, current_content);
+    for change in changes {
         match change.tag() {
-            ChangeTag::Insert => {
+            LineChangeTag::Insert => {
                 let non_whitespace_lines = change
                     .value()
                     .lines()
@@ -1061,7 +1061,7 @@ fn compute_file_line_stats(previous_content: &str, current_content: &str) -> Fil
                 stats.additions += change.value().lines().count() as u32;
                 stats.additions_sloc += non_whitespace_lines;
             }
-            ChangeTag::Delete => {
+            LineChangeTag::Delete => {
                 let non_whitespace_lines = change
                     .value()
                     .lines()
@@ -1070,7 +1070,7 @@ fn compute_file_line_stats(previous_content: &str, current_content: &str) -> Fil
                 stats.deletions += change.value().lines().count() as u32;
                 stats.deletions_sloc += non_whitespace_lines;
             }
-            ChangeTag::Equal => {}
+            LineChangeTag::Equal => {}
         }
     }
 
