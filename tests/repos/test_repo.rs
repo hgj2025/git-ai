@@ -118,6 +118,26 @@ impl TestRepo {
         return self.git_with_env(args, &[]);
     }
 
+    pub fn git_og(&self, args: &[&str]) -> Result<String, String> {
+        let mut full_args: Vec<String> =
+            vec!["-C".to_string(), self.path.to_str().unwrap().to_string()];
+        full_args.extend(args.iter().map(|s| s.to_string()));
+
+        GitAiRepository::exec_git(&full_args)
+            .map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                if stdout.is_empty() {
+                    stderr
+                } else if stderr.is_empty() {
+                    stdout
+                } else {
+                    format!("{}{}", stdout, stderr)
+                }
+            })
+            .map_err(|e| e.to_string())
+    }
+
     pub fn benchmark_git(&self, args: &[&str]) -> Result<BenchmarkResult, String> {
         let output = self.git_with_env(args, &[("GIT_AI_DEBUG_PERFORMANCE", "2")])?;
 

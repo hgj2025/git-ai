@@ -39,13 +39,18 @@ mod tests {
     #[case("chakracore")]
     #[ignore]
     fn test_human_only_edits_then_commit(#[case] repo_name: &str) {
+        use std::time::Instant;
+
         let repos = get_performance_repos();
         let test_repo = repos
             .get(repo_name)
             .expect(&format!("{} repo should be available", repo_name));
         // Find random files for testing
+        println!("Finding random files for {}", repo_name);
+        let start = Instant::now();
         let random_files = find_random_files(test_repo).expect("Should find random files");
-
+        let duration = start.elapsed();
+        println!("Time taken to find random files: {:?}", duration);
         // Select 3 random files (not large ones)
         let files_to_edit: Vec<String> =
             random_files.random_files.iter().take(3).cloned().collect();
@@ -375,134 +380,79 @@ pub struct RandomFiles {
 ///
 /// Returns:
 /// - 10 random files from the repository
-/// - 2 random large files that are between 5k-10k lines
+/// - 2 random large files (by byte size, as a proxy for line count)
 ///
-/// This helper is useful for performance testing various operations on different file sizes
+/// This helper uses filesystem operations directly instead of git commands
+/// for much faster performance on large repositories.
 pub fn find_random_files(test_repo: &TestRepo) -> Result<RandomFiles, String> {
-    use git_ai::git::repository::find_repository_in_path;
+    use std::fs;
 
-    // Get the underlying Repository from the TestRepo path
-    let repo = find_repository_in_path(test_repo.path().to_str().unwrap())
-        .map_err(|e| format!("Failed to find repository: {:?}", e))?;
+    let repo_path = test_repo.path();
 
-    // Get HEAD commit
-    let head = repo
-        .head()
-        .map_err(|e| format!("Failed to get HEAD: {:?}", e))?;
-    let head_commit = head
-        .target()
-        .map_err(|e| format!("Failed to get HEAD target: {:?}", e))?;
+    // Collect all files recursively, skipping .git directory
+    let mut all_files: Vec<String> = Vec::new();
+    let mut dirs_to_visit: Vec<std::path::PathBuf> = vec![repo_path.to_path_buf()];
 
-    // Use git ls-tree to get all files in the repository at HEAD
-    let mut args = repo.global_args_for_exec();
-    args.push("ls-tree".to_string());
-    args.push("-r".to_string()); // Recursive
-    args.push("--name-only".to_string());
-    args.push(head_commit.clone());
+    while let Some(dir) = dirs_to_visit.pop() {
+        let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read dir: {}", e))?;
 
-    let output = Command::new(git_ai::config::Config::get().git_cmd())
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run git ls-tree: {}", e))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-tree failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+            // Skip .git directory
+            if file_name == ".git" {
+                continue;
+            }
+
+            if path.is_dir() {
+                dirs_to_visit.push(path);
+            } else if path.is_file() {
+                // Get relative path from repo root
+                if let Ok(relative) = path.strip_prefix(repo_path) {
+                    if let Some(rel_str) = relative.to_str() {
+                        all_files.push(rel_str.to_string());
+                    }
+                }
+            }
+        }
     }
-
-    let all_files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|s| s.to_string())
-        .collect();
 
     if all_files.is_empty() {
         return Err("No files found in repository".to_string());
     }
 
-    // Select 10 random files
     let mut rng = thread_rng();
-    let mut random_files: Vec<String> = all_files
-        .choose_multiple(&mut rng, 10.min(all_files.len()))
-        .cloned()
+
+    // Find large files using file size as a proxy (> 100KB considered large)
+    // This is much faster than reading files to count lines
+    const LARGE_FILE_THRESHOLD: u64 = 100 * 1024; // 100KB
+
+    let mut file_sizes: Vec<(String, u64)> = Vec::new();
+    for file_path in &all_files {
+        let full_path = repo_path.join(file_path);
+        if let Ok(metadata) = fs::metadata(&full_path) {
+            let size = metadata.len();
+            if size >= LARGE_FILE_THRESHOLD {
+                file_sizes.push((file_path.clone(), size));
+            }
+        }
+    }
+
+    // Sort by size descending and take top 2
+    file_sizes.sort_by(|a, b| b.1.cmp(&a.1));
+    let large_files: Vec<String> = file_sizes.into_iter().take(2).map(|(p, _)| p).collect();
+
+    // Select 10 random files, excluding large files
+    let candidates: Vec<&String> = all_files
+        .iter()
+        .filter(|f| !large_files.contains(f))
         .collect();
 
-    // Find large files (5k-10k lines)
-    let mut large_files: Vec<String> = Vec::new();
-
-    // Shuffle to randomize the search order
-    let mut shuffled_files = all_files.clone();
-    shuffled_files.shuffle(&mut rng);
-
-    for file_path in shuffled_files {
-        if large_files.len() >= 2 {
-            break;
-        }
-
-        // Read file content from HEAD
-        let file_content = match repo.get_file_content(&file_path, &head_commit) {
-            Ok(content) => content,
-            Err(_) => continue, // Skip files that can't be read (binaries, etc.)
-        };
-
-        // Count lines
-        let line_count = file_content.iter().filter(|&&b| b == b'\n').count();
-
-        if line_count >= 5000 && line_count <= 10000 {
-            large_files.push(file_path);
-        }
-    }
-
-    // If we couldn't find 2 large files, fall back to the largest files we can find
-    if large_files.len() < 2 {
-        let mut file_sizes: Vec<(String, usize)> = Vec::new();
-
-        // Sample a subset of files to check (to avoid checking all files in huge repos)
-        let sample_size = 1000.min(all_files.len());
-        let sample: Vec<String> = all_files
-            .choose_multiple(&mut rng, sample_size)
-            .cloned()
-            .collect();
-
-        for file_path in sample {
-            if large_files.contains(&file_path) {
-                continue;
-            }
-
-            if let Ok(content) = repo.get_file_content(&file_path, &head_commit) {
-                let line_count = content.iter().filter(|&&b| b == b'\n').count();
-                if line_count >= 1000 {
-                    // Only consider reasonably large files
-                    file_sizes.push((file_path, line_count));
-                }
-            }
-        }
-
-        // Sort by line count descending
-        file_sizes.sort_by(|a, b| b.1.cmp(&a.1));
-
-        // Take additional large files to reach 2 total
-        for (file_path, _line_count) in file_sizes.iter().take(2 - large_files.len()) {
-            large_files.push(file_path.clone());
-        }
-    }
-
-    // Make sure random_files doesn't overlap with large_files
-    random_files.retain(|f| !large_files.contains(f));
-
-    // If we removed some, add more random files
-    while random_files.len() < 10 && random_files.len() < all_files.len() {
-        if let Some(file) = all_files
-            .choose(&mut rng)
-            .filter(|f| !random_files.contains(f) && !large_files.contains(f))
-        {
-            random_files.push(file.clone());
-        } else {
-            break;
-        }
-    }
+    let random_files: Vec<String> = candidates
+        .choose_multiple(&mut rng, 10.min(candidates.len()))
+        .map(|s| (*s).clone())
+        .collect();
 
     Ok(RandomFiles {
         random_files,
@@ -678,10 +628,11 @@ impl Sampler {
                 // Default setup: Reset to clean state before each run (not timed)
 
                 // 1. Clean any untracked files and directories
-                repo.git(&["clean", "-fd"]).expect("Clean should succeed");
+                repo.git_og(&["clean", "-fd"])
+                    .expect("Clean should succeed");
 
                 // 2. Reset --hard to clean any changes
-                repo.git(&["reset", "--hard"])
+                repo.git_og(&["reset", "--hard"])
                     .expect("Reset --hard should succeed");
 
                 // 3. Get the default branch from the remote
