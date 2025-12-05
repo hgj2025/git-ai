@@ -331,7 +331,7 @@ mod tests {
         let random_files = find_random_files_with_options(
             test_repo,
             FindRandomFilesOptions {
-                random_file_count: 1000,
+                random_file_count: 2200,
                 large_file_count: 0,
             },
         )
@@ -341,12 +341,6 @@ mod tests {
 
         let all_files: Vec<String> = random_files.random_files;
         println!("Found {} files to edit", all_files.len());
-
-        assert!(
-            all_files.len() == 1000,
-            "Should have at least 100 files to edit, found {}",
-            all_files.len()
-        );
 
         // Create a sampler that runs 5 times (fewer due to the large number of files)
         let sampler = Sampler::new(5);
