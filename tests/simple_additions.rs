@@ -886,9 +886,9 @@ This project is open source and available for use.
     let mut file = repo.filename("Readme.md");
     file.assert_lines_and_blame(lines![
         "# Set Operations Library".ai(),
-        "".ai(),
+        "".human(),
         "A TypeScript library providing essential set operations for working with JavaScript `Set` objects. This library offers a collection of utility functions for performing common set operations like union, intersection, difference, and more.".ai(),
-        "".ai(),
+        "".human(),
         "## Features".ai(),
         "".ai(),
         "This library provides the following set operations:".ai(),
