@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod repos;
 use git_ai::observability::wrapper_performance_targets::BenchmarkResult;
@@ -30,6 +30,7 @@ fn setup() {
 mod tests {
     use super::*;
     use git_ai::observability::wrapper_performance_targets::PERFORMANCE_FLOOR_MS;
+    use rand::seq::SliceRandom;
     use rstest::rstest;
 
     #[rstest]
@@ -39,13 +40,18 @@ mod tests {
     #[case("chakracore")]
     #[ignore]
     fn test_human_only_edits_then_commit(#[case] repo_name: &str) {
+        use std::time::Instant;
+
         let repos = get_performance_repos();
         let test_repo = repos
             .get(repo_name)
             .expect(&format!("{} repo should be available", repo_name));
         // Find random files for testing
+        println!("Finding random files for {}", repo_name);
+        let start = Instant::now();
         let random_files = find_random_files(test_repo).expect("Should find random files");
-
+        let duration = start.elapsed();
+        println!("Time taken to find random files: {:?}", duration);
         // Select 3 random files (not large ones)
         let files_to_edit: Vec<String> =
             random_files.random_files.iter().take(3).cloned().collect();
@@ -304,6 +310,124 @@ mod tests {
             "Average overhead should be less than 20%"
         );
     }
+
+    #[rstest]
+    #[case("chromium")]
+    #[case("react")]
+    #[case("node")]
+    #[case("chakracore")]
+    #[ignore]
+    fn test_large_checkpoints(#[case] repo_name: &str) {
+        use std::time::Instant;
+
+        let repos = get_performance_repos();
+        let test_repo = repos
+            .get(repo_name)
+            .expect(&format!("{} repo should be available", repo_name));
+
+        // Find 1000 random files for testing
+        println!("Finding 1000 random files for {}", repo_name);
+        let start = Instant::now();
+        let random_files = find_random_files_with_options(
+            test_repo,
+            FindRandomFilesOptions {
+                random_file_count: 2200,
+                large_file_count: 0,
+            },
+        )
+        .expect("Should find random files");
+        let duration = start.elapsed();
+        println!("Time taken to find random files: {:?}", duration);
+
+        let all_files: Vec<String> = random_files.random_files;
+        println!("Found {} files to edit", all_files.len());
+
+        // Create a sampler that runs 5 times (fewer due to the large number of files)
+        let sampler = Sampler::new(5);
+
+        // Sample the performance of large checkpoint operations
+        let result = sampler.sample(test_repo, |repo| {
+            // Step 1: Edit all 1000 files (simulating AI edits)
+            println!("Editing {} files...", all_files.len());
+            for file_path in &all_files {
+                let full_path = repo.path().join(file_path);
+
+                let mut file = OpenOptions::new()
+                    .append(true)
+                    .open(&full_path)
+                    .expect(&format!("Should be able to open file: {}", file_path));
+
+                file.write_all(b"\n# AI Generated Line\n")
+                    .expect(&format!("Should be able to write to file: {}", file_path));
+            }
+
+            // Step 2: Run git-ai checkpoint mock_ai -- <all pathspecs>
+            println!("Running checkpoint mock_ai on {} files...", all_files.len());
+            let mut checkpoint_args: Vec<&str> = vec!["checkpoint", "mock_ai", "--"];
+            let all_files_refs: Vec<&str> = all_files.iter().map(|s| s.as_str()).collect();
+            checkpoint_args.extend(all_files_refs.iter());
+
+            repo.git_ai(&checkpoint_args)
+                .expect("Checkpoint mock_ai should succeed");
+
+            // Step 3: Select 100 random files from the 1000 and edit them (simulating human edits)
+            let mut rng = thread_rng();
+            let files_to_re_edit: Vec<String> = all_files
+                .choose_multiple(&mut rng, 100.min(all_files.len()))
+                .cloned()
+                .collect();
+
+            println!(
+                "Re-editing {} files (human edits)...",
+                files_to_re_edit.len()
+            );
+            for file_path in &files_to_re_edit {
+                let full_path = repo.path().join(file_path);
+
+                let mut file = OpenOptions::new()
+                    .append(true)
+                    .open(&full_path)
+                    .expect(&format!("Should be able to open file: {}", file_path));
+
+                file.write_all(b"\n# Human Line\n")
+                    .expect(&format!("Should be able to write to file: {}", file_path));
+            }
+
+            // Step 4: Benchmark the checkpoint on the 100 human-edited files
+            println!(
+                "Benchmarking checkpoint on {} files...",
+                files_to_re_edit.len()
+            );
+            let mut final_checkpoint_args: Vec<&str> = vec!["checkpoint", "--"];
+            let files_to_re_edit_refs: Vec<&str> =
+                files_to_re_edit.iter().map(|s| s.as_str()).collect();
+            final_checkpoint_args.extend(files_to_re_edit_refs.iter());
+
+            repo.benchmark_git_ai(&final_checkpoint_args)
+                .expect("Checkpoint should succeed")
+        });
+
+        // Print the results
+        result.print_summary(&format!("Large checkpoints ({})", repo_name));
+
+        // For checkpoint operations, we measure time per file
+        // The benchmark is on 100 files, so we calculate ms per file
+        let files_benchmarked = 100;
+        let avg_total_ms = result.average.total_duration.as_millis() as f64;
+        let ms_per_file = avg_total_ms / files_benchmarked as f64;
+
+        println!(
+            "Average total time: {:.2}ms, Files: {}, Time per file: {:.2}ms",
+            avg_total_ms, files_benchmarked, ms_per_file
+        );
+
+        // Assert that checkpoint takes less than 50ms per file on average
+        assert!(
+            ms_per_file < 50.0,
+            "Checkpoint should take less than 50ms per file, got {:.2}ms per file",
+            ms_per_file
+        );
+    }
 }
 
 const PERFORMANCE_REPOS: &[(&str, &str)] = &[
@@ -365,144 +489,125 @@ pub fn get_performance_repos() -> &'static HashMap<String, TestRepo> {
 /// Result of finding random files in a repository
 #[derive(Debug)]
 pub struct RandomFiles {
-    /// 10 random files from the repository
+    /// Random files from the repository (default 10)
     pub random_files: Vec<String>,
     /// 2 random large files (5k-10k lines)
     pub large_files: Vec<String>,
+}
+
+/// Options for finding random files
+pub struct FindRandomFilesOptions {
+    /// Number of random files to find (default 10)
+    pub random_file_count: usize,
+    /// Number of large files to find (default 2)
+    pub large_file_count: usize,
+}
+
+impl Default for FindRandomFilesOptions {
+    fn default() -> Self {
+        Self {
+            random_file_count: 10,
+            large_file_count: 2,
+        }
+    }
 }
 
 /// Find random files in a repository for performance testing
 ///
 /// Returns:
 /// - 10 random files from the repository
-/// - 2 random large files that are between 5k-10k lines
+/// - 2 random large files (by byte size, as a proxy for line count)
 ///
-/// This helper is useful for performance testing various operations on different file sizes
+/// This helper uses filesystem operations directly instead of git commands
+/// for much faster performance on large repositories.
 pub fn find_random_files(test_repo: &TestRepo) -> Result<RandomFiles, String> {
-    use git_ai::git::repository::find_repository_in_path;
+    find_random_files_with_options(test_repo, FindRandomFilesOptions::default())
+}
 
-    // Get the underlying Repository from the TestRepo path
-    let repo = find_repository_in_path(test_repo.path().to_str().unwrap())
-        .map_err(|e| format!("Failed to find repository: {:?}", e))?;
+/// Find random files in a repository with custom options
+///
+/// Returns:
+/// - `random_file_count` random files from the repository
+/// - `large_file_count` random large files (by byte size, as a proxy for line count)
+///
+/// This helper uses filesystem operations directly instead of git commands
+/// for much faster performance on large repositories.
+pub fn find_random_files_with_options(
+    test_repo: &TestRepo,
+    options: FindRandomFilesOptions,
+) -> Result<RandomFiles, String> {
+    use std::fs;
 
-    // Get HEAD commit
-    let head = repo
-        .head()
-        .map_err(|e| format!("Failed to get HEAD: {:?}", e))?;
-    let head_commit = head
-        .target()
-        .map_err(|e| format!("Failed to get HEAD target: {:?}", e))?;
+    let repo_path = test_repo.path();
 
-    // Use git ls-tree to get all files in the repository at HEAD
-    let mut args = repo.global_args_for_exec();
-    args.push("ls-tree".to_string());
-    args.push("-r".to_string()); // Recursive
-    args.push("--name-only".to_string());
-    args.push(head_commit.clone());
+    // Collect all files recursively, skipping .git directory
+    let mut all_files: Vec<String> = Vec::new();
+    let mut dirs_to_visit: Vec<std::path::PathBuf> = vec![repo_path.to_path_buf()];
 
-    let output = Command::new(git_ai::config::Config::get().git_cmd())
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run git ls-tree: {}", e))?;
+    while let Some(dir) = dirs_to_visit.pop() {
+        let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read dir: {}", e))?;
 
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-tree failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            // Skip .git directory
+            if file_name == ".git" {
+                continue;
+            }
+
+            if path.is_dir() {
+                dirs_to_visit.push(path);
+            } else if path.is_file() {
+                // Get relative path from repo root
+                if let Ok(relative) = path.strip_prefix(repo_path) {
+                    if let Some(rel_str) = relative.to_str() {
+                        all_files.push(rel_str.to_string());
+                    }
+                }
+            }
+        }
     }
-
-    let all_files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|s| s.to_string())
-        .collect();
 
     if all_files.is_empty() {
         return Err("No files found in repository".to_string());
     }
 
-    // Select 10 random files
     let mut rng = thread_rng();
-    let mut random_files: Vec<String> = all_files
-        .choose_multiple(&mut rng, 10.min(all_files.len()))
-        .cloned()
+
+    // Find large files using file size as a proxy (> 100KB considered large)
+    // This is much faster than reading files to count lines
+    const LARGE_FILE_THRESHOLD: u64 = 100 * 1024; // 100KB
+
+    let mut file_sizes: Vec<(String, u64)> = Vec::new();
+    for file_path in &all_files {
+        let full_path = repo_path.join(file_path);
+        if let Ok(metadata) = fs::metadata(&full_path) {
+            let size = metadata.len();
+            if size >= LARGE_FILE_THRESHOLD {
+                file_sizes.push((file_path.clone(), size));
+            }
+        }
+    }
+
+    // Sort by size descending and take top N
+    file_sizes.sort_by(|a, b| b.1.cmp(&a.1));
+    let large_files: Vec<String> = file_sizes
+        .into_iter()
+        .take(options.large_file_count)
+        .map(|(p, _)| p)
         .collect();
 
-    // Find large files (5k-10k lines)
-    let mut large_files: Vec<String> = Vec::new();
+    // Select N random files, excluding large files
+    let candidates: Vec<&String> = all_files
+        .iter()
+        .filter(|f| !large_files.contains(f))
+        .collect();
 
-    // Shuffle to randomize the search order
-    let mut shuffled_files = all_files.clone();
-    shuffled_files.shuffle(&mut rng);
-
-    for file_path in shuffled_files {
-        if large_files.len() >= 2 {
-            break;
-        }
-
-        // Read file content from HEAD
-        let file_content = match repo.get_file_content(&file_path, &head_commit) {
-            Ok(content) => content,
-            Err(_) => continue, // Skip files that can't be read (binaries, etc.)
-        };
-
-        // Count lines
-        let line_count = file_content.iter().filter(|&&b| b == b'\n').count();
-
-        if line_count >= 5000 && line_count <= 10000 {
-            large_files.push(file_path);
-        }
-    }
-
-    // If we couldn't find 2 large files, fall back to the largest files we can find
-    if large_files.len() < 2 {
-        let mut file_sizes: Vec<(String, usize)> = Vec::new();
-
-        // Sample a subset of files to check (to avoid checking all files in huge repos)
-        let sample_size = 1000.min(all_files.len());
-        let sample: Vec<String> = all_files
-            .choose_multiple(&mut rng, sample_size)
-            .cloned()
-            .collect();
-
-        for file_path in sample {
-            if large_files.contains(&file_path) {
-                continue;
-            }
-
-            if let Ok(content) = repo.get_file_content(&file_path, &head_commit) {
-                let line_count = content.iter().filter(|&&b| b == b'\n').count();
-                if line_count >= 1000 {
-                    // Only consider reasonably large files
-                    file_sizes.push((file_path, line_count));
-                }
-            }
-        }
-
-        // Sort by line count descending
-        file_sizes.sort_by(|a, b| b.1.cmp(&a.1));
-
-        // Take additional large files to reach 2 total
-        for (file_path, _line_count) in file_sizes.iter().take(2 - large_files.len()) {
-            large_files.push(file_path.clone());
-        }
-    }
-
-    // Make sure random_files doesn't overlap with large_files
-    random_files.retain(|f| !large_files.contains(f));
-
-    // If we removed some, add more random files
-    while random_files.len() < 10 && random_files.len() < all_files.len() {
-        if let Some(file) = all_files
-            .choose(&mut rng)
-            .filter(|f| !random_files.contains(f) && !large_files.contains(f))
-        {
-            random_files.push(file.clone());
-        } else {
-            break;
-        }
-    }
+    let random_files: Vec<String> = candidates
+        .choose_multiple(&mut rng, options.random_file_count.min(candidates.len()))
+        .map(|s| (*s).clone())
+        .collect();
 
     Ok(RandomFiles {
         random_files,
@@ -675,39 +780,45 @@ impl Sampler {
         self.sample_with_setup(
             test_repo,
             |repo| {
-                // Default setup: Reset to clean state before each run (not timed)
+                // Optimized setup: Since each test commits its changes, the working tree
+                // is clean after each run. We just need to get back to the default branch.
 
-                // 1. Clean any untracked files and directories
-                repo.git(&["clean", "-fd"]).expect("Clean should succeed");
+                let setup_start = Instant::now();
 
-                // 2. Reset --hard to clean any changes
-                repo.git(&["reset", "--hard"])
-                    .expect("Reset --hard should succeed");
-
-                // 3. Get the default branch from the remote
-                // Try to get the symbolic ref for origin/HEAD to find the default branch
+                // 1. Get the default branch (fast - just reading refs)
                 let default_branch = repo
-                    .git(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+                    .git_og(&["symbolic-ref", "refs/remotes/origin/HEAD"])
                     .ok()
                     .and_then(|output| {
-                        // Extract branch name from "refs/remotes/origin/main"
                         output
                             .trim()
                             .strip_prefix("refs/remotes/origin/")
                             .map(|b| b.to_string())
                     })
                     .unwrap_or_else(|| {
-                        // Fallback: try main, then master
-                        if repo.git(&["rev-parse", "--verify", "main"]).is_ok() {
+                        if repo.git_og(&["rev-parse", "--verify", "main"]).is_ok() {
                             "main".to_string()
                         } else {
                             "master".to_string()
                         }
                     });
 
-                // 4. Checkout the default branch
-                repo.git(&["checkout", &default_branch])
+                // 2. Get current branch name to delete it later (if it's a test branch)
+                let current_branch = repo
+                    .git_og(&["branch", "--show-current"])
+                    .ok()
+                    .map(|s| s.trim().to_string());
+
+                // 3. Checkout default branch with force to discard any uncommitted changes
+                repo.git_og(&["checkout", "-f", &default_branch])
                     .expect(&format!("Checkout {} should succeed", default_branch));
+
+                // 4. Delete the old test branch if it was a test-bench branch
+                if let Some(branch) = current_branch {
+                    if branch.starts_with("test-bench/") {
+                        let _ = repo.git_og(&["branch", "-D", &branch]);
+                    }
+                }
 
                 // 5. Create a new branch with timestamp for isolation
                 let timestamp_nanos = SystemTime::now()
@@ -715,8 +826,10 @@ impl Sampler {
                     .expect("Time went backwards")
                     .as_nanos();
                 let branch_name = format!("test-bench/{}", timestamp_nanos);
-                repo.git(&["checkout", "-b", &branch_name])
+                repo.git_og(&["checkout", "-b", &branch_name])
                     .expect("Create branch should succeed");
+
+                println!("Time taken to setup: {:?}", setup_start.elapsed());
             },
             operation,
         )
