@@ -834,20 +834,23 @@ impl AgentCheckpointPreset for GithubCopilotPreset {
         }
 
         // Required working directory provided by the extension
+        // Accept snake_case (new) with fallback to camelCase (old) for backward compatibility
         let repo_working_dir: String = hook_data
-            .get("workspaceFolder")
+            .get("workspace_folder")
             .and_then(|v| v.as_str())
+            .or_else(|| hook_data.get("workspaceFolder").and_then(|v| v.as_str()))
             .ok_or_else(|| {
                 GitAiError::PresetError(
-                    "workspaceFolder not found in hook_input for GitHub Copilot preset".to_string(),
+                    "workspace_folder or workspaceFolder not found in hook_input for GitHub Copilot preset".to_string(),
                 )
             })?
             .to_string();
 
-        // Extract dirtyFiles if available
+        // Extract dirty_files if available (snake_case with fallback to camelCase)
         let dirty_files = hook_data
-            .get("dirtyFiles")
+            .get("dirty_files")
             .and_then(|v| v.as_object())
+            .or_else(|| hook_data.get("dirtyFiles").and_then(|v| v.as_object()))
             .map(|obj| {
                 obj.iter()
                     .filter_map(|(key, value)| {
@@ -898,21 +901,26 @@ impl AgentCheckpointPreset for GithubCopilotPreset {
         }
 
         // Handle after_edit (AI checkpoint)
+        // Accept snake_case (new) with fallback to camelCase (old) for backward compatibility
         let chat_session_path = hook_data
-            .get("chatSessionPath")
+            .get("chat_session_path")
             .and_then(|v| v.as_str())
+            .or_else(|| hook_data.get("chatSessionPath").and_then(|v| v.as_str()))
             .ok_or_else(|| {
-                GitAiError::PresetError("chatSessionPath not found in hook_input for after_edit".to_string())
+                GitAiError::PresetError("chat_session_path or chatSessionPath not found in hook_input for after_edit".to_string())
             })?;
 
         let agent_metadata = HashMap::from([
             ("chat_session_path".to_string(), chat_session_path.to_string()),
         ]);
 
-        // Accept either chatSessionId (old) or sessionId (from VS Code extension)
+        // Accept snake_case (new) with fallback to camelCase (old) for backward compatibility
+        // Accept either chat_session_id/session_id (new) or chatSessionId/sessionId (old)
         let chat_session_id = hook_data
-            .get("chatSessionId")
+            .get("chat_session_id")
             .and_then(|v| v.as_str())
+            .or_else(|| hook_data.get("session_id").and_then(|v| v.as_str()))
+            .or_else(|| hook_data.get("chatSessionId").and_then(|v| v.as_str()))
             .or_else(|| hook_data.get("sessionId").and_then(|v| v.as_str()))
             .unwrap_or("unknown")
             .to_string();
