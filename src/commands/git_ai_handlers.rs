@@ -426,9 +426,12 @@ fn handle_ai_blame(args: &[String]) {
         std::process::exit(1);
     }
 
-    // TODO: Do we have any 'global' args for the ai-blame?
-    // Find the git repository
-    let repo = match find_repository(&Vec::<String>::new()) {
+    // Find the git repository from current directory
+    let current_dir = env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string();
+    let repo = match find_repository_in_path(&current_dir) {
         Ok(repo) => repo,
         Err(e) => {
             eprintln!("Failed to find repository: {}", e);
@@ -462,7 +465,11 @@ fn handle_ai_blame(args: &[String]) {
 }
 
 fn handle_ai_diff(args: &[String]) {
-    let repo = match find_repository(&Vec::<String>::new()) {
+    let current_dir = env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string();
+    let repo = match find_repository_in_path(&current_dir) {
         Ok(repo) => repo,
         Err(e) => {
             eprintln!("Failed to find repository: {}", e);
@@ -510,7 +517,9 @@ fn handle_stats(args: &[String]) {
                         break;
                     }
                     // Stop if this looks like a commit SHA or range (contains ..)
-                    if arg.contains("..") || (commit_sha.is_none() && !found_pattern && arg.len() >= 7) {
+                    if arg.contains("..")
+                        || (commit_sha.is_none() && !found_pattern && arg.len() >= 7)
+                    {
                         // Could be a commit SHA, stop collecting patterns
                         break;
                     }
