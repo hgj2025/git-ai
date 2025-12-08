@@ -34,6 +34,7 @@ impl CiContext {
                 base_ref,
                 base_sha: _,
             } => {
+                println!("Working repository is in {}", self.repo.path().display());
                 // Only handle squash or rebase-like merges.
                 // Skip simple merge commits (2+ parents) and fast-forward merges (merge commit == head).
                 let merge_commit = self.repo.find_commit(merge_commit_sha.clone())?;
