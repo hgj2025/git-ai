@@ -159,7 +159,7 @@ jobs:
 
   build-macos-intel:
     name: Build for macOS Intel
-    runs-on: macos-13
+    runs-on: macos-15-intel
     outputs:
       version: ${{ steps.get-version.outputs.version }}
 
