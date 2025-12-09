@@ -79,6 +79,7 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 | [Cursor &gt;1.7](https://usegitai.com/docs/cursor)                                         | ✅         | ✅      |
 | [Claude Code](https://usegitai.com/docs/claude-code)                                       | ✅         | ✅      |
 | [GitHub Copilot in VSCode via Extension](https://usegitai.com/docs/vs-code-github-copilot) | ✅         | ✅      |
+| Atlassian RovoDev CLI                                                                      | ✅         | ✅      |
 | Google Gemini CLI (in-progress)                                                            | 🔄         | 🔄      |
 | Continue CLI (in-progress)                                                                 | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
