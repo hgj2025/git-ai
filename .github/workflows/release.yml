@@ -294,6 +294,9 @@ jobs:
           VERSION="${{ steps.release-meta.outputs.tag_name }}"
           # Convert checksums to pipe-separated format for embedding
           CHECKSUMS=$(cat release/SHA256SUMS | tr '\n' '|' | sed 's/|$//')
+          if [ -z "$CHECKSUMS" ]; then
+            CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"
+          fi
           # Replace only the variable assignment lines (line 17 and 22) to preserve comparison strings
           awk -v version="$VERSION" -v checksums="$CHECKSUMS" '
             NR==17 { sub(/__VERSION_PLACEHOLDER__/, version) }
