@@ -50,7 +50,7 @@ verify_checksum() {
     local expected=""
     IFS='|' read -ra CHECKSUM_ENTRIES <<< "$EMBEDDED_CHECKSUMS"
     for entry in "${CHECKSUM_ENTRIES[@]}"; do
-        if [[ "$entry" == *"$binary_name"* ]]; then
+        if [[ "$entry" =~ ^[[:xdigit:]]+[[:space:]]+$binary_name$ ]]; then
             expected=$(echo "$entry" | awk '{print $1}')
             break
         fi
