@@ -79,11 +79,16 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 | [Cursor &gt;1.7](https://usegitai.com/docs/cursor)                                         | ✅         | ✅      |
 | [Claude Code](https://usegitai.com/docs/claude-code)                                       | ✅         | ✅      |
 | [GitHub Copilot in VSCode via Extension](https://usegitai.com/docs/vs-code-github-copilot) | ✅         | ✅      |
-| Google Gemini (in-progress)                                                                | 🔄         | 🔄      |
+| Google Gemini CLI (in-progress)                                                            | 🔄         | 🔄      |
+| Continue CLI (in-progress)                                                                 | 🔄         | 🔄      |
+| Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
+| OpenCode (in-progress)                                                                     | 🔄         | 🔄      |
+| Ona                                                                                        |            |         |
 | OpenAI Codex (waiting on [openai/codex #2109](https://github.com/openai/codex/issues/2109)) |            |         |
+| Ona                                                                                        |            |         |
 | Sourcegraph Cody + Amp                                                                     |            |         |
+| Google Antigravity                                                                         |            |         |
 | Windsurf                                                                                   |            |         |
-| RovoDev CLI                                                                                |            |         |
 | _your agent here_                                                                          |            |         |
 
 > **Building a Coding Agent?** [Add support for Git AI by following this guide](https://usegitai.com/docs/add-your-agent)
