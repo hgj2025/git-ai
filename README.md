@@ -83,7 +83,6 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 | Continue CLI (in-progress)                                                                 | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
 | OpenCode (in-progress)                                                                     | 🔄         | 🔄      |
-| Ona                                                                                        |            |         |
 | OpenAI Codex (waiting on [openai/codex #2109](https://github.com/openai/codex/issues/2109)) |            |         |
 | Ona                                                                                        |            |         |
 | Sourcegraph Cody + Amp                                                                     |            |         |
