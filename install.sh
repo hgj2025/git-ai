@@ -48,7 +48,9 @@ verify_checksum() {
 
     # Extract expected checksum for this binary
     local expected=""
+    local old_ifs="$IFS"
     IFS='|' read -ra CHECKSUM_ENTRIES <<< "$EMBEDDED_CHECKSUMS"
+    IFS="$old_ifs"
     for entry in "${CHECKSUM_ENTRIES[@]}"; do
         if [[ "$entry" =~ ^[[:xdigit:]]+[[:space:]]+$binary_name$ ]]; then
             expected=$(echo "$entry" | awk '{print $1}')
