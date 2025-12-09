@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 # GitHub repository details
 REPO="acunniffe/git-ai"
 
-# Version placeholder - replaced during release builds with actual version
+# Version placeholder - replaced during release builds with actual version (e.g., "v1.0.24")
 # When set to __VERSION_PLACEHOLDER__, defaults to "latest"
 PINNED_VERSION="__VERSION_PLACEHOLDER__"
 
