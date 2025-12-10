@@ -60,6 +60,9 @@ fn test_commit_from_subdirectory_with_mixed_files() {
     // Create file in subdirectory (AI-authored)
     let subdir_file_path = working_dir.join("main.rs");
     fs::write(&subdir_file_path, "fn main() {\n    println!(\"Hello, world!\");\n}\n").unwrap();
+
+    // Create AI checkpoint for the file in subdirectory
+    repo.git_ai(&["checkpoint", "mock_ai", "src/main.rs"]).unwrap();
     
     // Create file in root (human-authored)
     let root_file_path = repo.path().join("LICENSE");
@@ -68,8 +71,7 @@ fn test_commit_from_subdirectory_with_mixed_files() {
     // Stage both files
     repo.git(&["add", "src/main.rs", "LICENSE"]).unwrap();
     
-    // Create checkpoints
-    repo.git_ai(&["checkpoint", "mock_ai", "src/main.rs"]).unwrap();
+    // Create human checkpoint
     repo.git_ai(&["checkpoint"]).unwrap(); // Human checkpoint for LICENSE
     
     // Commit from subdirectory (not using -C flag)
