@@ -2,7 +2,7 @@
 # yarn lockfile v1
 
 
-"@opencode-ai/plugin@^1.0.0":
+"@opencode-ai/plugin@^1.0.141":
   version "1.0.141"
   resolved "https://registry.yarnpkg.com/@opencode-ai/plugin/-/plugin-1.0.141.tgz#23b9df5fd470d76b6a9b7b2c39f42a3d331029f5"
   integrity sha512-JRrAhGXdUqGgH050+pfz6O7Y+QVoCWZA8apzoizvC0t3SWEUeZUXQOZLwTZIoNPtitxK7pvUylJ+gHg/6h5n8Q==
