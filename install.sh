@@ -10,7 +10,12 @@ YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
 # GitHub repository details
-REPO="acunniffe/git-ai"
+# Replaced during release builds with the actual repository (e.g., "acunniffe/git-ai")
+# When set to __REPO_PLACEHOLDER__, defaults to "acunniffe/git-ai"
+REPO="__REPO_PLACEHOLDER__"
+if [ "$REPO" = "__REPO_PLACEHOLDER__" ]; then
+    REPO="acunniffe/git-ai"
+fi
 
 # Version placeholder - replaced during release builds with actual version (e.g., "v1.0.24")
 # When set to __VERSION_PLACEHOLDER__, defaults to "latest"
