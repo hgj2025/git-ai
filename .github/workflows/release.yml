@@ -292,19 +292,22 @@ jobs:
       - name: Generate version-pinned install script
         run: |
           VERSION="${{ steps.release-meta.outputs.tag_name }}"
+          REPO="${{ github.repository }}"
           # Convert checksums to pipe-separated format for embedding
           CHECKSUMS=$(tr '\n' '|' < release/SHA256SUMS | sed 's/|$//')
           if [ -z "$CHECKSUMS" ]; then
             CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"
           fi
-          # Replace only the variable assignment lines (line 17 and 22) to preserve comparison strings
-          awk -v version="$VERSION" -v checksums="$CHECKSUMS" '
-            NR==17 { sub(/__VERSION_PLACEHOLDER__/, version) }
-            NR==22 { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
+          # Replace variable assignment lines to embed release-specific values
+          # Line 15: REPO, Line 22: PINNED_VERSION, Line 27: EMBEDDED_CHECKSUMS
+          awk -v repo="$REPO" -v version="$VERSION" -v checksums="$CHECKSUMS" '
+            NR==15 { sub(/__REPO_PLACEHOLDER__/, repo) }
+            NR==22 { sub(/__VERSION_PLACEHOLDER__/, version) }
+            NR==27 { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
             { print }
           ' repo/install.sh > release/install.sh
           chmod +x release/install.sh
-          echo "Generated version-pinned install.sh for $VERSION"
+          echo "Generated version-pinned install.sh for $VERSION from $REPO"
           echo "Embedded checksums: $CHECKSUMS"
 
       - name: Generate attestations for release artifacts
