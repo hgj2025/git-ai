@@ -1963,6 +1963,63 @@ mod tests {
     }
 
     #[test]
+    fn line_reflow_without_token_change_is_non_substantive_with_semicolon() {
+        let tracker = AttributionTracker::new();
+        let old = "call(foo, bar, baz);";
+        let new = "call(\n  foo,\n  bar,\n  baz\n);";
+        let old_attrs = vec![Attribution::new(0, old.len(), "Alice".into(), TEST_TS)];
+
+        let updated = tracker
+            .update_attributions(old, new, &old_attrs, "Bob", TEST_TS + 1)
+            .unwrap();
+
+        let line_attrs = attributions_to_line_attributions(&updated, new);
+        assert!(
+            line_attrs.iter().all(|la| la.author_id == "Alice"),
+            "every reflowed line should remain Alice, got {:?}",
+            line_attrs
+        );
+    }
+
+    #[test]
+    fn adding_semicolon_is_substantive() {
+        let tracker = AttributionTracker::new();
+        let old = "call(foo, bar, baz)";
+        let new = "call(foo, bar, baz);";
+        let old_attrs = vec![Attribution::new(0, old.len(), "Alice".into(), TEST_TS)];
+
+        let updated = tracker
+            .update_attributions(old, new, &old_attrs, "Bob", TEST_TS + 1)
+            .unwrap();
+
+        let line_attrs = attributions_to_line_attributions(&updated, new);
+        assert!(
+            line_attrs.iter().all(|la| la.author_id == "Bob"),
+            "adding semicolon should be substantive, got {:?}",
+            line_attrs
+        );
+    }
+
+    #[test]
+    fn reflow_complex_if_statement_is_non_substantive() {
+        let tracker = AttributionTracker::new();
+        let old = "if (foo && bar || baz) { println!(\"condition\"); }";
+        let new = "if (foo\n    && bar\n    || baz) {\n    println!(\"condition\");\n}";
+        let old_attrs = vec![Attribution::new(0, old.len(), "Alice".into(), TEST_TS)];
+
+        let updated = tracker
+            .update_attributions(old, new, &old_attrs, "Bob", TEST_TS + 1)
+            .unwrap();
+
+        let line_attrs = attributions_to_line_attributions(&updated, new);
+        assert!(
+            line_attrs.iter().all(|la| la.author_id == "Alice"),
+            "reflow of complex if statement should not be substantive, got {:?}",
+            line_attrs
+        );
+    }
+
+    #[test]
     fn move_block_preserves_original_authors_one_line_threshold() {
         let tracker = AttributionTracker::with_config(AttributionConfig {
             // Test with a one-line threshold
