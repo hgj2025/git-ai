@@ -82,6 +82,7 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 | Google Gemini CLI (in nightly, GA coming soon)                                             | ✅         | ✅      |
 | OpenCode                                                                                   | ✅         | ✅      |
 | Atlassian RovoDev CLI                                                                      | ✅         | ✅      |
+| AWS Kiro (in-progress)                                                                     | 🔄         | 🔄      |
 | Continue CLI (in-progress)                                                                 | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
 | OpenAI Codex (waiting on [openai/codex #2109](https://github.com/openai/codex/issues/2109)) |            |         |
