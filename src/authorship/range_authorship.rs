@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::authorship::rebase_authorship::filter_pathspecs_to_ai_touched_files;
 use crate::authorship::stats::{CommitStats, stats_for_commit_stats, stats_from_authorship_log};
 use crate::error::GitAiError;
 use crate::git::refs::{CommitAuthorship, get_commits_with_notes_from_list};
@@ -203,7 +202,10 @@ fn create_authorship_log_for_range(
         .filter(|file| !should_ignore_file(file, ignore_patterns))
         .collect();
 
-    let changed_files = filter_pathspecs_to_ai_touched_files(repo, commit_shas, &changed_files)?;
+    // Note: We intentionally do NOT filter to AI-touched files here.
+    // For range authorship, AI lines may have been introduced in commits BEFORE the range
+    // and still exist in the end state. We need to process all changed files and let
+    // VirtualAttributions find the correct authorship from git blame history.
 
     if changed_files.is_empty() {
         // No files changed, return empty authorship log
@@ -432,12 +434,8 @@ fn calculate_range_stats_direct(
 pub fn print_range_authorship_stats(stats: &RangeAuthorshipStats) {
     println!("\n");
 
-    // Check if there's any AI authorship in the range (based on the in-memory squashed authorship log)
-    let has_ai_authorship =
-        stats.range_stats.ai_additions > 0 || stats.range_stats.total_ai_additions > 0;
-
     // If there's no AI authorship in the range, show the special message
-    if !has_ai_authorship {
+    if !stats.authorship_stats.commits_with_authorship > stats.authorship_stats.total_commits {
         println!("Committers are not using git-ai");
         return;
     }
