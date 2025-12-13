@@ -366,11 +366,11 @@ fn test_diff_shows_human_attribution() {
     // Parse and verify exact sequence
     let lines = parse_diff_output(&output);
 
-    // Verify exact order: deletion with AI, then two additions
+    // Verify exact order: deletion, then two additions
     assert_eq!(lines.len(), 3, "Should have exactly 3 lines");
 
-    // First line: deletion with AI attribution
-    assert_diff_line(&lines[0], "-", "fn old()", Some("ai"));
+    // First line: deletion (no attribution on deletions)
+    assert_diff_line(&lines[0], "-", "fn old()", None);
 
     // Next two lines: additions (will have no-data or human attribution)
     assert_diff_line(&lines[1], "+", "fn new()", None);
@@ -514,10 +514,10 @@ fn test_diff_pure_deletions() {
     assert_diff_lines_exact(
         &lines,
         &[
-            ("-", "Line 1", Some("ai")),
-            ("-", "Line 2", Some("ai")),
-            ("-", "Line 3", None), // Could be human or no-data
-            ("-", "Line 4", Some("ai")),
+            ("-", "Line 1", None), // No attribution on deletions
+            ("-", "Line 2", None), // No attribution on deletions
+            ("-", "Line 3", None), // No attribution on deletions
+            ("-", "Line 4", None), // No attribution on deletions
         ],
     );
 }
@@ -694,9 +694,9 @@ fn test_diff_exact_sequence_verification() {
         &lines,
         &[
             ("-", "fn first()", None),                 // Delete human line
-            ("-", "fn second()", Some("ai")),          // Delete AI line
+            ("-", "fn second()", None), // Delete AI line (no attribution on deletions)
             ("+", "fn second_modified()", Some("ai")), // Add AI line
-            ("+", "fn third()", Some("ai")),           // Add AI line
+            ("+", "fn third()", Some("ai")), // Add AI line
         ],
     );
 }
