@@ -202,6 +202,16 @@ impl ClaudePreset {
                                             }
                                         }
                                     }
+                                    Some("thinking") => {
+                                        if let Some(thinking) = item["thinking"].as_str() {
+                                            if !thinking.trim().is_empty() {
+                                                transcript.add_message(Message::Assistant {
+                                                    text: thinking.to_string(),
+                                                    timestamp: timestamp.clone(),
+                                                });
+                                            }
+                                        }
+                                    }
                                     Some("tool_use") => {
                                         if let (Some(name), Some(_input)) =
                                             (item["name"].as_str(), item["input"].as_object())

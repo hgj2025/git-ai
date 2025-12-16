@@ -1,9 +1,13 @@
+#[macro_use]
+mod repos;
 mod test_utils;
 
 use git_ai::authorship::transcript::Message;
 use git_ai::commands::checkpoint_agent::agent_presets::{
     AgentCheckpointFlags, AgentCheckpointPreset, ClaudePreset,
 };
+use serde_json::json;
+use std::fs;
 use test_utils::fixture_path;
 
 #[test]
@@ -89,4 +93,178 @@ fn test_claude_preset_no_filepath_when_tool_input_missing() {
 
     // Verify edited_filepaths is None when tool_input is missing
     assert!(result.edited_filepaths.is_none());
+}
+
+#[test]
+fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
+    use repos::test_repo::TestRepo;
+
+    let repo = TestRepo::new();
+    let repo_root = repo.canonical_path();
+
+    // Create initial file and commit
+    let src_dir = repo_root.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    let file_path = src_dir.join("main.rs");
+    fs::write(&file_path, "fn main() {}\n").unwrap();
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // Use a stable transcript path so both checkpoints share the same agent_id
+    let transcript_path = repo_root.join("claude-session.jsonl");
+
+    // First checkpoint: empty transcript (simulates race where data isn't ready yet)
+    fs::write(&transcript_path, "").unwrap();
+    let hook_input = json!({
+        "cwd": repo_root.to_string_lossy().to_string(),
+        "hook_event_name": "PostToolUse",
+        "transcript_path": transcript_path.to_string_lossy().to_string(),
+        "tool_input": {
+            "file_path": file_path.to_string_lossy().to_string()
+        }
+    })
+    .to_string();
+
+    // First AI edit and checkpoint with empty transcript/model
+    fs::write(&file_path, "fn main() {}\n// ai line one\n").unwrap();
+    repo.git_ai(&["checkpoint", "claude", "--hook-input", &hook_input])
+        .unwrap();
+
+    // Second AI edit with the real transcript content
+    let fixture = fixture_path("example-claude-code.jsonl");
+    fs::copy(&fixture, &transcript_path).unwrap();
+    fs::write(
+        &file_path,
+        "fn main() {}\n// ai line one\n// ai line two\n",
+    )
+    .unwrap();
+    repo.git_ai(&["checkpoint", "claude", "--hook-input", &hook_input])
+        .unwrap();
+
+    // Commit the changes
+    let commit = repo.stage_all_and_commit("Add AI lines").unwrap();
+
+    // We should have exactly one prompt record keyed by the claude agent_id
+    assert_eq!(
+        commit.authorship_log.metadata.prompts.len(),
+        1,
+        "Expected a single prompt record"
+    );
+    let prompt_record = commit
+        .authorship_log
+        .metadata
+        .prompts
+        .values()
+        .next()
+        .expect("Prompt record should exist");
+
+    // The latest checkpoint (with the real transcript) should win
+    assert!(
+        !prompt_record.messages.is_empty(),
+        "Prompt record should contain messages from the latest checkpoint"
+    );
+    assert_eq!(
+        prompt_record.agent_id.model,
+        "claude-sonnet-4-20250514",
+        "Prompt record should use the model from the latest checkpoint transcript"
+    );
+}
+
+#[test]
+fn test_parse_claude_code_jsonl_with_thinking() {
+    let fixture = fixture_path("claude-code-with-thinking.jsonl");
+    let (transcript, model) =
+        ClaudePreset::transcript_and_model_from_claude_code_jsonl(fixture.to_str().unwrap())
+            .expect("Failed to parse JSONL");
+
+    // Verify we parsed some messages
+    assert!(!transcript.messages().is_empty());
+
+    // Verify we extracted the model
+    assert!(model.is_some());
+    let model_name = model.unwrap();
+    println!("Extracted model: {}", model_name);
+    assert_eq!(model_name, "claude-sonnet-4-5-20250929");
+
+    // Print the parsed transcript for inspection
+    println!("Parsed {} messages:", transcript.messages().len());
+    for (i, message) in transcript.messages().iter().enumerate() {
+        match message {
+            Message::User { text, .. } => {
+                println!("{}: User: {}", i, text.chars().take(100).collect::<String>())
+            }
+            Message::Assistant { text, .. } => {
+                println!("{}: Assistant: {}", i, text.chars().take(100).collect::<String>())
+            }
+            Message::ToolUse { name, input, .. } => {
+                println!("{}: ToolUse: {} with input: {:?}", i, name, input)
+            }
+        }
+    }
+
+    // Verify message types and count
+    // Expected messages:
+    // 1. User: "add another hello world console log to @index.ts "
+    // 2. Assistant: thinking message (should be parsed as Assistant)
+    // 3. Assistant: "I'll add another hello world console log to the file."
+    // 4. ToolUse: Edit
+    // 5. User: tool result
+    // 6. Assistant: thinking message (should be parsed as Assistant)
+    // 7. Assistant: "Done! I've added another `console.log('hello world')` statement at index.ts:21."
+
+    assert_eq!(
+        transcript.messages().len(),
+        7,
+        "Expected 7 messages (1 user + 2 thinking + 2 text + 1 tool_use + 1 tool_result)"
+    );
+
+    // Check first message is User
+    assert!(
+        matches!(transcript.messages()[0], Message::User { .. }),
+        "First message should be User"
+    );
+
+    // Check second message is Assistant (thinking)
+    assert!(
+        matches!(transcript.messages()[1], Message::Assistant { .. }),
+        "Second message should be Assistant (thinking)"
+    );
+    if let Message::Assistant { text, .. } = &transcript.messages()[1] {
+        assert!(
+            text.contains("add another"),
+            "Thinking message should contain thinking content"
+        );
+    }
+
+    // Check third message is Assistant (text)
+    assert!(
+        matches!(transcript.messages()[2], Message::Assistant { .. }),
+        "Third message should be Assistant (text)"
+    );
+
+    // Check fourth message is ToolUse
+    assert!(
+        matches!(transcript.messages()[3], Message::ToolUse { .. }),
+        "Fourth message should be ToolUse"
+    );
+    if let Message::ToolUse { name, .. } = &transcript.messages()[3] {
+        assert_eq!(name, "Edit", "Tool should be Edit");
+    }
+
+    // Check fifth message is User (tool result)
+    assert!(
+        matches!(transcript.messages()[4], Message::User { .. }),
+        "Fifth message should be User (tool result)"
+    );
+
+    // Check sixth message is Assistant (thinking)
+    assert!(
+        matches!(transcript.messages()[5], Message::Assistant { .. }),
+        "Sixth message should be Assistant (thinking)"
+    );
+
+    // Check seventh message is Assistant (text)
+    assert!(
+        matches!(transcript.messages()[6], Message::Assistant { .. }),
+        "Seventh message should be Assistant (text)"
+    );
 }
