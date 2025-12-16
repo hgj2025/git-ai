@@ -168,3 +168,103 @@ fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
         "Prompt record should use the model from the latest checkpoint transcript"
     );
 }
+
+#[test]
+fn test_parse_claude_code_jsonl_with_thinking() {
+    let fixture = fixture_path("claude-code-with-thinking.jsonl");
+    let (transcript, model) =
+        ClaudePreset::transcript_and_model_from_claude_code_jsonl(fixture.to_str().unwrap())
+            .expect("Failed to parse JSONL");
+
+    // Verify we parsed some messages
+    assert!(!transcript.messages().is_empty());
+
+    // Verify we extracted the model
+    assert!(model.is_some());
+    let model_name = model.unwrap();
+    println!("Extracted model: {}", model_name);
+    assert_eq!(model_name, "claude-sonnet-4-5-20250929");
+
+    // Print the parsed transcript for inspection
+    println!("Parsed {} messages:", transcript.messages().len());
+    for (i, message) in transcript.messages().iter().enumerate() {
+        match message {
+            Message::User { text, .. } => {
+                println!("{}: User: {}", i, text.chars().take(100).collect::<String>())
+            }
+            Message::Assistant { text, .. } => {
+                println!("{}: Assistant: {}", i, text.chars().take(100).collect::<String>())
+            }
+            Message::ToolUse { name, input, .. } => {
+                println!("{}: ToolUse: {} with input: {:?}", i, name, input)
+            }
+        }
+    }
+
+    // Verify message types and count
+    // Expected messages:
+    // 1. User: "add another hello world console log to @index.ts "
+    // 2. Assistant: thinking message (should be parsed as Assistant)
+    // 3. Assistant: "I'll add another hello world console log to the file."
+    // 4. ToolUse: Edit
+    // 5. User: tool result
+    // 6. Assistant: thinking message (should be parsed as Assistant)
+    // 7. Assistant: "Done! I've added another `console.log('hello world')` statement at index.ts:21."
+
+    assert_eq!(
+        transcript.messages().len(),
+        7,
+        "Expected 7 messages (1 user + 2 thinking + 2 text + 1 tool_use + 1 tool_result)"
+    );
+
+    // Check first message is User
+    assert!(
+        matches!(transcript.messages()[0], Message::User { .. }),
+        "First message should be User"
+    );
+
+    // Check second message is Assistant (thinking)
+    assert!(
+        matches!(transcript.messages()[1], Message::Assistant { .. }),
+        "Second message should be Assistant (thinking)"
+    );
+    if let Message::Assistant { text, .. } = &transcript.messages()[1] {
+        assert!(
+            text.contains("add another"),
+            "Thinking message should contain thinking content"
+        );
+    }
+
+    // Check third message is Assistant (text)
+    assert!(
+        matches!(transcript.messages()[2], Message::Assistant { .. }),
+        "Third message should be Assistant (text)"
+    );
+
+    // Check fourth message is ToolUse
+    assert!(
+        matches!(transcript.messages()[3], Message::ToolUse { .. }),
+        "Fourth message should be ToolUse"
+    );
+    if let Message::ToolUse { name, .. } = &transcript.messages()[3] {
+        assert_eq!(name, "Edit", "Tool should be Edit");
+    }
+
+    // Check fifth message is User (tool result)
+    assert!(
+        matches!(transcript.messages()[4], Message::User { .. }),
+        "Fifth message should be User (tool result)"
+    );
+
+    // Check sixth message is Assistant (thinking)
+    assert!(
+        matches!(transcript.messages()[5], Message::Assistant { .. }),
+        "Sixth message should be Assistant (thinking)"
+    );
+
+    // Check seventh message is Assistant (text)
+    assert!(
+        matches!(transcript.messages()[6], Message::Assistant { .. }),
+        "Seventh message should be Assistant (text)"
+    );
+}
