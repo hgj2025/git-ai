@@ -80,10 +80,10 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 | [Claude Code](https://usegitai.com/docs/claude-code)                                       | ✅         | ✅      |
 | [GitHub Copilot in VSCode via Extension](https://usegitai.com/docs/vs-code-github-copilot) | ✅         | ✅      |
 | Google Gemini CLI (in nightly, GA coming soon)                                             | ✅         | ✅      |
+| Continue CLI                                                                               | ✅         | ✅      |
 | OpenCode                                                                                   | ✅         | ✅      |
 | Atlassian RovoDev CLI                                                                      | ✅         | ✅      |
 | AWS Kiro (in-progress)                                                                     | 🔄         | 🔄      |
-| Continue CLI (in-progress)                                                                 | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
 | OpenAI Codex (waiting on [openai/codex #2109](https://github.com/openai/codex/issues/2109)) |            |         |
 | Junie &amp; Jetbrains IDEs                                                                 |            |         |
