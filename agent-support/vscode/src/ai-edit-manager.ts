@@ -138,6 +138,8 @@ export class AIEditManager {
 
     const snapshotInfo = this.snapshotOpenEvents.get(filePath);
 
+    console.log('[git-ai] AIEditManager: Evaluating save for checkpoint for', filePath, '- snapshot info:', snapshotInfo);
+
     // Check if we have 1+ valid snapshot open events within the debounce window
     let checkpointTriggered = false;
 
@@ -154,7 +156,16 @@ export class AIEditManager {
         } else {
           try {
             const params = JSON.parse(snapshotInfo.uri.query);
-            const sessionId = params.chatSessionId || params.sessionId;
+            let sessionId = params.chatSessionId || params.sessionId;
+
+            console.log("[git-ai] AIEditManager: Parsed snapshot params:", params);
+
+            if (!sessionId && params.session && params.session.path && params.session.path.startsWith && params.session.path.startsWith('/')) {
+              // VS Code update includes the sessionId encoded as Base64 
+              console.log("[git-ai] AIEditManager: Detected session as object, decoding sessionId");
+              sessionId = Buffer.from(params.session.path.slice(1), 'base64').toString('utf-8');
+              console.log("[git-ai] AIEditManager: Parsed sessionId from Base64:", sessionId);
+            }
 
             if (!sessionId) {
               console.warn('[git-ai] AIEditManager: Snapshot URI missing session id, skipping AI checkpoint for', filePath);
