@@ -74,8 +74,8 @@ pub fn post_commit(
 
     authorship_log.metadata.base_commit_sha = commit_sha.clone();
 
-    // Strip prompt messages if ignore_prompts is enabled
-    if Config::get().ignore_prompts() {
+    // Strip prompt messages if prompts should not be shared for this repository
+    if !Config::get().should_share_prompts(&Some(repo.clone())) {
         strip_prompt_messages(&mut authorship_log.metadata.prompts);
     }
 
@@ -370,8 +370,8 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
     Ok(())
 }
 
-/// Strip messages from prompts if ignore_prompts config is enabled
-/// This is called only in post_commit when writing prompts to git history
+/// Strip messages from prompts when sharing is not enabled for this repository.
+/// This is called only in post_commit when writing prompts to git history.
 fn strip_prompt_messages(prompts: &mut std::collections::BTreeMap<String, PromptRecord>) {
     for record in prompts.values_mut() {
         record.messages.clear();
