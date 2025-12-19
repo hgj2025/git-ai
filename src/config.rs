@@ -12,7 +12,6 @@ use crate::git::repository::Repository;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::RwLock;
 
-/// Centralized configuration for the application
 pub struct Config {
     git_path: String,
     share_prompts_in_repositories: Vec<Pattern>,

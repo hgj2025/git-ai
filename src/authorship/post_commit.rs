@@ -76,6 +76,10 @@ pub fn post_commit(
 
     // Strip prompt messages if prompts should not be shared for this repository
     if !Config::get().should_share_prompts(&Some(repo.clone())) {
+        debug_log(&format!(
+            "Stripping prompt messages for repository: {:?}",
+            repo.path()
+        ));
         strip_prompt_messages(&mut authorship_log.metadata.prompts);
     }
 
