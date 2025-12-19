@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 macro_rules! define_feature_flags {
     (
@@ -7,7 +7,7 @@ macro_rules! define_feature_flags {
         ),* $(,)?
     ) => {
         /// Feature flags for the application
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize)]
         pub struct FeatureFlags {
             $(pub $field: bool,)*
         }

@@ -53,28 +53,28 @@ impl Default for UpdateChannel {
         UpdateChannel::Latest
     }
 }
-#[derive(Deserialize)]
-struct FileConfig {
-    #[serde(default)]
-    git_path: Option<String>,
-    #[serde(default)]
-    share_prompts_in_repositories: Option<Vec<String>>,
-    #[serde(default)]
-    allow_repositories: Option<Vec<String>>,
-    #[serde(default)]
-    exclude_repositories: Option<Vec<String>>,
-    #[serde(default)]
-    telemetry_oss: Option<String>,
-    #[serde(default)]
-    telemetry_enterprise_dsn: Option<String>,
-    #[serde(default)]
-    disable_version_checks: Option<bool>,
-    #[serde(default)]
-    disable_auto_updates: Option<bool>,
-    #[serde(default)]
-    update_channel: Option<String>,
-    #[serde(default)]
-    feature_flags: Option<serde_json::Value>,
+#[derive(Deserialize, Serialize, Default)]
+pub struct FileConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_prompts_in_repositories: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_repositories: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_repositories: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_oss: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_enterprise_dsn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_version_checks: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_auto_updates: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_flags: Option<serde_json::Value>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -434,6 +434,44 @@ fn config_file_path() -> Option<PathBuf> {
         let home = env::var("HOME").ok()?;
         Some(Path::new(&home).join(".git-ai").join("config.json"))
     }
+}
+
+/// Public accessor for config file path
+pub fn config_file_path_public() -> Option<PathBuf> {
+    config_file_path()
+}
+
+/// Load the raw file config
+pub fn load_file_config_public() -> Result<FileConfig, String> {
+    let path =
+        config_file_path().ok_or_else(|| "Could not determine config file path".to_string())?;
+
+    if !path.exists() {
+        // Return empty config if file doesn't exist
+        return Ok(FileConfig::default());
+    }
+
+    let data = fs::read(&path).map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    serde_json::from_slice::<FileConfig>(&data)
+        .map_err(|e| format!("Failed to parse config file: {}", e))
+}
+
+/// Save the file config
+pub fn save_file_config(config: &FileConfig) -> Result<(), String> {
+    let path =
+        config_file_path().ok_or_else(|| "Could not determine config file path".to_string())?;
+
+    // Ensure the directory exists
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&path, json).map_err(|e| format!("Failed to write config file: {}", e))
 }
 
 fn is_executable(path: &Path) -> bool {
