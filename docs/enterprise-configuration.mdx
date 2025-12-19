@@ -1,7 +1,7 @@
 ---
 title: Git AI Configuration
-description: Configure Git AI's behavior across your organization using the config.json file to control prompts, repository access, and git binary paths.
-keywords: git ai config, config.json, git ai configuration, enterprise settings, repository allowlist, git path configuration
+description: Configure Git AI's behavior across your organization using the config.json file to control prompt sharing, repository access, and git binary paths.
+keywords: git ai config, config.json, git ai configuration, enterprise settings, repository allowlist, git path configuration, prompt sharing
 ---
 
 Git AI's behavior can be configured on developer machines by writing a JSON file in the user's home directory.
@@ -16,7 +16,7 @@ All options in `config.json` are optional and will fall back to default values i
 | Option | Type | Description | Default |
 | --- | --- | --- | --- |
 | `git_path` | `Path` | The path to the (unaltered) `git` binary you distribute on developer machines | Whichever git is on the shell path |
-| `ignore_prompts` | `boolean` | Whether prompts should be excluded from authorship logs | `false` |
+| `share_prompts_in_repositories` | `Pattern[]` | Share prompts in authorship logs only for repositories matching these patterns. Supports glob patterns (e.g., `https://github.com/myorg/*`) | Empty list (prompts not shared by default as of v1.0.24) |
 | `allow_repositories` | `Pattern[]` | Allow `git-ai` in only these remotes. Supports glob patterns (e.g., `https://github.com/myorg/*`) | If not specified or set to an empty list, all repositories are allowed |
 | `exclude_repositories` | `Pattern[]` | Exclude `git-ai` from these remotes. Supports glob patterns (e.g., `https://github.com/myorg/*`) | If a repository is present in both allow and exclude lists, exclusion takes precedence |
 | `telemetry_oss` | `"off"` | Disable OSS performance metrics and error logging sent to Git AI maintainers | Defaults to enabled |
@@ -25,12 +25,18 @@ All options in `config.json` are optional and will fall back to default values i
 | `disable_auto_updates` | `boolean` | Keep checking for updates but never install them automatically | `false` |
 | `update_channel` | `"latest" \| "next"` | Release channel to follow (`latest` = stable, `next` = prerelease) | `"latest"` |
 
+
+> [!NOTE] Prompt sharing is disabled by default as of v1.0.25. You do not need `ignore_prompts` flag anymore as this is now the default behavior. 
+
 ## Example Configuration
 
 ```json
 {
     "git_path": "/usr/bin/git",
-    "ignore_prompts": false,
+    "share_prompts_in_repositories": [
+        "https://github.com/acunniffe/git-ai.git",
+        "https://github.com/private-org/**"
+    ],
     "allow_repositories": [
         "https://github.com/acunniffe/git-ai.git"
     ],
@@ -88,7 +94,7 @@ Glob patterns like `https://github.com/*/private-*` will match any repository st
 
 ## Glob Pattern Support
 
-Both `allow_repositories` and `exclude_repositories` support glob patterns for flexible repository matching:
+The `share_prompts_in_repositories`, `allow_repositories`, and `exclude_repositories` fields all support glob patterns for flexible repository matching:
 
 - `*` matches any sequence of characters within a path segment
 - `?` matches any single character
@@ -99,6 +105,10 @@ Both `allow_repositories` and `exclude_repositories` support glob patterns for f
 
 ```json
 {
+    "share_prompts_in_repositories": [
+        "https://github.com/myorg/public-*",    // Share prompts only in public repos
+        "https://github.com/myorg/docs"         // And in the docs repo
+    ],
     "allow_repositories": [
         "https://github.com/myorg/*",           // All repos in myorg
         "https://github.com/*/public-*",        // Any repo starting with public-
@@ -114,15 +124,29 @@ Both `allow_repositories` and `exclude_repositories` support glob patterns for f
 
 **Note:** Exact URLs still work as before and are treated as literal patterns (no wildcards needed).
 
-### Privacy-First Setup
+### Sharing Prompts in Authorship Logs
 
-Set `ignore_prompts` to `true` to exclude all prompts from authorship logs:
+**As of v1.0.25, prompt sharing is disabled by default.** Prompts are only included in authorship logs for repositories that match patterns in `share_prompts_in_repositories`.
+
+To share prompts in all repositories, use a wildcard pattern:
 
 ```json
 {
-    "ignore_prompts": true
+    "share_prompts_in_repositories": ["*"]
 }
 ```
+
+To share prompts only for specific trusted repositories:
+
+```json
+{
+    "share_prompts_in_repositories": [
+        "https://github.com/myorg/trusted-repo.git",
+        "https://github.com/myorg/public-*"
+    ]
+}
+```
+
 
 ## Telemetry for Custom Forks
 
