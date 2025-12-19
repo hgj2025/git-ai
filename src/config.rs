@@ -705,8 +705,10 @@ mod tests {
         // Test 2: Local repo with patterns configured should share
         let config_with_patterns =
             create_test_config_with_share_prompts(vec!["https://github.com/*".to_string()]);
-        assert!(config_with_patterns.share_prompts_in_repositories[0]
-            .matches("https://github.com/myorg/repo"));
+        assert!(
+            config_with_patterns.share_prompts_in_repositories[0]
+                .matches("https://github.com/myorg/repo")
+        );
     }
 
     #[test]

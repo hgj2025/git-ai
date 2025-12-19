@@ -100,12 +100,12 @@ fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
     use repos::test_repo::TestRepo;
 
     let mut repo = TestRepo::new();
-    
+
     // Enable prompt sharing for all repositories
     repo.patch_git_ai_config(|patch| {
         patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
     });
-    
+
     let repo_root = repo.canonical_path();
 
     // Create initial file and commit
@@ -138,11 +138,7 @@ fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
     // Second AI edit with the real transcript content
     let fixture = fixture_path("example-claude-code.jsonl");
     fs::copy(&fixture, &transcript_path).unwrap();
-    fs::write(
-        &file_path,
-        "fn main() {}\n// ai line one\n// ai line two\n",
-    )
-    .unwrap();
+    fs::write(&file_path, "fn main() {}\n// ai line one\n// ai line two\n").unwrap();
     repo.git_ai(&["checkpoint", "claude", "--hook-input", &hook_input])
         .unwrap();
 
@@ -169,8 +165,7 @@ fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
         "Prompt record should contain messages from the latest checkpoint"
     );
     assert_eq!(
-        prompt_record.agent_id.model,
-        "claude-sonnet-4-20250514",
+        prompt_record.agent_id.model, "claude-sonnet-4-20250514",
         "Prompt record should use the model from the latest checkpoint transcript"
     );
 }
@@ -196,10 +191,18 @@ fn test_parse_claude_code_jsonl_with_thinking() {
     for (i, message) in transcript.messages().iter().enumerate() {
         match message {
             Message::User { text, .. } => {
-                println!("{}: User: {}", i, text.chars().take(100).collect::<String>())
+                println!(
+                    "{}: User: {}",
+                    i,
+                    text.chars().take(100).collect::<String>()
+                )
             }
             Message::Assistant { text, .. } => {
-                println!("{}: Assistant: {}", i, text.chars().take(100).collect::<String>())
+                println!(
+                    "{}: Assistant: {}",
+                    i,
+                    text.chars().take(100).collect::<String>()
+                )
             }
             Message::ToolUse { name, input, .. } => {
                 println!("{}: ToolUse: {} with input: {:?}", i, name, input)

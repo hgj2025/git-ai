@@ -143,6 +143,16 @@ fn test_checkpoint_with_prompt_sharing_disabled_strips_messages() {
     repo.git(&["add", "-A"]).unwrap();
     repo.git(&["commit", "-m", "initial commit"]).unwrap();
 
+    // Add a remote so this isn't considered a local-only repo
+    // (local repos always share prompts as they're safe)
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test/repo.git",
+    ])
+    .unwrap();
+
     // Write AI content directly (without using set_contents which triggers mock_ai)
     let example_path = repo.path().join("example.txt");
     fs::write(&example_path, "AI Line 1\nAI Line 2\n").unwrap();
