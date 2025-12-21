@@ -80,10 +80,13 @@ fn checkpoint_with_empty_transcript(repo: &TestRepo, edited_files: Vec<String>) 
 }
 
 #[test]
-fn test_checkpoint_with_ignore_prompts_false() {
-    let repo = TestRepo::new();
+fn test_checkpoint_with_prompt_sharing_enabled() {
+    let mut repo = TestRepo::new();
 
-    // Ignore prompts is false by default (otherwise all the other unit tests would fail)
+    // Enable prompt sharing for all repositories
+    repo.patch_git_ai_config(|patch| {
+        patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+    });
 
     // Create initial commit with README
     let readme_path = repo.path().join("README.md");
@@ -105,14 +108,17 @@ fn test_checkpoint_with_ignore_prompts_false() {
     // Verify we have the AI prompt in the commit
     assert!(
         !commit.authorship_log.metadata.prompts.is_empty(),
-        "Expected AI prompts in authorship log when ignore_prompts=false"
+        "Expected AI prompts in authorship log when prompt sharing is enabled"
     );
 
     // Verify the prompt message is captured
     let prompts: Vec<_> = commit.authorship_log.metadata.prompts.values().collect();
     assert_eq!(prompts.len(), 1, "Expected exactly one prompt");
     let prompt = prompts[0];
-    assert!(!prompt.messages.is_empty(), "Expected messages in prompt");
+    assert!(
+        !prompt.messages.is_empty(),
+        "Expected messages in prompt when sharing is enabled"
+    );
 
     // First message should be the user message
     if let Some(Message::User { text, .. }) = prompt.messages.first() {
@@ -123,12 +129,12 @@ fn test_checkpoint_with_ignore_prompts_false() {
 }
 
 #[test]
-fn test_checkpoint_with_ignore_prompts_true_strips_messages() {
+fn test_checkpoint_with_prompt_sharing_disabled_strips_messages() {
     let mut repo = TestRepo::new();
 
-    // Set ignore_prompts = true
+    // Prompt sharing is disabled by default (empty list), but let's be explicit
     repo.patch_git_ai_config(|patch| {
-        patch.ignore_prompts = Some(true);
+        patch.share_prompts_in_repositories = Some(vec![]); // No repos share prompts
     });
 
     // Create initial commit with README
@@ -137,12 +143,22 @@ fn test_checkpoint_with_ignore_prompts_true_strips_messages() {
     repo.git(&["add", "-A"]).unwrap();
     repo.git(&["commit", "-m", "initial commit"]).unwrap();
 
+    // Add a remote so this isn't considered a local-only repo
+    // (local repos always share prompts as they're safe)
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test/repo.git",
+    ])
+    .unwrap();
+
     // Write AI content directly (without using set_contents which triggers mock_ai)
     let example_path = repo.path().join("example.txt");
     fs::write(&example_path, "AI Line 1\nAI Line 2\n").unwrap();
 
     // Use agent-v1 with a FULL transcript containing messages
-    // This tests that messages are stripped when ignore_prompts=true
+    // This tests that messages are stripped when prompt sharing is disabled
     checkpoint_with_message(
         &repo,
         "Add the example file with AI content",
@@ -156,29 +172,32 @@ fn test_checkpoint_with_ignore_prompts_true_strips_messages() {
     // Verify commit succeeded
     assert!(!commit.commit_sha.is_empty());
 
-    // KEY ASSERTION: With ignore_prompts=true, the prompt RECORD should exist
+    // KEY ASSERTION: With prompt sharing disabled, the prompt RECORD should exist
     // (so we know AI was involved) but the MESSAGES should be empty (stripped)
     assert!(
         !commit.authorship_log.metadata.prompts.is_empty(),
-        "Expected prompt record to exist even with ignore_prompts=true"
+        "Expected prompt record to exist even when prompt sharing is disabled"
     );
 
     let prompts: Vec<_> = commit.authorship_log.metadata.prompts.values().collect();
     assert_eq!(prompts.len(), 1, "Expected exactly one prompt record");
 
-    // The messages should be EMPTY because ignore_prompts=true strips them
+    // The messages should be EMPTY because prompt sharing is disabled
     assert!(
         prompts[0].messages.is_empty(),
-        "Expected messages to be stripped (empty) when ignore_prompts=true, but found: {:?}",
+        "Expected messages to be stripped (empty) when prompt sharing is disabled, but found: {:?}",
         prompts[0].messages
     );
 }
 
 #[test]
 fn test_multiple_checkpoints_with_messages() {
-    let repo = TestRepo::new();
+    let mut repo = TestRepo::new();
 
-    // Ignore prompts is false by default (otherwise all the other unit tests would fail)
+    // Enable prompt sharing for all repositories
+    repo.patch_git_ai_config(|patch| {
+        patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+    });
 
     // Create initial commit with README
     let readme_path = repo.path().join("README.md");
@@ -257,12 +276,12 @@ fn test_multiple_checkpoints_with_messages() {
 }
 
 #[test]
-fn test_ignore_prompts_with_empty_transcript() {
+fn test_prompt_sharing_disabled_with_empty_transcript() {
     let mut repo = TestRepo::new();
 
-    // Set ignore_prompts = true
+    // Disable prompt sharing (default behavior)
     repo.patch_git_ai_config(|patch| {
-        patch.ignore_prompts = Some(true);
+        patch.share_prompts_in_repositories = Some(vec![]); // No repos share prompts
     });
 
     // Create initial commit with README

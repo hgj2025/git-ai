@@ -48,6 +48,9 @@ pub fn handle_git_ai(args: &[String]) {
             }
             std::process::exit(0);
         }
+        "config" => {
+            commands::config::handle_config(&args[1..]);
+        }
         "stats" => {
             handle_stats(&args[1..]);
         }
@@ -132,6 +135,12 @@ fn print_help() {
     eprintln!(
         "    --offset <n>          Skip n occurrences (0 = most recent, mutually exclusive with --commit)"
     );
+    eprintln!("  config             View and manage git-ai configuration");
+    eprintln!("                        Show all config as formatted JSON");
+    eprintln!("    <key>                 Show specific config value (supports dot notation)");
+    eprintln!("    set <key> <value>     Set a config value (arrays: single value = [value])");
+    eprintln!("    --add <key> <value>   Add to array or upsert into object");
+    eprintln!("    unset <key>           Remove config value (reverts to default)");
     eprintln!("  install-hooks      Install git hooks for AI authorship tracking");
     eprintln!("  ci                 Continuous integration utilities");
     eprintln!("    github                 GitHub CI helpers");
@@ -667,34 +676,31 @@ fn handle_show_transcript(args: &[String]) {
     let agent_name = &args[0];
     let path_or_id = &args[1];
 
-    let result: Result<(crate::authorship::transcript::AiTranscript, Option<String>), crate::error::GitAiError> = match agent_name.as_str() {
-        "claude" => {
-            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(path_or_id) {
-                Ok((transcript, model)) => Ok((transcript, model)),
-                Err(e) => {
-                    eprintln!("Error loading Claude transcript: {}", e);
-                    std::process::exit(1);
-                }
+    let result: Result<
+        (crate::authorship::transcript::AiTranscript, Option<String>),
+        crate::error::GitAiError,
+    > = match agent_name.as_str() {
+        "claude" => match ClaudePreset::transcript_and_model_from_claude_code_jsonl(path_or_id) {
+            Ok((transcript, model)) => Ok((transcript, model)),
+            Err(e) => {
+                eprintln!("Error loading Claude transcript: {}", e);
+                std::process::exit(1);
             }
-        }
-        "gemini" => {
-            match GeminiPreset::transcript_and_model_from_gemini_json(path_or_id) {
-                Ok((transcript, model)) => Ok((transcript, model)),
-                Err(e) => {
-                    eprintln!("Error loading Gemini transcript: {}", e);
-                    std::process::exit(1);
-                }
+        },
+        "gemini" => match GeminiPreset::transcript_and_model_from_gemini_json(path_or_id) {
+            Ok((transcript, model)) => Ok((transcript, model)),
+            Err(e) => {
+                eprintln!("Error loading Gemini transcript: {}", e);
+                std::process::exit(1);
             }
-        }
-        "continue-cli" => {
-            match ContinueCliPreset::transcript_from_continue_json(path_or_id) {
-                Ok(transcript) => Ok((transcript, None)),
-                Err(e) => {
-                    eprintln!("Error loading Continue CLI transcript: {}", e);
-                    std::process::exit(1);
-                }
+        },
+        "continue-cli" => match ContinueCliPreset::transcript_from_continue_json(path_or_id) {
+            Ok(transcript) => Ok((transcript, None)),
+            Err(e) => {
+                eprintln!("Error loading Continue CLI transcript: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
         "github-copilot" => {
             match GithubCopilotPreset::transcript_and_model_from_copilot_session_json(path_or_id) {
                 Ok((transcript, model, _file_paths)) => Ok((transcript, model)),
@@ -704,19 +710,17 @@ fn handle_show_transcript(args: &[String]) {
                 }
             }
         }
-        "cursor" => {
-            match CursorPreset::fetch_latest_cursor_conversation(path_or_id) {
-                Ok(Some((transcript, model))) => Ok((transcript, Some(model))),
-                Ok(None) => {
-                    eprintln!("Error: Conversation not found or database not available");
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Error loading Cursor transcript: {}", e);
-                    std::process::exit(1);
-                }
+        "cursor" => match CursorPreset::fetch_latest_cursor_conversation(path_or_id) {
+            Ok(Some((transcript, model))) => Ok((transcript, Some(model))),
+            Ok(None) => {
+                eprintln!("Error: Conversation not found or database not available");
+                std::process::exit(1);
             }
-        }
+            Err(e) => {
+                eprintln!("Error loading Cursor transcript: {}", e);
+                std::process::exit(1);
+            }
+        },
         _ => {
             eprintln!("Error: Unknown agent '{}'", agent_name);
             eprintln!("Supported agents: claude, gemini, continue-cli, github-copilot, cursor");
