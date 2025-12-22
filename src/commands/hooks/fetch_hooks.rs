@@ -5,7 +5,7 @@ use crate::commands::git_handlers::CommandHooksContext;
 use crate::commands::hooks::commit_hooks::get_commit_default_author;
 use crate::commands::upgrade;
 use crate::git::cli_parser::{ParsedGitInvocation, is_dry_run};
-use crate::git::repository::{Repository, find_repository};
+use crate::git::repository::{Repository, exec_git, find_repository};
 use crate::git::sync_authorship::{fetch_authorship_notes, fetch_remote_from_args};
 use crate::utils::debug_log;
 
@@ -130,7 +130,9 @@ pub fn fetch_pull_post_command_hook(
 }
 
 /// Post-command hook for git pull.
-/// Restores AI attributions after a pull --rebase --autostash operation.
+/// Handles two scenarios:
+/// 1. Restores AI attributions after a pull --rebase --autostash operation.
+/// 2. Renames working log for fast-forward pulls to preserve attributions.
 pub fn pull_post_command_hook(
     repository: &mut Repository,
     _parsed_args: &ParsedGitInvocation,
@@ -160,19 +162,33 @@ pub fn pull_post_command_hook(
     };
 
     if old_head == new_head {
-        debug_log("No base commit sha detected, skipping post-pull authorship restoration");
+        debug_log("HEAD unchanged, skipping post-pull authorship handling");
         return;
     }
 
-    // Check if we have a stashed VA to restore
-    let stashed_va = match command_hooks_context.stashed_va.take() {
-        Some(va) => va,
-        None => {
-            // No stashed VA - nothing special to do for autostash restoration
-            return;
-        }
-    };
+    // Check if we have a stashed VA to restore (from pull --rebase --autostash)
+    if let Some(stashed_va) = command_hooks_context.stashed_va.take() {
+        restore_stashed_va(repository, &old_head, &new_head, stashed_va);
+        return;
+    }
 
+    // No stashed VA - check for fast-forward pull and rename working log if applicable
+    if was_fast_forward_pull(repository, &new_head) {
+        debug_log(&format!(
+            "Fast-forward detected: {} -> {}",
+            old_head, new_head
+        ));
+        let _ = repository.storage.rename_working_log(&old_head, &new_head);
+    }
+}
+
+/// Restore stashed VirtualAttributions after a pull --rebase --autostash operation.
+fn restore_stashed_va(
+    repository: &mut Repository,
+    old_head: &str,
+    new_head: &str,
+    stashed_va: VirtualAttributions,
+) {
     debug_log(&format!(
         "Restoring stashed VA after pull --rebase --autostash: {} -> {}",
         old_head, new_head
@@ -207,7 +223,7 @@ pub fn pull_post_command_hook(
     // Build a VA for the new HEAD state (if there are any existing attributions)
     let new_va = match VirtualAttributions::from_just_working_log(
         repository.clone(),
-        new_head.clone(),
+        new_head.to_string(),
         None,
     ) {
         Ok(va) => va,
@@ -215,7 +231,7 @@ pub fn pull_post_command_hook(
             debug_log(&format!("Failed to build new VA: {}, using empty", e));
             VirtualAttributions::new(
                 repository.clone(),
-                new_head.clone(),
+                new_head.to_string(),
                 std::collections::HashMap::new(),
                 std::collections::HashMap::new(),
                 0,
@@ -236,7 +252,7 @@ pub fn pull_post_command_hook(
     // Since these are uncommitted changes, we use the same SHA for parent and commit
     // to get all attributions into the INITIAL file (not the authorship log)
     let (_authorship_log, initial_attributions) = match merged_va
-        .to_authorship_log_and_initial_working_log(repository, &new_head, &new_head, None)
+        .to_authorship_log_and_initial_working_log(repository, new_head, new_head, None)
     {
         Ok(result) => result,
         Err(e) => {
@@ -247,7 +263,7 @@ pub fn pull_post_command_hook(
 
     // Write INITIAL attributions to working log for new HEAD
     if !initial_attributions.files.is_empty() || !initial_attributions.prompts.is_empty() {
-        let working_log = repository.storage.working_log_for_base_commit(&new_head);
+        let working_log = repository.storage.working_log_for_base_commit(new_head);
         if let Err(e) = working_log
             .write_initial_attributions(initial_attributions.files, initial_attributions.prompts)
         {
@@ -259,6 +275,47 @@ pub fn pull_post_command_hook(
             "✓ Restored AI attributions to INITIAL for new HEAD {}",
             &new_head[..8]
         ));
+    }
+}
+
+/// Check if the most recent reflog entry indicates a fast-forward pull operation.
+/// Uses format "%H %gs" to get both the commit SHA and the reflog subject.
+/// Verifies:
+/// 1. The reflog SHA matches the expected new HEAD (confirms we have the right entry)
+/// 2. The subject starts with "pull" (confirms it was a pull operation)
+/// 3. The subject ends with ": Fast-forward" (confirms it was a fast-forward)
+fn was_fast_forward_pull(repository: &Repository, expected_new_head: &str) -> bool {
+    let mut args = repository.global_args_for_exec();
+    args.extend(
+        ["reflog", "-1", "--format=%H %gs"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+
+    match exec_git(&args) {
+        Ok(output) => {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let output_str = output_str.trim();
+
+            // Format: "<sha> <subject>"
+            // Example: "1f9a5dc45612afcbef17e9d07441d9b57c7bb5d0 pull: Fast-forward"
+            let Some((sha, subject)) = output_str.split_once(' ') else {
+                return false;
+            };
+
+            // Verify the SHA matches our expected new HEAD
+            if sha != expected_new_head {
+                debug_log(&format!(
+                    "Reflog SHA {} doesn't match expected HEAD {}",
+                    sha, expected_new_head
+                ));
+                return false;
+            }
+
+            // Must be a pull command that resulted in fast-forward
+            subject.starts_with("pull") && subject.ends_with(": Fast-forward")
+        }
+        Err(_) => false,
     }
 }
 
