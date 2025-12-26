@@ -9,6 +9,8 @@ export class BlameLensManager {
   private currentBlameResult: BlameResult | null = null;
   private currentDocumentUri: string | null = null;
   private pendingBlameRequest: Promise<BlameResult | null> | null = null;
+  private statusBarItem: vscode.StatusBarItem;
+  private currentSelection: vscode.Selection | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -24,6 +26,14 @@ export class BlameLensManager {
       },
       rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
     });
+
+    // Create status bar item for model display
+    this.statusBarItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      500
+    );
+    this.statusBarItem.name = 'git-ai Model';
+    this.statusBarItem.hide();
   }
 
   public activate(): void {
@@ -64,7 +74,18 @@ export class BlameLensManager {
       })
     );
 
-    console.log('[git-ai] BlameLensManager activated');
+    // Register status bar item click handler
+    this.statusBarItem.command = 'git-ai.showModelHover';
+    this.context.subscriptions.push(
+      vscode.commands.registerCommand('git-ai.showModelHover', () => {
+        this.handleStatusBarClick();
+      })
+    );
+
+    // Add status bar item to context subscriptions for proper cleanup
+    this.context.subscriptions.push(this.statusBarItem);
+
+    console.log('[git-ai] BlameLensManager activated, status bar item created');
   }
 
   /**
@@ -123,6 +144,8 @@ export class BlameLensManager {
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined): void {
     // Clear decorations from any previous editor
     this.currentDecorations = [];
+    this.currentSelection = null;
+    this.statusBarItem.hide();
     
     // If the new editor is a different document, reset our state
     if (editor && editor.document.uri.toString() !== this.currentDocumentUri) {
@@ -136,21 +159,103 @@ export class BlameLensManager {
     const editor = event.textEditor;
     const selection = event.selections[0]; // Primary selection
 
+    console.log('[git-ai] Selection changed:', {
+      hasSelection: !!selection,
+      hasEditor: !!editor,
+      isMultiLine: selection ? selection.start.line !== selection.end.line : false
+    });
+
     if (!selection || !editor) {
       this.clearDecorations(editor);
+      this.updateStatusBarForCurrentLine(editor);
       return;
     }
 
     // Check if multiple lines are selected
     const isMultiLine = selection.start.line !== selection.end.line;
 
-    if (!isMultiLine) {
+    if (isMultiLine) {
+      console.log('[git-ai] Multi-line selection detected, requesting blame');
+      // Request blame for this document and apply decorations
+      this.requestBlameAndDecorate(editor, selection);
+    } else {
+      // Single line - update status bar based on current line
+      console.log('[git-ai] Single line selection, updating status bar for line');
+      this.updateStatusBarForCurrentLine(editor);
       this.clearDecorations(editor);
+    }
+  }
+
+  /**
+   * Update status bar based on the current line (cursor position).
+   * Shows model name if the current line is AI-authored, otherwise shows human emoji.
+   */
+  private async updateStatusBarForCurrentLine(editor: vscode.TextEditor | undefined): Promise<void> {
+    if (!editor) {
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Human-authored code';
+      this.statusBarItem.show();
       return;
     }
 
-    // Request blame for this document and apply decorations
-    this.requestBlameAndDecorate(editor, selection);
+    const document = editor.document;
+    const documentUri = document.uri.toString();
+    const currentLine = editor.selection.active.line;
+    const gitLine = currentLine + 1; // Convert to 1-indexed
+
+    // Check if we have blame for this document
+    if (this.currentDocumentUri !== documentUri || !this.currentBlameResult) {
+      // Show human emoji while loading
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Loading...';
+      this.statusBarItem.show();
+      
+      // Request blame for the document
+      try {
+        const result = await this.blameService.requestBlame(document, 'normal');
+        if (result) {
+          this.currentBlameResult = result;
+          this.currentDocumentUri = documentUri;
+        } else {
+          // Keep showing human emoji if blame fails
+          this.statusBarItem.text = '🧑‍💻';
+          this.statusBarItem.tooltip = 'Human-authored code';
+          this.statusBarItem.show();
+          return;
+        }
+      } catch (error) {
+        console.error('[git-ai] Failed to get blame for status bar:', error);
+        // Keep showing human emoji on error
+        this.statusBarItem.text = '🧑‍💻';
+        this.statusBarItem.tooltip = 'Human-authored code';
+        this.statusBarItem.show();
+        return;
+      }
+    }
+
+    // Check the current line
+    const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
+    if (lineInfo?.isAiAuthored) {
+      const model = lineInfo.promptRecord?.agent_id?.model;
+      const modelName = this.extractModelName(model);
+      if (modelName) {
+        const logo = this.getModelLogo(modelName);
+        this.statusBarItem.text = logo;
+        this.statusBarItem.tooltip = `AI Model: ${modelName}`;
+        this.statusBarItem.show();
+        console.log('[git-ai] Status bar updated for line', currentLine, 'with model:', modelName, 'logo:', logo);
+      } else {
+        // Show robot emoji if AI-authored but no model name
+        this.statusBarItem.text = '🤖';
+        this.statusBarItem.tooltip = 'AI-authored code';
+        this.statusBarItem.show();
+      }
+    } else {
+      // Show human emoji for human-authored code
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Human-authored code';
+      this.statusBarItem.show();
+    }
   }
 
   private async requestBlameAndDecorate(
@@ -210,33 +315,101 @@ export class BlameLensManager {
   ): void {
     const decorations: vscode.DecorationOptions[] = [];
     this.currentDecorations = [];
+    this.currentSelection = selection;
 
     const startLine = Math.min(selection.start.line, selection.end.line);
     const endLine = Math.max(selection.start.line, selection.end.line);
 
-    // Create decoration for each line in the selection
-    for (let line = startLine; line <= endLine; line++) {
-      const lineObj = editor.document.lineAt(line);
+    // If loading, just show loading on first line
+    if (blameResult === null) {
+      const lineObj = editor.document.lineAt(startLine);
       const range = new vscode.Range(
-        new vscode.Position(line, lineObj.range.end.character),
-        new vscode.Position(line, lineObj.range.end.character)
+        new vscode.Position(startLine, lineObj.range.end.character),
+        new vscode.Position(startLine, lineObj.range.end.character)
       );
-
-      // Get author info for this line
-      // git-ai uses 1-indexed lines, VS Code uses 0-indexed
-      const gitLine = line + 1;
-      const lineInfo = blameResult?.lineAuthors.get(gitLine);
-      const authorDisplay = this.getAuthorDisplayText(lineInfo, blameResult === null);
-
       decorations.push({
         range,
+        renderOptions: { after: { contentText: '' } },
+      });
+      this.currentDecorations.push(range);
+      editor.setDecorations(this.decorationType, decorations);
+      // Show human emoji while loading (default assumption)
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Loading...';
+      this.statusBarItem.show();
+      return;
+    }
+
+    // First pass: identify AI hunks and their boundaries
+    const aiHunks = this.identifyAiHunks(blameResult, startLine, endLine);
+
+    // Collect unique model names from AI-authored lines
+    const modelNames = new Set<string>();
+    let aiLineCount = 0;
+    for (let line = startLine; line <= endLine; line++) {
+      const gitLine = line + 1; // Convert to 1-indexed
+      const lineInfo = blameResult.lineAuthors.get(gitLine);
+      if (lineInfo?.isAiAuthored) {
+        aiLineCount++;
+        const model = lineInfo.promptRecord?.agent_id?.model;
+        console.log('[git-ai] Found AI line', line, 'with model:', model);
+        const modelName = this.extractModelName(model);
+        if (modelName) {
+          modelNames.add(modelName);
+          console.log('[git-ai] Extracted model name:', modelName);
+        } else {
+          console.log('[git-ai] Failed to extract model name from:', model);
+        }
+      }
+    }
+
+    console.log('[git-ai] Total AI lines in selection:', aiLineCount, 'Unique models:', Array.from(modelNames));
+
+    // Update status bar with model logos
+    if (modelNames.size > 0) {
+      // Get unique logos for each model
+      const logos = Array.from(modelNames).map(name => this.getModelLogo(name));
+      const uniqueLogos = Array.from(new Set(logos));
+      const logoText = uniqueLogos.join(' ');
+      const modelText = Array.from(modelNames).join(' | ');
+      this.statusBarItem.text = logoText;
+      this.statusBarItem.tooltip = `AI Models: ${modelText}`;
+      this.statusBarItem.show();
+      console.log('[git-ai] Status bar updated with models:', modelText, 'logos:', logoText);
+    } else {
+      // Show human emoji if no AI content in selection
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Human-authored code';
+      this.statusBarItem.show();
+      console.log('[git-ai] No AI models found in selection, showing human emoji. AI line count:', aiLineCount);
+    }
+
+    // Create decorations for first and last lines of each AI hunk
+    for (const hunk of aiHunks) {
+      const lineInfo = blameResult.lineAuthors.get(hunk.startLine + 1); // Convert to 1-indexed
+      
+      // First line: show author info with line count
+      const firstLineObj = editor.document.lineAt(hunk.startLine);
+      const firstRange = new vscode.Range(
+        new vscode.Position(hunk.startLine, firstLineObj.range.end.character),
+        new vscode.Position(hunk.startLine, firstLineObj.range.end.character)
+      );
+      
+      const authorDisplay = this.getAuthorDisplayText(lineInfo, false);
+      const lineCount = hunk.endLine - hunk.startLine + 1;
+      const countSuffix = lineCount > 1 ? ` +${lineCount}` : '';
+      
+      decorations.push({
+        range: firstRange,
         renderOptions: {
           after: {
-            contentText: authorDisplay,
+            contentText: `${authorDisplay}${countSuffix}`,
           },
         },
       });
-      this.currentDecorations.push(range);
+      this.currentDecorations.push(firstRange);
+      
+     
     }
 
     editor.setDecorations(this.decorationType, decorations);
@@ -244,26 +417,147 @@ export class BlameLensManager {
 
   /**
    * Get the display text for an author.
-   * Returns the AI tool name if AI-authored, "Human" if not in blame data,
-   * or "Loading..." if blame is still being fetched.
+   * Returns "🤖 {tool}|{model} <Name (human)>" for AI-authored lines.
    */
   private getAuthorDisplayText(lineInfo: LineBlameInfo | undefined, isLoading: boolean): string {
     if (isLoading) {
       return 'Loading...';
     }
 
-    if (!lineInfo) {
-      // Line is not in the blame data, meaning it's human-authored
-      return 'Human';
-    }
-
-    if (lineInfo.isAiAuthored) {
-      // Capitalize the tool name (e.g., "cursor" -> "Cursor")
+    if (lineInfo?.isAiAuthored) {
       const tool = lineInfo.author;
-      return tool.charAt(0).toUpperCase() + tool.slice(1);
+      const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
+      const humanAuthor = lineInfo.promptRecord?.human_author || '';
+      const humanName = this.extractHumanName(humanAuthor);
+      
+      return `🤖 ${tool}|${model} <${humanName}>`;
     }
 
-    return 'Human';
+    return '';
+  }
+
+  /**
+   * Extract just the name from a git author string like "Aidan Cunniffe <acunniffe@gmail.com>"
+   */
+  private extractHumanName(authorString: string): string {
+    if (!authorString) {
+      return 'Unknown';
+    }
+    
+    // Handle format: "Name <email>"
+    const match = authorString.match(/^([^<]+)/);
+    if (match) {
+      return match[1].trim();
+    }
+    
+    return authorString;
+  }
+
+  /**
+   * Extract model name from model string (e.g., "claude-3-opus-20240229" -> "Claude")
+   * Returns the part before the first "-" with first letter capitalized, or null if no model.
+   */
+  private extractModelName(modelString: string | undefined): string | null {
+    if (!modelString || modelString.trim() === '') {
+      return null;
+    }
+    
+    const parts = modelString.split('-');
+    const firstPart = parts[0];
+    
+    if (!firstPart || firstPart.trim() === '') {
+      return null;
+    }
+    
+    // Capitalize first letter
+    return firstPart.charAt(0).toUpperCase() + firstPart.slice(1);
+  }
+
+  /**
+   * Get the display icon/logo for a model name.
+   * Returns the logo/emoji for the model, or 🤖 as fallback.
+   * 
+   * To add a new model logo, add an entry to the MODEL_LOGOS map below.
+   * You can use:
+   * - Unicode emojis: '🤖'
+   * - Unicode symbols: '⚡'
+   * - Text: 'Claude'
+   * - Or any string that will be displayed in the status bar
+   */
+  private getModelLogo(modelName: string | null): string {
+    if (!modelName) {
+      return '🤖';
+    }
+
+    const MODEL_LOGOS: Record<string, string> = {
+      // Claude models
+      'Claude': '🤖', // TODO: Replace with Claude logo
+      
+      // OpenAI/Codex models
+      'Openai': '🤖', // TODO: Replace with OpenAI Codex logo
+      'Codex': '🤖', // TODO: Replace with OpenAI Codex logo
+      'Gpt': '🤖', // TODO: Replace with OpenAI logo
+      
+      // Cursor
+      'Cursor': '🤖', // TODO: Replace with Cursor logo
+      
+      // Grok
+      'Grok': '🤖', // TODO: Replace with Grok logo
+      
+      // Gemini
+      'Gemini': '🤖', // TODO: Replace with Gemini logo
+    };
+
+    // Normalize model name for lookup (case-insensitive)
+    const normalizedName = modelName.charAt(0).toUpperCase() + modelName.slice(1).toLowerCase();
+    
+    return MODEL_LOGOS[normalizedName] || MODEL_LOGOS[modelName] || '🤖';
+  }
+
+  /**
+   * Identify contiguous AI hunks within the selection range.
+   * Returns an array of hunks with their start and end lines (0-indexed).
+   */
+  private identifyAiHunks(
+    blameResult: BlameResult,
+    startLine: number,
+    endLine: number
+  ): Array<{ startLine: number; endLine: number; commitHash: string }> {
+    const hunks: Array<{ startLine: number; endLine: number; commitHash: string }> = [];
+    let currentHunk: { startLine: number; endLine: number; commitHash: string } | null = null;
+
+    for (let line = startLine; line <= endLine; line++) {
+      const gitLine = line + 1; // Convert to 1-indexed
+      const lineInfo = blameResult.lineAuthors.get(gitLine);
+      
+      if (lineInfo?.isAiAuthored) {
+        const commitHash = lineInfo.commitHash;
+        
+        if (currentHunk && currentHunk.commitHash === commitHash) {
+          // Extend current hunk
+          currentHunk.endLine = line;
+        } else {
+          // Start new hunk (save previous if exists)
+          if (currentHunk) {
+            hunks.push(currentHunk);
+          }
+          currentHunk = { startLine: line, endLine: line, commitHash };
+        }
+      } else {
+        // Human-authored line - close current hunk if any
+        if (currentHunk) {
+          hunks.push(currentHunk);
+          currentHunk = null;
+        }
+      }
+    }
+
+    // Don't forget the last hunk
+    if (currentHunk) {
+      hunks.push(currentHunk);
+    }
+
+    return hunks;
   }
 
   private clearDecorations(editor: vscode.TextEditor | undefined): void {
@@ -271,6 +565,8 @@ export class BlameLensManager {
       editor.setDecorations(this.decorationType, []);
     }
     this.currentDecorations = [];
+    this.currentSelection = null;
+    // Don't hide status bar here - let updateStatusBarForCurrentLine handle it
   }
 
   private provideHover(
@@ -303,45 +599,87 @@ export class BlameLensManager {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
 
-    if (!lineInfo) {
+    if (!lineInfo || !lineInfo.isAiAuthored) {
       md.appendMarkdown('**Author:** Human\n\n');
       md.appendText('This line was written by a human.');
       return md;
     }
 
-    if (lineInfo.isAiAuthored && lineInfo.promptRecord) {
-      const record = lineInfo.promptRecord;
-      const tool = lineInfo.author.charAt(0).toUpperCase() + lineInfo.author.slice(1);
-      
-      md.appendMarkdown(`**Author:** ${tool}\n\n`);
-      
-      if (record.agent_id?.model) {
-        md.appendMarkdown(`**Model:** ${record.agent_id.model}\n\n`);
-      }
-      
-      if (record.human_author) {
-        md.appendMarkdown(`**Paired with:** ${record.human_author}\n\n`);
-      }
-      
-      // Show the first user message as context
-      const userMessage = record.messages?.find(m => m.type === 'user');
-      if (userMessage?.text) {
-        const truncatedText = userMessage.text.length > 200 
-          ? userMessage.text.substring(0, 200) + '...' 
-          : userMessage.text;
-        md.appendMarkdown('**Prompt:**\n');
-        md.appendCodeblock(truncatedText, 'markdown');
-      }
-    } else {
-      md.appendMarkdown('**Author:** Human\n\n');
+    const record = lineInfo.promptRecord;
+    const model = record?.agent_id?.model || lineInfo.author;
+    const tool = lineInfo.author.charAt(0).toUpperCase() + lineInfo.author.slice(1);
+    
+    md.appendMarkdown(`🤖 **${model}**\n\n`);
+    md.appendMarkdown(`**Tool:** ${tool}\n\n`);
+    
+    if (record?.human_author) {
+      md.appendMarkdown(`**Paired with:** ${record.human_author}\n\n`);
+    }
+    
+    // Show the first user message as context
+    const userMessage = record?.messages?.find(m => m.type === 'user');
+    if (userMessage?.text) {
+      const truncatedText = userMessage.text.length > 200 
+        ? userMessage.text.substring(0, 200) + '...' 
+        : userMessage.text;
+      md.appendMarkdown('**Prompt:**\n');
+      md.appendCodeblock(truncatedText, 'markdown');
     }
 
     return md;
   }
 
+  /**
+   * Handle status bar item click - show hover content for first AI-authored line.
+   */
+  private handleStatusBarClick(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !this.currentSelection || !this.currentBlameResult) {
+      return;
+    }
+
+    const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
+    const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
+
+    // Find first AI-authored line in selection
+    let firstAiLine: number | undefined = undefined;
+    let firstAiLineInfo: LineBlameInfo | undefined = undefined;
+    for (let line = startLine; line <= endLine; line++) {
+      const gitLine = line + 1; // Convert to 1-indexed
+      const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
+      if (lineInfo?.isAiAuthored) {
+        firstAiLine = line;
+        firstAiLineInfo = lineInfo;
+        break;
+      }
+    }
+
+    if (!firstAiLineInfo || firstAiLine === undefined) {
+      return;
+    }
+
+    // Build hover content
+    const hoverContent = this.buildHoverContent(firstAiLineInfo);
+    
+    // Show the hover content using VS Code's markdown rendering
+    // We'll create a hover at the first AI line position
+    const position = new vscode.Position(firstAiLine, 0);
+    
+    // Use VS Code's hover provider to show the content
+    // Since we can't programmatically trigger a hover, we'll show it as a message
+    // with the markdown content formatted
+    const mdString = hoverContent.value;
+    
+    // Show the markdown content - VS Code's showInformationMessage will display
+    // the text, though markdown formatting may not be fully rendered
+    // For better UX, we could create a webview, but for now this works
+    vscode.window.showInformationMessage(mdString, { modal: false });
+  }
+
   public dispose(): void {
     this.decorationType.dispose();
     this.blameService.dispose();
+    this.statusBarItem.dispose();
   }
 }
 

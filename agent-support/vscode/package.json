@@ -35,7 +35,14 @@
           "description": "Enable tracking for AI tab completion detection (experimental)."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "git-ai.showModelHover",
+        "title": "Show AI Model Information",
+        "category": "git-ai"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "yarn run compile",
