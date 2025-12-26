@@ -3,6 +3,7 @@ import { AIEditManager } from "./ai-edit-manager";
 import { detectIDEHost, IDEHostKindVSCode } from "./utils/host-kind";
 import { AITabEditManager } from "./ai-tab-edit-manager";
 import { Config } from "./utils/config";
+import { BlameLensManager, registerBlameLensCommands } from "./blame-lens-manager";
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('[git-ai] extension activated');
@@ -10,6 +11,14 @@ export function activate(context: vscode.ExtensionContext) {
   const ideHostCfg = detectIDEHost();
 
   const aiEditManager = new AIEditManager(context);
+
+  // Initialize and activate blame lens manager
+  registerBlameLensCommands(context);
+  const blameLensManager = new BlameLensManager(context);
+  blameLensManager.activate();
+  context.subscriptions.push({
+    dispose: () => blameLensManager.dispose()
+  });
 
   if (Config.isAiTabTrackingEnabled()) {
     const aiTabEditManager = new AITabEditManager(context, ideHostCfg, aiEditManager);

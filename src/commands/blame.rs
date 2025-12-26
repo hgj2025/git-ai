@@ -8,6 +8,7 @@ use crate::git::repository::exec_git;
 #[cfg(windows)]
 use crate::utils::normalize_to_posix;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -121,6 +122,9 @@ pub struct GitAiBlameOptions {
 
     // Ignore whitespace
     pub ignore_whitespace: bool,
+
+    // JSON output format
+    pub json: bool,
 }
 
 impl Default for GitAiBlameOptions {
@@ -160,6 +164,7 @@ impl Default for GitAiBlameOptions {
             return_human_authors_as_human: false,
             no_output: false,
             ignore_whitespace: false,
+            json: false,
         }
     }
 }
@@ -233,6 +238,19 @@ impl Repository {
                 .to_string()
         };
 
+        // For JSON output, default to HEAD to exclude uncommitted changes
+        // and use prompt hashes as names so we can correlate with prompt_records
+        let options = if options.json {
+            let mut opts = options.clone();
+            if opts.newest_commit.is_none() {
+                opts.newest_commit = Some("HEAD".to_string());
+            }
+            opts.use_prompt_hashes_as_names = true;
+            opts
+        } else {
+            options.clone()
+        };
+
         // Read file content either from a specific commit or from working directory
         let (file_content, total_lines) = if let Some(ref commit) = options.newest_commit {
             // Read file content from the specified commit
@@ -299,27 +317,29 @@ impl Repository {
         // Step 1: Get Git's native blame for all ranges
         let mut all_blame_hunks = Vec::new();
         for (start_line, end_line) in &line_ranges {
-            let hunks = self.blame_hunks(&relative_file_path, *start_line, *end_line, options)?;
+            let hunks = self.blame_hunks(&relative_file_path, *start_line, *end_line, &options)?;
             all_blame_hunks.extend(hunks);
         }
 
         // Step 2: Overlay AI authorship information
         let (line_authors, prompt_records) =
-            overlay_ai_authorship(self, &all_blame_hunks, &relative_file_path, options)?;
+            overlay_ai_authorship(self, &all_blame_hunks, &relative_file_path, &options)?;
 
         if options.no_output {
             return Ok((line_authors, prompt_records));
         }
 
         // Output based on format
-        if options.porcelain || options.line_porcelain {
+        if options.json {
+            output_json_format(&line_authors, &prompt_records)?;
+        } else if options.porcelain || options.line_porcelain {
             output_porcelain_format(
                 self,
                 &line_authors,
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         } else if options.incremental {
             output_incremental_format(
@@ -328,7 +348,7 @@ impl Repository {
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         } else {
             output_default_format(
@@ -337,7 +357,7 @@ impl Repository {
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         }
 
@@ -710,6 +730,84 @@ fn overlay_ai_authorship(
     }
 
     Ok((line_authors, prompt_records))
+}
+
+/// JSON output structure for blame
+#[derive(Debug, Serialize)]
+struct JsonBlameOutput {
+    lines: std::collections::BTreeMap<String, String>,
+    prompts: HashMap<String, PromptRecord>,
+}
+
+fn output_json_format(
+    line_authors: &HashMap<u32, String>,
+    prompt_records: &HashMap<String, PromptRecord>,
+) -> Result<(), GitAiError> {
+    // Filter to only AI lines (where author is a prompt_id in prompt_records)
+    let mut ai_lines: Vec<(u32, String)> = line_authors
+        .iter()
+        .filter(|(_, author)| prompt_records.contains_key(*author))
+        .map(|(line, author)| (*line, author.clone()))
+        .collect();
+
+    // Sort by line number
+    ai_lines.sort_by_key(|(line, _)| *line);
+
+    // Group consecutive lines with the same prompt_id into ranges
+    let mut lines_map: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+
+    if !ai_lines.is_empty() {
+        let mut range_start = ai_lines[0].0;
+        let mut range_end = ai_lines[0].0;
+        let mut current_prompt_id = ai_lines[0].1.clone();
+
+        for (line, prompt_id) in ai_lines.iter().skip(1) {
+            if *prompt_id == current_prompt_id && *line == range_end + 1 {
+                // Extend current range
+                range_end = *line;
+            } else {
+                // Save current range and start new one
+                let range_key = if range_start == range_end {
+                    range_start.to_string()
+                } else {
+                    format!("{}-{}", range_start, range_end)
+                };
+                lines_map.insert(range_key, current_prompt_id.clone());
+
+                range_start = *line;
+                range_end = *line;
+                current_prompt_id = prompt_id.clone();
+            }
+        }
+
+        // Don't forget the last range
+        let range_key = if range_start == range_end {
+            range_start.to_string()
+        } else {
+            format!("{}-{}", range_start, range_end)
+        };
+        lines_map.insert(range_key, current_prompt_id);
+    }
+
+    // Only include prompts that are actually referenced in lines
+    let referenced_prompt_ids: std::collections::HashSet<&String> = lines_map.values().collect();
+    let filtered_prompts: HashMap<String, PromptRecord> = prompt_records
+        .iter()
+        .filter(|(k, _)| referenced_prompt_ids.contains(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let output = JsonBlameOutput {
+        lines: lines_map,
+        prompts: filtered_prompts,
+    };
+
+    let json_str = serde_json::to_string_pretty(&output)
+        .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON output: {}", e)))?;
+
+    println!("{}", json_str);
+    Ok(())
 }
 
 fn output_porcelain_format(
@@ -1376,6 +1474,12 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                         .into(),
                 );
                 i += 2;
+            }
+
+            // JSON output format
+            "--json" => {
+                options.json = true;
+                i += 1;
             }
 
             // File path (non-option argument)
