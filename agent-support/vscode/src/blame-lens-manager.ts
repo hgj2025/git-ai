@@ -11,10 +11,74 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   private currentSelection: vscode.Selection | null = null;
   private _onDidChangeCodeLenses: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
   public readonly onDidChangeCodeLenses: vscode.Event<void> = this._onDidChangeCodeLenses.event;
+  
+  // Decoration types for colored borders (one per color)
+  private colorDecorations: vscode.TextEditorDecorationType[] = [];
+  
+  // 40 readable colors for AI hunks
+  private readonly HUNK_COLORS = [
+    'rgba(96, 165, 250, 0.8)',   // Blue
+    'rgba(167, 139, 250, 0.8)',  // Purple
+    'rgba(251, 146, 60, 0.8)',   // Orange
+    'rgba(244, 114, 182, 0.8)',  // Pink
+    'rgba(250, 204, 21, 0.8)',   // Yellow
+    'rgba(56, 189, 248, 0.8)',   // Sky Blue
+    'rgba(249, 115, 22, 0.8)',   // Deep Orange
+    'rgba(168, 85, 247, 0.8)',   // Violet
+    'rgba(236, 72, 153, 0.8)',   // Hot Pink
+    'rgba(34, 197, 94, 0.8)',    // Green
+    'rgba(59, 130, 246, 0.8)',   // Bright Blue
+    'rgba(139, 92, 246, 0.8)',   // Purple Violet
+    'rgba(234, 179, 8, 0.8)',    // Gold
+    'rgba(236, 72, 85, 0.8)',    // Red
+    'rgba(20, 184, 166, 0.8)',   // Teal
+    'rgba(251, 191, 36, 0.8)',   // Amber
+    'rgba(192, 132, 252, 0.8)',  // Light Purple
+    'rgba(147, 197, 253, 0.8)',  // Light Blue
+    'rgba(252, 165, 165, 0.8)',  // Light Red
+    'rgba(134, 239, 172, 0.8)',  // Light Green
+    'rgba(253, 224, 71, 0.8)',   // Bright Yellow
+    'rgba(165, 180, 252, 0.8)',  // Indigo
+    'rgba(253, 186, 116, 0.8)',  // Light Orange
+    'rgba(249, 168, 212, 0.8)',  // Light Pink
+    'rgba(94, 234, 212, 0.8)',   // Cyan
+    'rgba(199, 210, 254, 0.8)',  // Pale Indigo
+    'rgba(254, 240, 138, 0.8)',  // Pale Yellow
+    'rgba(191, 219, 254, 0.8)',  // Pale Blue
+    'rgba(254, 202, 202, 0.8)',  // Pale Red
+    'rgba(187, 247, 208, 0.8)',  // Pale Green
+    'rgba(167, 243, 208, 0.8)',  // Pale Teal
+    'rgba(253, 230, 138, 0.8)',  // Pale Amber
+    'rgba(216, 180, 254, 0.8)',  // Pale Purple
+    'rgba(254, 215, 170, 0.8)',  // Pale Orange
+    'rgba(251, 207, 232, 0.8)',  // Pale Pink
+    'rgba(129, 140, 248, 0.8)',  // Medium Indigo
+    'rgba(248, 113, 113, 0.8)',  // Medium Red
+    'rgba(74, 222, 128, 0.8)',   // Medium Green
+    'rgba(45, 212, 191, 0.8)',   // Medium Teal
+    'rgba(251, 146, 189, 0.8)',  // Medium Pink
+  ];
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.blameService = new BlameService();
+
+    // Create decoration types for each color
+    this.colorDecorations = this.HUNK_COLORS.map(color => 
+      vscode.window.createTextEditorDecorationType({
+        isWholeLine: true,
+        borderWidth: '0 0 0 4px',
+        borderStyle: 'solid',
+        borderColor: color,
+        overviewRulerColor: color,
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
+        // Add left padding for better spacing
+        before: {
+          contentText: '',
+          margin: '0 8px 0 4px',
+        }
+      })
+    );
 
     // Create status bar item for model display
     this.statusBarItem = vscode.window.createStatusBarItem(
@@ -106,6 +170,9 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       // Check if there's a multi-line selection in the active editor
       const activeEditor = vscode.window.activeTextEditor;
       if (activeEditor && activeEditor.document.uri.toString() === documentUri) {
+        // Clear existing colored borders
+        this.clearColoredBorders(activeEditor);
+        
         const selection = activeEditor.selections[0];
         if (selection && selection.start.line !== selection.end.line) {
           // Re-fetch blame with the current selection
@@ -122,6 +189,14 @@ export class BlameLensManager implements vscode.CodeLensProvider {
    */
   private handleDocumentClose(document: vscode.TextDocument): void {
     const documentUri = document.uri.toString();
+    
+    // Clear colored borders if this was the current document
+    const editor = vscode.window.visibleTextEditors.find(
+      e => e.document.uri.toString() === documentUri
+    );
+    if (editor) {
+      this.clearColoredBorders(editor);
+    }
     
     // Cancel any pending blame for this document
     this.blameService.cancelForUri(document.uri);
@@ -143,6 +218,14 @@ export class BlameLensManager implements vscode.CodeLensProvider {
    * Handle active editor change - refresh CodeLens and reset state.
    */
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined): void {
+    // Clear colored borders from previous editor
+    const previousEditor = vscode.window.visibleTextEditors.find(
+      e => e.document.uri.toString() === this.currentDocumentUri
+    );
+    if (previousEditor) {
+      this.clearColoredBorders(previousEditor);
+    }
+
     // Reset selection state
     this.currentSelection = null;
     this.statusBarItem.hide();
@@ -170,6 +253,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
 
     if (!selection || !editor) {
       this.currentSelection = null;
+      this.clearColoredBorders(editor);
       this.updateStatusBarForCurrentLine(editor);
       this._onDidChangeCodeLenses.fire();
       return;
@@ -187,6 +271,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       // Single line - update status bar based on current line
       console.log('[git-ai] Single line selection, updating status bar for line');
       this.currentSelection = null;
+      this.clearColoredBorders(editor);
       this.updateStatusBarForCurrentLine(editor);
       this._onDidChangeCodeLenses.fire();
     }
@@ -275,6 +360,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     if (this.currentDocumentUri === documentUri && this.currentBlameResult) {
       this._onDidChangeCodeLenses.fire();
       this.updateStatusBarForSelection(selection, this.currentBlameResult);
+      this.applyColoredBorders(editor, selection, this.currentBlameResult);
       return;
     }
 
@@ -304,6 +390,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
           if (currentSelection && currentSelection.start.line !== currentSelection.end.line) {
             this._onDidChangeCodeLenses.fire();
             this.updateStatusBarForSelection(currentSelection, result);
+            this.applyColoredBorders(currentEditor, currentSelection, result);
           }
         }
       }
@@ -380,6 +467,88 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   ): vscode.CodeLens | Thenable<vscode.CodeLens> {
     // We've already provided all the info in provideCodeLenses
     return codeLens;
+  }
+
+  /**
+   * Get a deterministic color index for a prompt ID using hash modulo.
+   * This ensures all users see the same color for the same prompt_id.
+   */
+  private getColorIndexForPromptId(promptId: string): number {
+    // Simple string hash function
+    let hash = 0;
+    for (let i = 0; i < promptId.length; i++) {
+      hash = ((hash << 5) - hash) + promptId.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash) % 40;
+  }
+
+  /**
+   * Apply colored borders to AI-authored hunks in the selection.
+   */
+  private applyColoredBorders(
+    editor: vscode.TextEditor,
+    selection: vscode.Selection,
+    blameResult: BlameResult
+  ): void {
+    // Clear existing decorations first
+    this.clearColoredBorders(editor);
+
+    const startLine = Math.min(selection.start.line, selection.end.line);
+    const endLine = Math.max(selection.start.line, selection.end.line);
+
+    // Identify AI hunks within the selection
+    const aiHunks = this.identifyAiHunks(blameResult, startLine, endLine);
+
+    if (aiHunks.length === 0) {
+      return;
+    }
+
+    // Map commit hash to color using deterministic hash function
+    const commitToColor = new Map<string, number>();
+    
+    // Assign colors deterministically based on prompt hash
+    aiHunks.forEach(hunk => {
+      if (!commitToColor.has(hunk.commitHash)) {
+        commitToColor.set(hunk.commitHash, this.getColorIndexForPromptId(hunk.commitHash));
+      }
+    });
+
+    // Group ranges by color (to apply all ranges of same color together)
+    const colorToRanges = new Map<number, vscode.Range[]>();
+    
+    aiHunks.forEach(hunk => {
+      const colorIndex = commitToColor.get(hunk.commitHash)!;
+      
+      if (!colorToRanges.has(colorIndex)) {
+        colorToRanges.set(colorIndex, []);
+      }
+      
+      // Add all lines in this hunk to the ranges for this color
+      const ranges = colorToRanges.get(colorIndex)!;
+      for (let line = hunk.startLine; line <= hunk.endLine; line++) {
+        ranges.push(new vscode.Range(line, 0, line, 0));
+      }
+      
+      console.log('[git-ai] Hunk at lines', hunk.startLine, '-', hunk.endLine, 
+                  'commit', hunk.commitHash.substring(0, 7), 'gets color', colorIndex);
+    });
+
+    // Apply decorations grouped by color
+    colorToRanges.forEach((ranges, colorIndex) => {
+      const decoration = this.colorDecorations[colorIndex];
+      editor.setDecorations(decoration, ranges);
+      console.log('[git-ai] Applied color', colorIndex, 'to', ranges.length, 'lines');
+    });
+  }
+
+  /**
+   * Clear all colored border decorations.
+   */
+  private clearColoredBorders(editor: vscode.TextEditor): void {
+    this.colorDecorations.forEach(decoration => {
+      editor.setDecorations(decoration, []);
+    });
   }
 
   /**
@@ -709,6 +878,9 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     this.blameService.dispose();
     this.statusBarItem.dispose();
     this._onDidChangeCodeLenses.dispose();
+    
+    // Dispose all color decorations
+    this.colorDecorations.forEach(decoration => decoration.dispose());
   }
 }
 
