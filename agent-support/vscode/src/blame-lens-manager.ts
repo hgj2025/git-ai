@@ -132,6 +132,13 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       })
     );
 
+    // Handle document content changes to refresh blame with shifted line attributions
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        this.handleDocumentChange(event);
+      })
+    );
+
     // Register CodeLens click handler
     this.context.subscriptions.push(
       vscode.commands.registerCommand('git-ai.showAuthorDetails', (lineInfo: LineBlameInfo, line: number) => {
@@ -182,6 +189,56 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     }
     
     console.log('[git-ai] Document saved, invalidated blame cache for:', document.uri.fsPath);
+  }
+
+  /**
+   * Handle document content change - invalidate cached blame and re-fetch with shifted line attributions.
+   * This is called on every keystroke, so we debounce the refresh.
+   */
+  private documentChangeTimer: NodeJS.Timeout | null = null;
+  private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+    const documentUri = event.document.uri.toString();
+    
+    // Only handle changes to the current document we have blame for
+    if (this.currentDocumentUri !== documentUri) {
+      return;
+    }
+    
+    // Skip if no content changes (e.g., just metadata changes)
+    if (event.contentChanges.length === 0) {
+      return;
+    }
+    
+    // Clear the current blame result since line numbers have shifted
+    this.currentBlameResult = null;
+    this.pendingBlameRequest = null;
+    
+    // Debounce the refresh to avoid hammering git-ai on every keystroke
+    if (this.documentChangeTimer) {
+      clearTimeout(this.documentChangeTimer);
+    }
+    
+    this.documentChangeTimer = setTimeout(() => {
+      this.documentChangeTimer = null;
+      
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor && activeEditor.document.uri.toString() === documentUri) {
+        // Clear existing colored borders
+        this.clearColoredBorders(activeEditor);
+        
+        const selection = activeEditor.selections[0];
+        if (selection && selection.start.line !== selection.end.line) {
+          // Re-fetch blame with the current selection
+          this.requestBlameAndRefresh(activeEditor, selection);
+        }
+        
+        // Update status bar for current line
+        this.updateStatusBarForCurrentLine(activeEditor);
+        
+        // Fire CodeLens change event
+        this._onDidChangeCodeLenses.fire();
+      }
+    }, 300); // 300ms debounce
   }
 
   /**
@@ -875,6 +932,12 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   }
 
   public dispose(): void {
+    // Clear any pending document change timer
+    if (this.documentChangeTimer) {
+      clearTimeout(this.documentChangeTimer);
+      this.documentChangeTimer = null;
+    }
+    
     this.blameService.dispose();
     this.statusBarItem.dispose();
     this._onDidChangeCodeLenses.dispose();

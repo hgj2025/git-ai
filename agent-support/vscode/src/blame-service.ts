@@ -40,24 +40,95 @@ export interface BlameResult {
   totalLines: number;
 }
 
-interface CachedBlame {
-  result: BlameResult;
-  documentVersion: number;
-}
-
 /**
  * Service for executing git-ai blame and managing blame results.
+ * Uses an LRU cache keyed by file path + content hash + HEAD commit SHA.
  */
 export class BlameService {
   private static readonly TIMEOUT_MS = 30000; // 30 second timeout
+  private static readonly MAX_CACHE_ENTRIES = 20;
   
   private queue: BlameQueue<BlameResult>;
-  private cache: Map<string, CachedBlame> = new Map();
+  private contentCache: Map<string, BlameResult> = new Map(); // LRU cache using Map insertion order
   private gitAiAvailable: boolean | null = null;
   private hasShownInstallMessage = false;
   
   constructor() {
     this.queue = new BlameQueue<BlameResult>();
+  }
+  
+  /**
+   * Get the HEAD commit SHA using VS Code's Git extension API.
+   * Returns null if the Git extension is not available or the file is not in a repo.
+   */
+  private getHeadCommit(document: vscode.TextDocument): string | null {
+    const git = vscode.extensions
+      .getExtension("vscode.git")
+      ?.exports.getAPI(1);
+    
+    if (!git) {
+      return null;
+    }
+    
+    // Find the repo that contains this document
+    const repo = git.repositories.find((r: { rootUri: vscode.Uri }) => 
+      document.uri.fsPath.startsWith(r.rootUri.fsPath)
+    );
+    
+    return repo?.state.HEAD?.commit ?? null;
+  }
+  
+  /**
+   * Fast hash function (djb2) for content-based cache keys.
+   */
+  private hashContent(content: string): string {
+    let hash = 5381;
+    for (let i = 0; i < content.length; i++) {
+      hash = ((hash << 5) + hash) ^ content.charCodeAt(i);
+    }
+    // Convert to unsigned 32-bit integer and then to hex string
+    return (hash >>> 0).toString(16);
+  }
+  
+  /**
+   * Generate a cache key from file path, content, and commit SHA.
+   */
+  private getContentCacheKey(filePath: string, content: string, commitSha: string): string {
+    const contentHash = this.hashContent(content);
+    return `${filePath}:${commitSha}:${contentHash}`;
+  }
+  
+  /**
+   * Add an entry to the LRU cache, evicting the oldest entry if necessary.
+   */
+  private addToCache(key: string, result: BlameResult): void {
+    // If key exists, delete it first so it gets re-added at the end (LRU refresh)
+    if (this.contentCache.has(key)) {
+      this.contentCache.delete(key);
+    }
+    
+    // Evict oldest entry if cache is full
+    if (this.contentCache.size >= BlameService.MAX_CACHE_ENTRIES) {
+      const oldestKey = this.contentCache.keys().next().value;
+      if (oldestKey) {
+        this.contentCache.delete(oldestKey);
+      }
+    }
+    
+    this.contentCache.set(key, result);
+  }
+  
+  /**
+   * Get an entry from the cache, refreshing its position in the LRU order.
+   */
+  private getFromCache(key: string): BlameResult | undefined {
+    const result = this.contentCache.get(key);
+    if (result) {
+      // Refresh LRU position by deleting and re-adding
+      this.contentCache.delete(key);
+      this.contentCache.set(key, result);
+    }
+    return result;
   }
   
   /**
@@ -73,30 +144,42 @@ export class BlameService {
       return null;
     }
     
-    // Check cache first
-    const cached = this.cache.get(document.uri.toString());
-    if (cached && cached.documentVersion === document.version) {
-      return cached.result;
-    }
-    
     // Check if git-ai is available
     if (this.gitAiAvailable === false) {
       return null;
+    }
+    
+    // Get HEAD commit SHA for cache key
+    const headCommit = this.getHeadCommit(document);
+    if (!headCommit) {
+      // No git repo found, fall back to executing without cache
+      return this.queue.enqueue(
+        document.uri,
+        priority,
+        (signal) => this.executeBlame(document, document.getText(), signal)
+      );
+    }
+    
+    // Get current content for cache key and to pass to git-ai
+    const content = document.getText();
+    const cacheKey = this.getContentCacheKey(document.uri.fsPath, content, headCommit);
+    
+    // Check LRU cache first
+    const cached = this.getFromCache(cacheKey);
+    if (cached) {
+      return cached;
     }
     
     // Enqueue the blame request
     const result = await this.queue.enqueue(
       document.uri,
       priority,
-      (signal) => this.executeBlame(document, signal)
+      (signal) => this.executeBlame(document, content, signal)
     );
     
     // Cache the result
     if (result) {
-      this.cache.set(document.uri.toString(), {
-        result,
-        documentVersion: document.version,
-      });
+      this.addToCache(cacheKey, result);
     }
     
     return result;
@@ -111,18 +194,24 @@ export class BlameService {
   }
   
   /**
-   * Invalidate the cache for a document.
-   * Called when a file is saved.
+   * Invalidate cache entries for a document.
+   * Called when a file is saved. Removes all cache entries for the given file path.
    */
   public invalidateCache(uri: vscode.Uri): void {
-    this.cache.delete(uri.toString());
+    const filePath = uri.fsPath;
+    // Remove all cache entries for this file (they start with the file path)
+    for (const key of this.contentCache.keys()) {
+      if (key.startsWith(filePath + ':')) {
+        this.contentCache.delete(key);
+      }
+    }
   }
   
   /**
    * Clear all cached blame data.
    */
   public clearCache(): void {
-    this.cache.clear();
+    this.contentCache.clear();
   }
   
   /**
@@ -130,11 +219,12 @@ export class BlameService {
    */
   public dispose(): void {
     this.queue.cancelAll();
-    this.cache.clear();
+    this.contentCache.clear();
   }
   
   private async executeBlame(
     document: vscode.TextDocument,
+    content: string,
     signal: AbortSignal
   ): Promise<BlameResult> {
     const filePath = document.uri.fsPath;
@@ -147,7 +237,9 @@ export class BlameService {
         return;
       }
       
-      const args = ['blame', '--json', filePath];
+      // Use --contents - to read file contents from stdin
+      // This allows git-ai to properly shift AI attributions for dirty files
+      const args = ['blame', '--json', '--contents', '-', filePath];
       const proc = spawn('git-ai', args, { 
         cwd,
         timeout: BlameService.TIMEOUT_MS,
@@ -162,6 +254,10 @@ export class BlameService {
         reject(new Error('Aborted'));
       };
       signal.addEventListener('abort', abortHandler);
+      
+      // Write file contents to stdin and close it
+      proc.stdin.write(content);
+      proc.stdin.end();
       
       proc.stdout.on('data', (data) => {
         stdout += data.toString();
