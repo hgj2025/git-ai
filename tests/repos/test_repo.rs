@@ -381,6 +381,61 @@ impl TestRepo {
         }
     }
 
+    /// Run a git-ai command with data provided on stdin
+    pub fn git_ai_with_stdin(&self, args: &[&str], stdin_data: &[u8]) -> Result<String, String> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let binary_path = get_binary_path();
+
+        let mut command = Command::new(binary_path);
+        command
+            .args(args)
+            .current_dir(&self.path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        // Add config patch as environment variable if present
+        if let Some(patch) = &self.config_patch {
+            if let Ok(patch_json) = serde_json::to_string(patch) {
+                command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
+            }
+        }
+
+        let mut child = command
+            .spawn()
+            .expect(&format!("Failed to spawn git-ai command: {:?}", args));
+
+        // Write stdin data
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(stdin_data)
+                .expect("Failed to write to stdin");
+        }
+
+        let output = child
+            .wait_with_output()
+            .expect(&format!("Failed to wait for git-ai command: {:?}", args));
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if output.status.success() {
+            // Combine stdout and stderr since git-ai often writes to stderr
+            let combined = if stdout.is_empty() {
+                stderr
+            } else if stderr.is_empty() {
+                stdout
+            } else {
+                format!("{}{}", stdout, stderr)
+            };
+            Ok(combined)
+        } else {
+            Err(stderr)
+        }
+    }
+
     pub fn filename(&self, filename: &str) -> TestFile {
         let file_path = self.path.join(filename);
 

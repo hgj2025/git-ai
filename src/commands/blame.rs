@@ -4,7 +4,7 @@ use crate::authorship::working_log::CheckpointKind;
 use crate::error::GitAiError;
 use crate::git::refs::get_reference_as_authorship_log_v3;
 use crate::git::repository::Repository;
-use crate::git::repository::exec_git;
+use crate::git::repository::{exec_git, exec_git_stdin};
 #[cfg(windows)]
 use crate::utils::normalize_to_posix;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
@@ -111,6 +111,10 @@ pub struct GitAiBlameOptions {
     // Encoding
     pub encoding: Option<String>,
 
+    // Pre-read contents data (from --contents flag, either from stdin or file)
+    // This is populated during argument parsing and used by blame
+    pub contents_data: Option<Vec<u8>>,
+
     // Use prompt hashes as name instead of author names
     pub use_prompt_hashes_as_names: bool,
 
@@ -160,6 +164,7 @@ impl Default for GitAiBlameOptions {
             reverse: None,
             first_parent: false,
             encoding: None,
+            contents_data: None,
             use_prompt_hashes_as_names: false,
             return_human_authors_as_human: false,
             no_output: false,
@@ -251,8 +256,16 @@ impl Repository {
             options.clone()
         };
 
-        // Read file content either from a specific commit or from working directory
-        let (file_content, total_lines) = if let Some(ref commit) = options.newest_commit {
+        // Read file content from one of:
+        // 1. Provided contents_data (from --contents flag)
+        // 2. A specific commit
+        // 3. The working directory
+        let (file_content, total_lines) = if let Some(ref data) = options.contents_data {
+            // Use pre-read contents data (from --contents stdin or file)
+            let content = String::from_utf8_lossy(data).to_string();
+            let lines_count = content.lines().count() as u32;
+            (content, lines_count)
+        } else if let Some(ref commit) = options.newest_commit {
             // Read file content from the specified commit
             // This ensures blame is independent of which branch is checked out
             let commit_obj = self.find_commit(commit.clone())?;
@@ -423,11 +436,22 @@ impl Repository {
             }
         }
 
+        // Add --contents flag if we have content data to pass via stdin
+        if options.contents_data.is_some() {
+            args.push("--contents".to_string());
+            args.push("-".to_string());
+        }
+
         // Separator then file path
         args.push("--".to_string());
         args.push(file_path.to_string());
 
-        let output = exec_git(&args)?;
+        // Execute git blame, using stdin if we have contents data
+        let output = if let Some(ref data) = options.contents_data {
+            exec_git_stdin(&args, data)?
+        } else {
+            exec_git(&args)?
+        };
         let stdout = String::from_utf8(output.stdout)?;
 
         // Parser state for current hunk
@@ -1429,7 +1453,28 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                         "Missing argument for --contents".to_string(),
                     ));
                 }
-                options.contents_file = Some(args[i + 1].clone());
+                let contents_arg = &args[i + 1];
+                options.contents_file = Some(contents_arg.clone());
+
+                // Read the contents now - either from stdin or from a file
+                let data = if contents_arg == "-" {
+                    // Read from stdin
+                    use std::io::Read;
+                    let mut buffer = Vec::new();
+                    io::stdin().read_to_end(&mut buffer).map_err(|e| {
+                        GitAiError::Generic(format!("Failed to read from stdin: {}", e))
+                    })?;
+                    buffer
+                } else {
+                    // Read from file
+                    fs::read(contents_arg).map_err(|e| {
+                        GitAiError::Generic(format!(
+                            "Failed to read contents file '{}': {}",
+                            contents_arg, e
+                        ))
+                    })?
+                };
+                options.contents_data = Some(data);
                 i += 2;
             }
 
