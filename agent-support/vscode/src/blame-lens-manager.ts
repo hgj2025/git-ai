@@ -139,6 +139,13 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       })
     );
 
+    // Handle scroll to recalculate which CodeLens (first visible per prompt) to show
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+        this.handleVisibleRangesChange(event);
+      })
+    );
+
     // Register CodeLens click handler
     this.context.subscriptions.push(
       vscode.commands.registerCommand('git-ai.showAuthorDetails', (lineInfo: LineBlameInfo, line: number) => {
@@ -269,6 +276,16 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     this.blameService.invalidateCache(document.uri);
     
     console.log('[git-ai] Document closed, cancelled blame for:', document.uri.fsPath);
+  }
+
+  /**
+   * Handle visible ranges change (scroll) - refresh CodeLens to update which headings are visible.
+   */
+  private handleVisibleRangesChange(event: vscode.TextEditorVisibleRangesChangeEvent): void {
+    // Only refresh if we have a multi-line selection and blame data
+    if (this.currentSelection && this.currentBlameResult) {
+      this._onDidChangeCodeLenses.fire();
+    }
   }
 
   /**
@@ -459,6 +476,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
 
   /**
    * Provide CodeLens for the document.
+   * Shows only ONE CodeLens per unique prompt (commitHash), positioned at the first visible hunk.
    */
   public provideCodeLenses(
     document: vscode.TextDocument,
@@ -484,32 +502,77 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
     const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
 
-    // Identify AI hunks within the selection
-    const aiHunks = this.identifyAiHunks(this.currentBlameResult, startLine, endLine);
+    // Get visible range from active editor
+    const activeEditor = vscode.window.activeTextEditor;
+    let visibleStartLine = startLine;
+    let visibleEndLine = endLine;
+    
+    if (activeEditor && activeEditor.visibleRanges.length > 0) {
+      // Use the first visible range (main viewport)
+      const visibleRange = activeEditor.visibleRanges[0];
+      visibleStartLine = visibleRange.start.line;
+      visibleEndLine = visibleRange.end.line;
+    }
 
-    // Create CodeLens for each AI hunk
-    for (const hunk of aiHunks) {
-      const lineInfo = this.currentBlameResult.lineAuthors.get(hunk.startLine + 1); // Convert to 1-indexed
+    // First, count TOTAL lines per prompt across the ENTIRE file
+    const totalLinesByPrompt = new Map<string, number>();
+    for (const [gitLine, lineInfo] of this.currentBlameResult.lineAuthors) {
+      if (lineInfo?.isAiAuthored) {
+        const count = totalLinesByPrompt.get(lineInfo.commitHash) || 0;
+        totalLinesByPrompt.set(lineInfo.commitHash, count + 1);
+      }
+    }
+
+    // Group AI lines within the SELECTION by commitHash (prompt), tracking line numbers in selection
+    const linesByPrompt = new Map<string, { lines: number[]; lineInfo: LineBlameInfo }>();
+    
+    for (let line = startLine; line <= endLine; line++) {
+      const gitLine = line + 1; // Convert to 1-indexed
+      const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
       
       if (lineInfo?.isAiAuthored) {
-        const tool = lineInfo.author;
-        const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
-        const humanAuthor = lineInfo.promptRecord?.human_author || '';
-        const humanName = this.extractHumanName(humanAuthor);
-        const lineCount = hunk.endLine - hunk.startLine + 1;
-        const countSuffix = lineCount > 1 ? ` +${lineCount}` : '';
-        
-        const title = `🤖 ${tool}|${model} <${humanName}>${countSuffix}`;
-        
-        const range = new vscode.Range(hunk.startLine, 0, hunk.startLine, 0);
-        const codeLens = new vscode.CodeLens(range, {
-          title: title,
-          command: 'git-ai.showAuthorDetails',
-          arguments: [lineInfo, hunk.startLine]
-        });
-        
-        codeLenses.push(codeLens);
+        const existing = linesByPrompt.get(lineInfo.commitHash);
+        if (existing) {
+          existing.lines.push(line);
+        } else {
+          linesByPrompt.set(lineInfo.commitHash, { lines: [line], lineInfo });
+        }
       }
+    }
+
+    // For each unique prompt, create one CodeLens at the first visible line
+    for (const [commitHash, { lines, lineInfo }] of linesByPrompt) {
+      // Use the TOTAL line count from the entire file, not just the selection
+      const totalLineCount = totalLinesByPrompt.get(commitHash) || lines.length;
+      
+      // Find the first line that's in the visible range
+      let targetLine = lines.find(line => line >= visibleStartLine && line <= visibleEndLine);
+      
+      // If no line is visible, use the first line
+      if (targetLine === undefined) {
+        targetLine = lines[0];
+      }
+      
+      const tool = lineInfo.author;
+      const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
+      const humanAuthor = lineInfo.promptRecord?.human_author || '';
+      const humanName = this.extractHumanName(humanAuthor);
+      
+      // Calculate percentage of file
+      const totalFileLines = document.lineCount;
+      const percentage = Math.round((totalLineCount / totalFileLines) * 100);
+      const linesSuffix = `(${totalLineCount} ${totalLineCount === 1 ? 'line' : 'lines'} ${percentage}% of file)`;
+      
+      const title = `🤖 ${tool}|${model} <${humanName}> ${linesSuffix}`;
+      
+      const range = new vscode.Range(targetLine, 0, targetLine, 0);
+      const codeLens = new vscode.CodeLens(range, {
+        title: title,
+        command: 'git-ai.showAuthorDetails',
+        arguments: [lineInfo, targetLine]
+      });
+      
+      codeLenses.push(codeLens);
     }
 
     return codeLenses;
@@ -541,7 +604,8 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   }
 
   /**
-   * Apply colored borders to AI-authored hunks in the selection.
+   * Apply colored borders to ALL lines in the file from prompts that appear in the selection.
+   * This shows the full extent of each selected prompt's contribution across the entire file.
    */
   private applyColoredBorders(
     editor: vscode.TextEditor,
@@ -554,48 +618,40 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     const startLine = Math.min(selection.start.line, selection.end.line);
     const endLine = Math.max(selection.start.line, selection.end.line);
 
-    // Identify AI hunks within the selection
-    const aiHunks = this.identifyAiHunks(blameResult, startLine, endLine);
+    // Step 1: Find which prompts (commitHashes) are present in the selection
+    const selectedPrompts = new Set<string>();
+    for (let line = startLine; line <= endLine; line++) {
+      const gitLine = line + 1; // Convert to 1-indexed
+      const lineInfo = blameResult.lineAuthors.get(gitLine);
+      if (lineInfo?.isAiAuthored) {
+        selectedPrompts.add(lineInfo.commitHash);
+      }
+    }
 
-    if (aiHunks.length === 0) {
+    if (selectedPrompts.size === 0) {
       return;
     }
 
-    // Map commit hash to color using deterministic hash function
-    const commitToColor = new Map<string, number>();
-    
-    // Assign colors deterministically based on prompt hash
-    aiHunks.forEach(hunk => {
-      if (!commitToColor.has(hunk.commitHash)) {
-        commitToColor.set(hunk.commitHash, this.getColorIndexForPromptId(hunk.commitHash));
-      }
-    });
-
-    // Group ranges by color (to apply all ranges of same color together)
+    // Step 2: Scan the ENTIRE file and collect all lines from selected prompts
     const colorToRanges = new Map<number, vscode.Range[]>();
     
-    aiHunks.forEach(hunk => {
-      const colorIndex = commitToColor.get(hunk.commitHash)!;
-      
-      if (!colorToRanges.has(colorIndex)) {
-        colorToRanges.set(colorIndex, []);
+    for (const [gitLine, lineInfo] of blameResult.lineAuthors) {
+      if (lineInfo?.isAiAuthored && selectedPrompts.has(lineInfo.commitHash)) {
+        const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
+        const line = gitLine - 1; // Convert to 0-indexed
+        
+        if (!colorToRanges.has(colorIndex)) {
+          colorToRanges.set(colorIndex, []);
+        }
+        colorToRanges.get(colorIndex)!.push(new vscode.Range(line, 0, line, 0));
       }
-      
-      // Add all lines in this hunk to the ranges for this color
-      const ranges = colorToRanges.get(colorIndex)!;
-      for (let line = hunk.startLine; line <= hunk.endLine; line++) {
-        ranges.push(new vscode.Range(line, 0, line, 0));
-      }
-      
-      console.log('[git-ai] Hunk at lines', hunk.startLine, '-', hunk.endLine, 
-                  'commit', hunk.commitHash.substring(0, 7), 'gets color', colorIndex);
-    });
+    }
 
     // Apply decorations grouped by color
     colorToRanges.forEach((ranges, colorIndex) => {
       const decoration = this.colorDecorations[colorIndex];
       editor.setDecorations(decoration, ranges);
-      console.log('[git-ai] Applied color', colorIndex, 'to', ranges.length, 'lines');
+      console.log('[git-ai] Applied color', colorIndex, 'to', ranges.length, 'lines across file');
     });
   }
 
@@ -757,52 +813,6 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     const normalizedName = modelName.charAt(0).toUpperCase() + modelName.slice(1).toLowerCase();
     
     return MODEL_LOGOS[normalizedName] || MODEL_LOGOS[modelName] || '🤖';
-  }
-
-  /**
-   * Identify contiguous AI hunks within the selection range.
-   * Returns an array of hunks with their start and end lines (0-indexed).
-   */
-  private identifyAiHunks(
-    blameResult: BlameResult,
-    startLine: number,
-    endLine: number
-  ): Array<{ startLine: number; endLine: number; commitHash: string }> {
-    const hunks: Array<{ startLine: number; endLine: number; commitHash: string }> = [];
-    let currentHunk: { startLine: number; endLine: number; commitHash: string } | null = null;
-
-    for (let line = startLine; line <= endLine; line++) {
-      const gitLine = line + 1; // Convert to 1-indexed
-      const lineInfo = blameResult.lineAuthors.get(gitLine);
-      
-      if (lineInfo?.isAiAuthored) {
-        const commitHash = lineInfo.commitHash;
-        
-        if (currentHunk && currentHunk.commitHash === commitHash) {
-          // Extend current hunk
-          currentHunk.endLine = line;
-        } else {
-          // Start new hunk (save previous if exists)
-          if (currentHunk) {
-            hunks.push(currentHunk);
-          }
-          currentHunk = { startLine: line, endLine: line, commitHash };
-        }
-      } else {
-        // Human-authored line - close current hunk if any
-        if (currentHunk) {
-          hunks.push(currentHunk);
-          currentHunk = null;
-        }
-      }
-    }
-
-    // Don't forget the last hunk
-    if (currentHunk) {
-      hunks.push(currentHunk);
-    }
-
-    return hunks;
   }
 
   /**
