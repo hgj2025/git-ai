@@ -582,12 +582,19 @@ export class BlameLensManager {
     const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
     if (lineInfo?.isAiAuthored) {
       const model = lineInfo.promptRecord?.agent_id?.model;
+      const tool = lineInfo.promptRecord?.agent_id?.tool || lineInfo.author;
       const modelName = this.extractModelName(model);
       
+      // Always show robot emoji for AI code
+      // Show model name if available, otherwise show tool name
       if (modelName) {
         this.statusBarItem.text = `🤖 ${modelName}`;
+      } else if (tool) {
+        // Capitalize tool name
+        const toolCapitalized = tool.charAt(0).toUpperCase() + tool.slice(1);
+        this.statusBarItem.text = `🤖 ${toolCapitalized}`;
       } else {
-        this.statusBarItem.text = '🧑‍💻';
+        this.statusBarItem.text = '🤖';
       }
       
       // Build tooltip with full markdown content
@@ -717,6 +724,7 @@ export class BlameLensManager {
   /**
    * Build hover content showing author details.
    * Shows a polished chat-style conversation view with clear visual hierarchy.
+   * Each message is shown individually with its own header and timestamp.
    */
   private buildHoverContent(lineInfo: LineBlameInfo | undefined, documentUri?: vscode.Uri): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
@@ -731,6 +739,27 @@ export class BlameLensManager {
     const record = lineInfo.promptRecord;
     const messages = record?.messages || [];
     const hasMessages = messages.length > 0 && messages.some(m => m.text);
+
+    // Extract metadata for header
+    const humanName = this.extractHumanName(record?.human_author || '');
+    const model = record?.agent_id?.model || '';
+    const tool = record?.agent_id?.tool || lineInfo.author;
+    const toolCapitalized = tool.charAt(0).toUpperCase() + tool.slice(1);
+    
+    // Build model display: hide if default/auto/unknown/empty
+    const modelLower = model.toLowerCase();
+    const hideModel = !model || modelLower === 'default' || modelLower === 'auto' || modelLower === 'unknown';
+    const modelDisplay = hideModel ? '' : model;
+
+    // ═══════════════════════════════════════════════════════════════
+    // TOP HEADER - Attribution with color
+    // ═══════════════════════════════════════════════════════════════
+    if (modelDisplay) {
+      md.appendMarkdown(`<span style="color:#a78bfa;">**${humanName}**</span> with <span style="color:#60a5fa;">**${modelDisplay}**</span> in <span style="color:#f472b6;">**${toolCapitalized}**</span> · <span style="color:#94a3b8;">*powered by Git AI*</span>\n\n`);
+    } else {
+      md.appendMarkdown(`<span style="color:#a78bfa;">**${humanName}**</span> with <span style="color:#f472b6;">**${toolCapitalized}**</span> · <span style="color:#94a3b8;">*powered by Git AI*</span>\n\n`);
+    }
+    md.appendMarkdown(`---\n\n`);
 
     // Fallback if no messages saved
     if (!hasMessages) {
@@ -773,52 +802,32 @@ export class BlameLensManager {
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // USER SECTION
+    // CONVERSATION - Show each message with its own header
     // ═══════════════════════════════════════════════════════════════
-    const humanName = this.extractHumanName(record?.human_author || '');
-    md.appendMarkdown(`### 💬 ${humanName}\n\n`);
-
-    // Get timestamp from last user message to show right after header
-    const userMessages = messagesWithTimestamps.filter(m => m.type === 'user');
-    const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length - 1] : null;
-    const lastUserTimestamp = lastUserMessage ? timeFormats[lastUserMessage.originalIndex] : null;
-    if (lastUserTimestamp) {
-      md.appendMarkdown(`*${lastUserTimestamp}*\n\n`);
-    }
-
-    // User messages with left padding via blockquote
-    for (const msg of userMessages) {
-      if (msg.text) {
-        md.appendMarkdown(this.formatMessageWithPadding(msg.text) + '\n\n');
-      }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // AI SECTION
-    // ═══════════════════════════════════════════════════════════════
-    const model = record?.agent_id?.model || '';
-    const tool = record?.agent_id?.tool || lineInfo.author;
-    const toolCapitalized = tool.charAt(0).toUpperCase() + tool.slice(1);
-    
-    // Build AI header: show "model tool" or just "tool" if model is default/auto/empty
-    const modelLower = model.toLowerCase();
-    const hideModel = !model || modelLower === 'default' || modelLower === 'auto';
     const aiHeader = hideModel ? toolCapitalized : `${model} ${toolCapitalized}`;
     
-    md.appendMarkdown(`---\n\n`);
-    md.appendMarkdown(`### 🤖 ${aiHeader}\n\n`);
-
-    // Get timestamp from last assistant message to show right after header
-    const assistantMessages = messagesWithTimestamps.filter(m => m.type === 'assistant');
-    const lastAssistantMessage = assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
-    const lastAssistantTimestamp = lastAssistantMessage ? timeFormats[lastAssistantMessage.originalIndex] : null;
-    if (lastAssistantTimestamp) {
-      md.appendMarkdown(`*${lastAssistantTimestamp}*\n\n`);
-    }
-
-    // Assistant responses with left padding via blockquote
-    for (const msg of assistantMessages) {
-      if (msg.text) {
+    for (const msg of messagesWithTimestamps) {
+      if (!msg.text) {
+        continue;
+      }
+      
+      const timestamp = timeFormats[msg.originalIndex];
+      
+      if (msg.type === 'user') {
+        // User message header
+        md.appendMarkdown(`#### 💬 ${humanName}`);
+        if (timestamp) {
+          md.appendMarkdown(` · *${timestamp}*`);
+        }
+        md.appendMarkdown(`\n\n`);
+        md.appendMarkdown(this.formatMessageWithPadding(msg.text) + '\n\n');
+      } else if (msg.type === 'assistant') {
+        // Assistant message header
+        md.appendMarkdown(`#### 🤖 ${aiHeader}`);
+        if (timestamp) {
+          md.appendMarkdown(` · *${timestamp}*`);
+        }
+        md.appendMarkdown(`\n\n`);
         md.appendMarkdown(this.formatMessageWithPadding(msg.text) + '\n\n');
       }
     }
