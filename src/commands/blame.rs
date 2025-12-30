@@ -1618,7 +1618,6 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                 );
                 i += 2;
             }
-
             // JSON output format
             "--json" => {
                 options.json = true;

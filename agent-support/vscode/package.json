@@ -34,19 +34,14 @@
           "default": false,
           "description": "Enable tracking for AI tab completion detection (experimental)."
         },
-        "gitai.showPromptsOnSelect": {
+        "gitai.enableBlame": {
           "type": "boolean",
           "default": true,
-          "description": "Show AI authorship information when selecting code."
+          "description": "Enable AI blame attribution in the status bar and gutter."
         }
       }
     },
     "commands": [
-      {
-        "command": "git-ai.showModelHover",
-        "title": "Show AI Model Information",
-        "category": "git-ai"
-      },
       {
         "command": "git-ai.toggleAICode",
         "title": "Toggle Show AI Code",

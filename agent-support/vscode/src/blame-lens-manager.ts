@@ -1,19 +1,20 @@
 import * as vscode from "vscode";
 import { BlameService, BlameResult, LineBlameInfo } from "./blame-service";
+import { Config } from "./utils/config";
 
-export class BlameLensManager implements vscode.CodeLensProvider {
+export class BlameLensManager {
   private context: vscode.ExtensionContext;
   private blameService: BlameService;
   private currentBlameResult: BlameResult | null = null;
   private currentDocumentUri: string | null = null;
   private pendingBlameRequest: Promise<BlameResult | null> | null = null;
-  // private statusBarItem: vscode.StatusBarItem;
-  private currentSelection: vscode.Selection | null = null;
-  private _onDidChangeCodeLenses: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
-  public readonly onDidChangeCodeLenses: vscode.Event<void> = this._onDidChangeCodeLenses.event;
+  private statusBarItem: vscode.StatusBarItem;
   
   // In-memory toggle for showing all AI code (not persisted, per-workspace)
   private toggleAICodeEnabled: boolean = false;
+  
+  // Global setting to enable/disable blame functionality entirely
+  private blameEnabled: boolean = true;
   
   // Virtual document provider for markdown content
   private static readonly VIRTUAL_SCHEME = 'git-ai-blame';
@@ -79,6 +80,9 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.blameService = new BlameService();
+    
+    // Initialize from global setting
+    this.blameEnabled = Config.isBlameEnabled();
 
     // Create decoration types for each color
     this.colorDecorations = this.HUNK_COLORS.map(color => 
@@ -91,13 +95,20 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       })
     );
 
-    // Create status bar item for model display
-    // this.statusBarItem = vscode.window.createStatusBarItem(
-    //   vscode.StatusBarAlignment.Right,
-    //   500
-    // );
-    // this.statusBarItem.name = 'git-ai Model';
-    // this.statusBarItem.hide();
+    // Create status bar item for AI mode toggle and model display
+    this.statusBarItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      500
+    );
+    this.statusBarItem.name = 'git-ai';
+    this.statusBarItem.command = 'git-ai.toggleAICode';
+    this.statusBarItem.text = '🧑‍💻';
+    this.statusBarItem.tooltip = 'Human-authored code (click to toggle AI highlighting)';
+    
+    // Only show status bar if blame is enabled
+    if (this.blameEnabled) {
+      this.statusBarItem.show();
+    }
   }
 
   public activate(): void {
@@ -123,25 +134,11 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     this.context.subscriptions.push(
       vscode.workspace.registerTextDocumentContentProvider(BlameLensManager.VIRTUAL_SCHEME, documentProvider)
     );
-    
-    // Register CodeLens provider for all languages
-    this.context.subscriptions.push(
-      vscode.languages.registerCodeLensProvider({ scheme: '*', language: '*' }, this)
-    );
 
-    // Register selection change listener
+    // Register selection/cursor change listener to update status bar
     this.context.subscriptions.push(
       vscode.window.onDidChangeTextEditorSelection((event) => {
         this.handleSelectionChange(event);
-      })
-    );
-
-    // Register hover provider for all languages
-    this.context.subscriptions.push(
-      vscode.languages.registerHoverProvider({ scheme: '*', language: '*' }, {
-        provideHover: (document, position, token) => {
-          return this.provideHover(document, position, token);
-        }
       })
     );
 
@@ -152,7 +149,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       })
     );
 
-    // Handle active editor change to refresh CodeLens when switching documents
+    // Handle active editor change to update status bar and decorations
     this.context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         this.handleActiveEditorChange(editor);
@@ -173,28 +170,6 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       })
     );
 
-    // Handle scroll to recalculate which CodeLens (first visible per prompt) to show
-    this.context.subscriptions.push(
-      vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-        this.handleVisibleRangesChange(event);
-      })
-    );
-
-    // Register CodeLens click handler
-    this.context.subscriptions.push(
-      vscode.commands.registerCommand('git-ai.showAuthorDetails', (lineInfo: LineBlameInfo, line: number) => {
-        this.handleCodeLensClick(lineInfo);
-      })
-    );
-
-    // Register status bar item click handler
-    // this.statusBarItem.command = 'git-ai.showModelHover';
-    // this.context.subscriptions.push(
-    //   vscode.commands.registerCommand('git-ai.showModelHover', () => {
-    //     this.handleStatusBarClick();
-    //   })
-    // );
-
     // Register command to show commit diff
     this.context.subscriptions.push(
       vscode.commands.registerCommand('git-ai.showCommitDiff', async (commitSha: string, workspacePath: string) => {
@@ -210,15 +185,29 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     );
 
     // Add status bar item to context subscriptions for proper cleanup
-    // this.context.subscriptions.push(this.statusBarItem);
+    this.context.subscriptions.push(this.statusBarItem);
 
-    console.log('[git-ai] BlameLensManager activated, CodeLens provider registered');
+    // Listen for configuration changes to enable/disable blame
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('gitai.enableBlame')) {
+          this.handleBlameEnabledChange();
+        }
+      })
+    );
+
+    console.log('[git-ai] BlameLensManager activated');
   }
 
   /**
-   * Handle document save - invalidate cache and refresh blame if there's an active selection or toggle is enabled.
+   * Handle document save - invalidate cache and refresh blame if toggle is enabled.
    */
   private handleDocumentSave(document: vscode.TextDocument): void {
+    // Skip if blame is disabled
+    if (!this.blameEnabled) {
+      return;
+    }
+    
     const documentUri = document.uri.toString();
     
     // Invalidate cached blame for this document
@@ -234,18 +223,13 @@ export class BlameLensManager implements vscode.CodeLensProvider {
         // Clear existing colored borders
         this.clearColoredBorders(activeEditor);
         
-        // Re-fetch blame based on current mode
+        // Re-fetch blame if toggle is enabled
         if (this.toggleAICodeEnabled) {
-          // Toggle mode: re-fetch blame for full file
           this.requestBlameForFullFile(activeEditor);
-        } else {
-          // Check if there's a multi-line selection
-          const selection = activeEditor.selections[0];
-          if (selection && selection.start.line !== selection.end.line) {
-            // Re-fetch blame with the current selection
-            this.requestBlameAndRefresh(activeEditor, selection);
-          }
         }
+        
+        // Update status bar
+        this.updateStatusBar(activeEditor);
       }
     }
     
@@ -258,6 +242,11 @@ export class BlameLensManager implements vscode.CodeLensProvider {
    */
   private documentChangeTimer: NodeJS.Timeout | null = null;
   private handleDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+    // Skip if blame is disabled
+    if (!this.blameEnabled) {
+      return;
+    }
+    
     const documentUri = event.document.uri.toString();
     
     // Only handle changes to the current document we have blame for
@@ -287,23 +276,13 @@ export class BlameLensManager implements vscode.CodeLensProvider {
         // Clear existing colored borders
         this.clearColoredBorders(activeEditor);
         
-        // Re-fetch blame based on current mode
+        // Re-fetch blame if toggle is enabled
         if (this.toggleAICodeEnabled) {
-          // Toggle mode: re-fetch blame for full file
           this.requestBlameForFullFile(activeEditor);
-        } else {
-          const selection = activeEditor.selections[0];
-          if (selection && selection.start.line !== selection.end.line) {
-            // Re-fetch blame with the current selection
-            this.requestBlameAndRefresh(activeEditor, selection);
-          }
         }
         
-        // Update status bar for current line
-        // this.updateStatusBarForCurrentLine(activeEditor);
-        
-        // Fire CodeLens change event
-        this._onDidChangeCodeLenses.fire();
+        // Update status bar
+        this.updateStatusBar(activeEditor);
       }
     }, 300); // 300ms debounce
   }
@@ -339,21 +318,14 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   }
 
   /**
-   * Handle visible ranges change (scroll) - refresh CodeLens to update which headings are visible.
-   */
-  private handleVisibleRangesChange(event: vscode.TextEditorVisibleRangesChangeEvent): void {
-    // Refresh if we have blame data and either:
-    // 1. Toggle AI Code is enabled, or
-    // 2. There's a multi-line selection
-    if (this.currentBlameResult && (this.toggleAICodeEnabled || this.currentSelection)) {
-      this._onDidChangeCodeLenses.fire();
-    }
-  }
-
-  /**
-   * Handle active editor change - refresh CodeLens and reset state.
+   * Handle active editor change - update status bar and decorations.
    */
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined): void {
+    // Skip if blame is disabled
+    if (!this.blameEnabled) {
+      return;
+    }
+    
     // Clear colored borders from previous editor
     const previousEditor = vscode.window.visibleTextEditors.find(
       e => e.document.uri.toString() === this.currentDocumentUri
@@ -361,10 +333,6 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     if (previousEditor) {
       this.clearColoredBorders(previousEditor);
     }
-
-    // Reset selection state
-    this.currentSelection = null;
-    // this.statusBarItem.hide();
     
     // If the new editor is a different document, reset our state
     if (editor && editor.document.uri.toString() !== this.currentDocumentUri) {
@@ -378,14 +346,20 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       this.requestBlameForFullFile(editor);
     }
     
-    // Refresh CodeLens for the new editor
-    this._onDidChangeCodeLenses.fire();
+    // Update status bar for the new editor
+    this.updateStatusBar(editor);
   }
 
   /**
    * Handle Toggle AI Code command - toggles the in-memory state for showing all AI code.
    */
   private handleToggleAICode(): void {
+    // If blame is disabled globally, don't allow toggling
+    if (!this.blameEnabled) {
+      vscode.window.showInformationMessage('git-ai: Blame is disabled. Enable it in settings (gitai.enableBlame).');
+      return;
+    }
+    
     this.toggleAICodeEnabled = !this.toggleAICodeEnabled;
     
     const editor = vscode.window.activeTextEditor;
@@ -395,7 +369,6 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       if (editor) {
         this.requestBlameForFullFile(editor);
       }
-      vscode.window.showInformationMessage('Toggle AI Code: ON - Showing all AI-authored code');
     } else {
       // Toggled OFF: clear decorations
       if (editor) {
@@ -403,8 +376,62 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       }
       this.currentBlameResult = null;
       this.currentDocumentUri = null;
-      this._onDidChangeCodeLenses.fire();
-      vscode.window.showInformationMessage('Toggle AI Code: OFF');
+    }
+    
+    // Update status bar to reflect new state
+    this.updateStatusBar(editor);
+  }
+
+  /**
+   * Handle global blame enabled setting change.
+   * When disabled: hide status bar, clear decorations, cancel pending blames.
+   * When enabled: show status bar, resume normal behavior.
+   */
+  private handleBlameEnabledChange(): void {
+    const newValue = Config.isBlameEnabled();
+    
+    // No change, nothing to do
+    if (newValue === this.blameEnabled) {
+      return;
+    }
+    
+    this.blameEnabled = newValue;
+    const editor = vscode.window.activeTextEditor;
+    
+    if (!this.blameEnabled) {
+      // Disabled: hide status bar, clear decorations, cancel pending blames
+      this.statusBarItem.hide();
+      
+      if (editor) {
+        this.clearColoredBorders(editor);
+      }
+      
+      // Cancel any pending blame requests
+      if (this.currentDocumentUri) {
+        const uri = vscode.Uri.parse(this.currentDocumentUri);
+        this.blameService.cancelForUri(uri);
+        this.blameService.invalidateCache(uri);
+      }
+      
+      // Reset state
+      this.currentBlameResult = null;
+      this.currentDocumentUri = null;
+      this.pendingBlameRequest = null;
+      
+      console.log('[git-ai] Blame functionality disabled');
+    } else {
+      // Enabled: show status bar, resume normal behavior
+      this.statusBarItem.show();
+      
+      // If toggle was on, re-request blame for current file
+      if (this.toggleAICodeEnabled && editor) {
+        this.requestBlameForFullFile(editor);
+      }
+      
+      // Update status bar
+      this.updateStatusBar(editor);
+      
+      console.log('[git-ai] Blame functionality enabled');
     }
   }
 
@@ -419,7 +446,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     // Check if we already have blame for this document
     if (this.currentDocumentUri === documentUri && this.currentBlameResult) {
       this.applyFullFileDecorations(editor, this.currentBlameResult);
-      this._onDidChangeCodeLenses.fire();
+      this.updateStatusBar(editor);
       return;
     }
 
@@ -446,7 +473,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
         const currentEditor = vscode.window.activeTextEditor;
         if (this.toggleAICodeEnabled && currentEditor && currentEditor.document.uri.toString() === documentUri) {
           this.applyFullFileDecorations(currentEditor, result);
-          this._onDidChangeCodeLenses.fire();
+          this.updateStatusBar(currentEditor);
         }
       }
     } catch (error) {
@@ -485,292 +512,126 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     });
   }
 
+  /**
+   * Handle cursor/selection change - update status bar to show current line's attribution.
+   */
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): void {
-    const editor = event.textEditor;
-    const selection = event.selections[0]; // Primary selection
-
-    // Check if "Show Prompts on Select" is enabled in settings
-    const config = vscode.workspace.getConfiguration('gitai');
-    const showPromptsOnSelect = config.get<boolean>('showPromptsOnSelect', true);
+    // Skip if blame is disabled
+    if (!this.blameEnabled) {
+      return;
+    }
     
-    // If showPromptsOnSelect is disabled, don't respond to selection changes
-    // (unless Toggle AI Code is enabled, which handles its own display)
-    if (!showPromptsOnSelect) {
-      return;
-    }
+    const editor = event.textEditor;
+    this.updateStatusBar(editor);
+  }
 
-    if (!selection || !editor) {
-      this.currentSelection = null;
-      this.clearColoredBorders(editor);
-      // this.updateStatusBarForCurrentLine(editor);
-      this._onDidChangeCodeLenses.fire();
-      return;
-    }
-
-    // Check if multiple lines are selected
-    const isMultiLine = selection.start.line !== selection.end.line;
-
-    if (isMultiLine) {
-      this.currentSelection = selection;
-      // Request blame for this document and refresh CodeLens
-      this.requestBlameAndRefresh(editor, selection);
+  /**
+   * Update status bar based on the current cursor position.
+   * Shows model name if the current line is AI-authored, otherwise shows human icon.
+   * Shows highlighted background when AI toggle is enabled.
+   */
+  private async updateStatusBar(editor: vscode.TextEditor | undefined): Promise<void> {
+    // Set background color based on toggle state
+    if (this.toggleAICodeEnabled) {
+      this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     } else {
-      // Single line - update status bar based on current line
-      this.currentSelection = null;
-      // Only clear borders if Toggle AI Code is not enabled
+      this.statusBarItem.backgroundColor = undefined;
+    }
+
+    if (!editor) {
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Human-authored code (click to toggle AI highlighting)';
+      return;
+    }
+
+    const document = editor.document;
+    const documentUri = document.uri.toString();
+    const currentLine = editor.selection.active.line;
+    const gitLine = currentLine + 1; // Convert to 1-indexed
+
+    // Check if we have blame for this document
+    if (this.currentDocumentUri !== documentUri || !this.currentBlameResult) {
+      // Request blame in background if we don't have it
+      if (!this.pendingBlameRequest) {
+        this.pendingBlameRequest = this.blameService.requestBlame(document, 'normal');
+        this.currentDocumentUri = documentUri;
+        
+        this.pendingBlameRequest.then(result => {
+          this.pendingBlameRequest = null;
+          if (result) {
+            this.currentBlameResult = result;
+            // Re-update status bar now that we have blame
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor && activeEditor.document.uri.toString() === documentUri) {
+              this.updateStatusBar(activeEditor);
+            }
+          }
+        }).catch(error => {
+          console.error('[git-ai] Failed to get blame for status bar:', error);
+          this.pendingBlameRequest = null;
+        });
+      }
+      
+      // Show human icon while loading
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Loading... (click to toggle AI highlighting)';
+      return;
+    }
+
+    // Check the current line
+    const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
+    if (lineInfo?.isAiAuthored) {
+      const model = lineInfo.promptRecord?.agent_id?.model;
+      const modelName = this.extractModelName(model);
+      
+      if (modelName) {
+        this.statusBarItem.text = `🤖 ${modelName}`;
+      } else {
+        this.statusBarItem.text = '🧑‍💻';
+      }
+      
+      // Build tooltip with full markdown content
+      this.statusBarItem.tooltip = this.buildHoverContent(lineInfo, document.uri);
+      
+      // Show gutter decorations for this prompt (unless toggle is on, which shows all)
+      if (!this.toggleAICodeEnabled) {
+        this.applyDecorationsForPrompt(editor, lineInfo.commitHash, this.currentBlameResult);
+      }
+    } else {
+      // Show human icon for human-authored code
+      this.statusBarItem.text = '🧑‍💻';
+      this.statusBarItem.tooltip = 'Human-authored code (click to toggle AI highlighting)';
+      
+      // Clear decorations if not on AI line (unless toggle is on)
       if (!this.toggleAICodeEnabled) {
         this.clearColoredBorders(editor);
       }
-      // this.updateStatusBarForCurrentLine(editor);
-      this._onDidChangeCodeLenses.fire();
     }
   }
 
   /**
-   * Update status bar based on the current line (cursor position).
-   * Shows model name if the current line is AI-authored, otherwise shows human emoji.
+   * Apply gutter decorations for all lines belonging to a specific prompt.
+   * Used when cursor is on an AI-authored line to highlight all lines from that prompt.
    */
-  // private async updateStatusBarForCurrentLine(editor: vscode.TextEditor | undefined): Promise<void> {
-  //   if (!editor) {
-  //     this.statusBarItem.text = '🧑‍💻';
-  //     this.statusBarItem.tooltip = 'Human-authored code';
-  //     this.statusBarItem.show();
-  //     return;
-  //   }
+  private applyDecorationsForPrompt(editor: vscode.TextEditor, commitHash: string, blameResult: BlameResult): void {
+    // Clear existing decorations first
+    this.clearColoredBorders(editor);
 
-  //   const document = editor.document;
-  //   const documentUri = document.uri.toString();
-  //   const currentLine = editor.selection.active.line;
-  //   const gitLine = currentLine + 1; // Convert to 1-indexed
+    // Get the color for this prompt
+    const colorIndex = this.getColorIndexForPromptId(commitHash);
+    const ranges: vscode.Range[] = [];
 
-  //   // Check if we have blame for this document
-  //   if (this.currentDocumentUri !== documentUri || !this.currentBlameResult) {
-  //     // Show human emoji while loading
-  //     this.statusBarItem.text = '🧑‍💻';
-  //     this.statusBarItem.tooltip = 'Loading...';
-  //     this.statusBarItem.show();
-  //     
-  //     // Request blame for the document
-  //     try {
-  //       const result = await this.blameService.requestBlame(document, 'normal');
-  //       if (result) {
-  //         this.currentBlameResult = result;
-  //         this.currentDocumentUri = documentUri;
-  //       } else {
-  //         // Keep showing human emoji if blame fails
-  //         this.statusBarItem.text = '🧑‍💻';
-  //         this.statusBarItem.tooltip = 'Human-authored code';
-  //         this.statusBarItem.show();
-  //         return;
-  //       }
-  //     } catch (error) {
-  //       console.error('[git-ai] Failed to get blame for status bar:', error);
-  //       // Keep showing human emoji on error
-  //       this.statusBarItem.text = '🧑‍💻';
-  //       this.statusBarItem.tooltip = 'Human-authored code';
-  //       this.statusBarItem.show();
-  //       return;
-  //     }
-  //   }
-
-  //   // Check the current line
-  //   const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
-  //   if (lineInfo?.isAiAuthored) {
-  //     const model = lineInfo.promptRecord?.agent_id?.model;
-  //     const modelName = this.extractModelName(model);
-  //     if (modelName) {
-  //       const logo = this.getModelLogo(modelName);
-  //       this.statusBarItem.text = logo;
-  //       this.statusBarItem.tooltip = `AI Model: ${modelName}`;
-  //       this.statusBarItem.show();
-  //     } else {
-  //       // Show robot emoji if AI-authored but no model name
-  //       this.statusBarItem.text = '🤖';
-  //       this.statusBarItem.tooltip = 'AI-authored code';
-  //       this.statusBarItem.show();
-  //     }
-  //   } else {
-  //     // Show human emoji for human-authored code
-  //     this.statusBarItem.text = '🧑‍💻';
-  //     this.statusBarItem.tooltip = 'Human-authored code';
-  //     this.statusBarItem.show();
-  //   }
-  // }
-
-  private async requestBlameAndRefresh(
-    editor: vscode.TextEditor,
-    selection: vscode.Selection
-  ): Promise<void> {
-    const document = editor.document;
-    const documentUri = document.uri.toString();
-
-    // Check if we already have blame for this document
-    if (this.currentDocumentUri === documentUri && this.currentBlameResult) {
-      this._onDidChangeCodeLenses.fire();
-      // this.updateStatusBarForSelection(selection, this.currentBlameResult);
-      this.applyColoredBorders(editor, selection, this.currentBlameResult);
-      return;
-    }
-
-    // Request blame with high priority (current selection)
-    try {
-      // Cancel any pending request for a different document
-      if (this.currentDocumentUri !== documentUri) {
-        this.pendingBlameRequest = null;
-      }
-
-      // Start new request if not already pending
-      if (!this.pendingBlameRequest) {
-        this.pendingBlameRequest = this.blameService.requestBlame(document, 'high');
-        this.currentDocumentUri = documentUri;
-      }
-
-      const result = await this.pendingBlameRequest;
-      this.pendingBlameRequest = null;
-
-      if (result) {
-        this.currentBlameResult = result;
-        
-        // Check if the selection is still valid and editor is still active
-        const currentEditor = vscode.window.activeTextEditor;
-        if (currentEditor && currentEditor.document.uri.toString() === documentUri) {
-          const currentSelection = currentEditor.selections[0];
-          if (currentSelection && currentSelection.start.line !== currentSelection.end.line) {
-            this._onDidChangeCodeLenses.fire();
-            // this.updateStatusBarForSelection(currentSelection, result);
-            this.applyColoredBorders(currentEditor, currentSelection, result);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[git-ai] Blame request failed:', error);
-      this.pendingBlameRequest = null;
-    }
-  }
-
-  /**
-   * Provide CodeLens for the document.
-   * Shows only ONE CodeLens per unique prompt (commitHash), positioned at the first visible hunk.
-   * When Toggle AI Code is enabled, shows CodeLens for ALL AI prompts in the file.
-   */
-  public provideCodeLenses(
-    document: vscode.TextDocument,
-    token: vscode.CancellationToken
-  ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
-    const codeLenses: vscode.CodeLens[] = [];
-
-    // Only show CodeLens for the current document
-    if (document.uri.toString() !== this.currentDocumentUri) {
-      return codeLenses;
-    }
-
-    // If we don't have blame yet, return empty (we'll refresh when we get it)
-    if (!this.currentBlameResult) {
-      return codeLenses;
-    }
-
-    // Determine the line range to scan for AI prompts
-    let startLine: number;
-    let endLine: number;
-    
-    if (this.toggleAICodeEnabled) {
-      // Toggle mode: scan the entire file
-      startLine = 0;
-      endLine = document.lineCount - 1;
-    } else {
-      // Selection mode: only show CodeLens if there's a multi-line selection
-      if (!this.currentSelection || this.currentSelection.start.line === this.currentSelection.end.line) {
-        return codeLenses;
-      }
-      startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
-      endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
-    }
-
-    // Get visible range from active editor
-    const activeEditor = vscode.window.activeTextEditor;
-    let visibleStartLine = startLine;
-    let visibleEndLine = endLine;
-    
-    if (activeEditor && activeEditor.visibleRanges.length > 0) {
-      // Use the first visible range (main viewport)
-      const visibleRange = activeEditor.visibleRanges[0];
-      visibleStartLine = visibleRange.start.line;
-      visibleEndLine = visibleRange.end.line;
-    }
-
-    // First, count TOTAL lines per prompt across the ENTIRE file
-    const totalLinesByPrompt = new Map<string, number>();
-    for (const [gitLine, lineInfo] of this.currentBlameResult.lineAuthors) {
-      if (lineInfo?.isAiAuthored) {
-        const count = totalLinesByPrompt.get(lineInfo.commitHash) || 0;
-        totalLinesByPrompt.set(lineInfo.commitHash, count + 1);
+    // Find all lines belonging to this prompt
+    for (const [gitLine, lineInfo] of blameResult.lineAuthors) {
+      if (lineInfo?.isAiAuthored && lineInfo.commitHash === commitHash) {
+        const line = gitLine - 1; // Convert to 0-indexed
+        ranges.push(new vscode.Range(line, 0, line, 0));
       }
     }
 
-    // Group AI lines within the range by commitHash (prompt), tracking line numbers
-    const linesByPrompt = new Map<string, { lines: number[]; lineInfo: LineBlameInfo }>();
-    
-    for (let line = startLine; line <= endLine; line++) {
-      const gitLine = line + 1; // Convert to 1-indexed
-      const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
-      
-      if (lineInfo?.isAiAuthored) {
-        const existing = linesByPrompt.get(lineInfo.commitHash);
-        if (existing) {
-          existing.lines.push(line);
-        } else {
-          linesByPrompt.set(lineInfo.commitHash, { lines: [line], lineInfo });
-        }
-      }
-    }
-
-    // For each unique prompt, create one CodeLens at the first visible line
-    for (const [commitHash, { lines, lineInfo }] of linesByPrompt) {
-      // Use the TOTAL line count from the entire file, not just the selection
-      const totalLineCount = totalLinesByPrompt.get(commitHash) || lines.length;
-      
-      // Find the first line that's in the visible range
-      let targetLine = lines.find(line => line >= visibleStartLine && line <= visibleEndLine);
-      
-      // If no line is visible, use the first line
-      if (targetLine === undefined) {
-        targetLine = lines[0];
-      }
-      
-      const tool = lineInfo.author;
-      const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
-      const humanAuthor = lineInfo.promptRecord?.human_author || '';
-      const humanName = this.extractHumanName(humanAuthor);
-      
-      // Calculate percentage of file
-      const totalFileLines = document.lineCount;
-      const percentage = Math.round((totalLineCount / totalFileLines) * 100);
-      const linesSuffix = `(${totalLineCount} ${totalLineCount === 1 ? 'line' : 'lines'} ${percentage}% of file)`;
-      
-      const title = `🤖 ${tool}|${model} <${humanName}> ${linesSuffix}`;
-      
-      const range = new vscode.Range(targetLine, 0, targetLine, 0);
-      const codeLens = new vscode.CodeLens(range, {
-        title: title,
-        command: 'git-ai.showAuthorDetails',
-        arguments: [lineInfo, targetLine]
-      });
-      
-      codeLenses.push(codeLens);
-    }
-
-    return codeLenses;
-  }
-
-  /**
-   * Resolve CodeLens (optional, but we can use it to lazy-load data if needed).
-   */
-  public resolveCodeLens(
-    codeLens: vscode.CodeLens,
-    token: vscode.CancellationToken
-  ): vscode.CodeLens | Thenable<vscode.CodeLens> {
-    // We've already provided all the info in provideCodeLenses
-    return codeLens;
+    // Apply the decoration
+    const decoration = this.colorDecorations[colorIndex];
+    editor.setDecorations(decoration, ranges);
   }
 
   /**
@@ -788,126 +649,12 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   }
 
   /**
-   * Apply colored borders to ALL lines in the file from prompts that appear in the selection.
-   * This shows the full extent of each selected prompt's contribution across the entire file.
-   */
-  private applyColoredBorders(
-    editor: vscode.TextEditor,
-    selection: vscode.Selection,
-    blameResult: BlameResult
-  ): void {
-    // Clear existing decorations first
-    this.clearColoredBorders(editor);
-
-    const startLine = Math.min(selection.start.line, selection.end.line);
-    const endLine = Math.max(selection.start.line, selection.end.line);
-
-    // Step 1: Find which prompts (commitHashes) are present in the selection
-    const selectedPrompts = new Set<string>();
-    for (let line = startLine; line <= endLine; line++) {
-      const gitLine = line + 1; // Convert to 1-indexed
-      const lineInfo = blameResult.lineAuthors.get(gitLine);
-      if (lineInfo?.isAiAuthored) {
-        selectedPrompts.add(lineInfo.commitHash);
-      }
-    }
-
-    if (selectedPrompts.size === 0) {
-      return;
-    }
-
-    // Step 2: Scan the ENTIRE file and collect all lines from selected prompts
-    const colorToRanges = new Map<number, vscode.Range[]>();
-    
-    for (const [gitLine, lineInfo] of blameResult.lineAuthors) {
-      if (lineInfo?.isAiAuthored && selectedPrompts.has(lineInfo.commitHash)) {
-        const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
-        const line = gitLine - 1; // Convert to 0-indexed
-        
-        if (!colorToRanges.has(colorIndex)) {
-          colorToRanges.set(colorIndex, []);
-        }
-        colorToRanges.get(colorIndex)!.push(new vscode.Range(line, 0, line, 0));
-      }
-    }
-
-    // Apply decorations grouped by color
-    colorToRanges.forEach((ranges, colorIndex) => {
-      const decoration = this.colorDecorations[colorIndex];
-      editor.setDecorations(decoration, ranges);
-    });
-  }
-
-  /**
    * Clear all colored border decorations.
    */
   private clearColoredBorders(editor: vscode.TextEditor): void {
     this.colorDecorations.forEach(decoration => {
       editor.setDecorations(decoration, []);
     });
-  }
-
-  /**
-   * Update status bar based on the current selection.
-   */
-  // private updateStatusBarForSelection(
-  //   selection: vscode.Selection,
-  //   blameResult: BlameResult
-  // ): void {
-  //   const startLine = Math.min(selection.start.line, selection.end.line);
-  //   const endLine = Math.max(selection.start.line, selection.end.line);
-
-  //   // Collect unique model names from AI-authored lines
-  //   const modelNames = new Set<string>();
-  //   for (let line = startLine; line <= endLine; line++) {
-  //     const gitLine = line + 1; // Convert to 1-indexed
-  //     const lineInfo = blameResult.lineAuthors.get(gitLine);
-  //     if (lineInfo?.isAiAuthored) {
-  //       const model = lineInfo.promptRecord?.agent_id?.model;
-  //       const modelName = this.extractModelName(model);
-  //       if (modelName) {
-  //         modelNames.add(modelName);
-  //       }
-  //     }
-  //   }
-
-  //   // Update status bar with model logos
-  //   if (modelNames.size > 0) {
-  //     // Get unique logos for each model
-  //     const logos = Array.from(modelNames).map(name => this.getModelLogo(name));
-  //     const uniqueLogos = Array.from(new Set(logos));
-  //     const logoText = uniqueLogos.join(' ');
-  //     const modelText = Array.from(modelNames).join(' | ');
-  //     this.statusBarItem.text = logoText;
-  //     this.statusBarItem.tooltip = `AI Models: ${modelText}`;
-  //     this.statusBarItem.show();
-  //   } else {
-  //     // Show human emoji if no AI content in selection
-  //     this.statusBarItem.text = '🧑‍💻';
-  //     this.statusBarItem.tooltip = 'Human-authored code';
-  //     this.statusBarItem.show();
-  //   }
-  // }
-
-  /**
-   * Get the display text for an author.
-   * Returns "🤖 {tool}|{model} <Name (human)>" for AI-authored lines.
-   */
-  private getAuthorDisplayText(lineInfo: LineBlameInfo | undefined, isLoading: boolean): string {
-    if (isLoading) {
-      return 'Loading...';
-    }
-
-    if (lineInfo?.isAiAuthored) {
-      const tool = lineInfo.author;
-      const model = lineInfo.promptRecord?.agent_id?.model || 'unknown';
-      const humanAuthor = lineInfo.promptRecord?.human_author || '';
-      const humanName = this.extractHumanName(humanAuthor);
-      
-      return `🤖 ${tool}|${model} <${humanName}>`;
-    }
-
-    return '';
   }
 
   /**
@@ -936,6 +683,16 @@ export class BlameLensManager implements vscode.CodeLensProvider {
       return null;
     }
     
+    const trimmed = modelString.trim().toLowerCase();
+    
+    // Handle special cases
+    if (trimmed === 'default' || trimmed === 'auto') {
+      return 'Cursor';
+    }
+    if (trimmed === 'unknown') {
+      return null; // Will display as "AI"
+    }
+    
     const parts = modelString.split('-');
     const firstPart = parts[0];
     
@@ -944,128 +701,17 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     }
     
     // Capitalize first letter
-    return firstPart.charAt(0).toUpperCase() + firstPart.slice(1);
-  }
-
-  /**
-   * Get the display icon/logo for a model name.
-   * Returns the logo/emoji for the model, or 🤖 as fallback.
-   * 
-   * To add a new model logo, add an entry to the MODEL_LOGOS map below.
-   * You can use:
-   * - Unicode emojis: '🤖'
-   * - Unicode symbols: '⚡'
-   * - Text: 'Claude'
-   * - Or any string that will be displayed in the status bar
-   */
-  private getModelLogo(modelName: string | null): string {
-    if (!modelName) {
-      return '🤖';
-    }
-
-    const MODEL_LOGOS: Record<string, string> = {
-      // Claude models
-      'Claude': '🤖', // TODO: Replace with Claude logo
-      
-      // OpenAI/Codex models
-      'Openai': '🤖', // TODO: Replace with OpenAI Codex logo
-      'Codex': '🤖', // TODO: Replace with OpenAI Codex logo
-      'Gpt': '🤖', // TODO: Replace with OpenAI logo
-      
-      // Cursor
-      'Cursor': '🤖', // TODO: Replace with Cursor logo
-      
-      // Grok
-      'Grok': '🤖', // TODO: Replace with Grok logo
-      
-      // Gemini
-      'Gemini': '🤖', // TODO: Replace with Gemini logo
-    };
-
-    // Normalize model name for lookup (case-insensitive)
-    const normalizedName = modelName.charAt(0).toUpperCase() + modelName.slice(1).toLowerCase();
+    const capitalized = firstPart.charAt(0).toUpperCase() + firstPart.slice(1).toLowerCase();
     
-    return MODEL_LOGOS[normalizedName] || MODEL_LOGOS[modelName] || '🤖';
-  }
-
-  /**
-   * Handle CodeLens click - open virtual tab with markdown content.
-   */
-  private async handleCodeLensClick(lineInfo: LineBlameInfo): Promise<void> {
-    // Get document URI from current document or active editor
-    let documentUri: vscode.Uri | undefined;
-    if (this.currentDocumentUri) {
-      documentUri = vscode.Uri.parse(this.currentDocumentUri);
-    } else {
-      const activeEditor = vscode.window.activeTextEditor;
-      if (activeEditor) {
-        documentUri = activeEditor.document.uri;
-      }
+    // Handle "Default" or "Unknown" after capitalization
+    if (capitalized === 'Default') {
+      return 'Cursor';
+    }
+    if (capitalized === 'Unknown') {
+      return null; // Will display as "AI"
     }
     
-    const hoverContent = this.buildHoverContent(lineInfo, documentUri);
-    const mdString = hoverContent.value;
-    
-    // Generate a unique ID for this content (using commit hash + timestamp for uniqueness)
-    const contentId = `${lineInfo.commitHash}-${Date.now()}`;
-    
-    // Store the markdown content
-    this.markdownContentStore.set(contentId, mdString);
-    
-    // Create a virtual document URI (use three slashes for empty authority)
-    const uri = vscode.Uri.parse(`${BlameLensManager.VIRTUAL_SCHEME}:///${contentId}.md`);
-    
-    // Open the virtual document in a new tab
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, {
-        viewColumn: vscode.ViewColumn.Beside,
-        preview: false
-      });
-    } catch (error) {
-      console.error('[git-ai] Failed to open virtual document:', error);
-      // Fallback to information message if virtual document fails
-      vscode.window.showInformationMessage(mdString, { modal: false });
-    }
-  }
-
-  private provideHover(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    token: vscode.CancellationToken
-  ): vscode.Hover | undefined {
-    // Only provide hover if we have blame data
-    if (!this.currentBlameResult) {
-      return undefined;
-    }
-
-    // If Toggle AI Code is enabled, allow hover on any AI-authored line
-    // Otherwise, only provide hover within the current selection
-    if (!this.toggleAICodeEnabled) {
-      if (!this.currentSelection) {
-        return undefined;
-      }
-      
-      // Check if the hover position is within the current selection
-      const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
-      const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
-      
-      if (position.line < startLine || position.line > endLine) {
-        return undefined;
-      }
-    }
-
-    // Get blame info for this line (1-indexed)
-    const gitLine = position.line + 1;
-    const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
-    
-    // Only show hover for AI-authored lines
-    if (lineInfo?.isAiAuthored) {
-      const hoverContent = this.buildHoverContent(lineInfo, document.uri);
-      return new vscode.Hover(hoverContent);
-    }
-
-    return undefined;
+    return capitalized;
   }
 
   /**
@@ -1327,40 +973,6 @@ export class BlameLensManager implements vscode.CodeLensProvider {
   }
 
   /**
-   * Handle status bar item click - show hover content for first AI-authored line.
-   */
-  // private handleStatusBarClick(): void {
-  //   const editor = vscode.window.activeTextEditor;
-  //   if (!editor || !this.currentSelection || !this.currentBlameResult) {
-  //     return;
-  //   }
-
-  //   const startLine = Math.min(this.currentSelection.start.line, this.currentSelection.end.line);
-  //   const endLine = Math.max(this.currentSelection.start.line, this.currentSelection.end.line);
-
-  //   // Find first AI-authored line in selection
-  //   let firstAiLine: number | undefined = undefined;
-  //   let firstAiLineInfo: LineBlameInfo | undefined = undefined;
-  //   for (let line = startLine; line <= endLine; line++) {
-  //     const gitLine = line + 1; // Convert to 1-indexed
-  //     const lineInfo = this.currentBlameResult.lineAuthors.get(gitLine);
-  //     if (lineInfo?.isAiAuthored) {
-  //       firstAiLine = line;
-  //       firstAiLineInfo = lineInfo;
-  //       break;
-  //     }
-  //   }
-
-  //   if (!firstAiLineInfo || firstAiLine === undefined) {
-  //     return;
-  //   }
-
-  //   // Build hover content and show as information message
-  //   const hoverContent = this.buildHoverContent(firstAiLineInfo, editor.document.uri);
-  //   vscode.window.showInformationMessage(hoverContent.value, { modal: false });
-  // }
-
-  /**
    * Show commit diff by running git show and displaying in a new tab.
    */
   private async showCommitDiff(commitSha: string, workspacePath: string): Promise<void> {
@@ -1430,8 +1042,7 @@ export class BlameLensManager implements vscode.CodeLensProvider {
     }
     
     this.blameService.dispose();
-    // this.statusBarItem.dispose();
-    this._onDidChangeCodeLenses.dispose();
+    this.statusBarItem.dispose();
     this._onDidChangeVirtualDocument.dispose();
     
     // Clear markdown content store
