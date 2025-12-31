@@ -1,3 +1,4 @@
+use crate::api::{ApiClient, ApiContext};
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
 use crate::authorship::prompt_utils::{update_prompt_from_tool, PromptUpdateResult};
 use crate::authorship::secrets::{redact_secrets_from_prompts, strip_prompt_messages};
@@ -87,13 +88,55 @@ pub fn post_commit(
 
     authorship_log.metadata.base_commit_sha = commit_sha.clone();
 
-    // Strip prompt messages if prompts should not be shared, otherwise redact secrets
-    if !Config::get().should_share_prompts(&Some(repo.clone())) {
-        strip_prompt_messages(&mut authorship_log.metadata.prompts);
-    } else {
-        let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
-        if count > 0 {
-            debug_log(&format!("Redacted {} secrets from prompts", count));
+    // Handle prompts based on prompt_storage setting and exclusion rules
+    let should_exclude = Config::get().should_exclude_prompts(&Some(repo.clone()));
+    let prompt_storage = Config::get().prompt_storage();
+
+    match prompt_storage {
+        "local" => {
+            // Local only: strip all messages from notes (they stay in sqlite only)
+            strip_prompt_messages(&mut authorship_log.metadata.prompts);
+        }
+        "notes" => {
+            // Store in notes: redact secrets but keep messages in notes
+            if should_exclude {
+                strip_prompt_messages(&mut authorship_log.metadata.prompts);
+            } else {
+                let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
+                if count > 0 {
+                    debug_log(&format!("Redacted {} secrets from prompts", count));
+                }
+            }
+        }
+        _ => {
+            // "default" - attempt CAS upload, NEVER keep messages in notes
+            // Check conditions for CAS upload:
+            // - prompt_storage == "default" (implied here)
+            // - repo not in exclusion list
+            // - user is logged in OR using custom API URL
+            let context = ApiContext::new(None);
+            let client = ApiClient::new(context);
+            let using_custom_api =
+                Config::get().api_base_url() != crate::config::DEFAULT_API_BASE_URL;
+            let should_enqueue_cas =
+                !should_exclude && (client.is_logged_in() || using_custom_api);
+
+            if should_enqueue_cas {
+                if let Err(e) =
+                    enqueue_prompt_messages_to_cas(repo, &mut authorship_log.metadata.prompts)
+                {
+                    debug_log(&format!(
+                        "[Warning] Failed to enqueue prompt messages to CAS: {}",
+                        e
+                    ));
+                    // Enqueue failed - still strip messages (never keep in notes for "default")
+                    strip_prompt_messages(&mut authorship_log.metadata.prompts);
+                }
+                // Success: enqueue function already cleared messages
+            } else {
+                // Not enqueueing - strip messages (never keep in notes for "default")
+                strip_prompt_messages(&mut authorship_log.metadata.prompts);
+            }
         }
     }
 
@@ -263,6 +306,68 @@ fn batch_upsert_prompts_to_db(
         .map_err(|e| GitAiError::Generic(format!("Failed to lock database: {}", e)))?;
 
     db_guard.batch_upsert_prompts(&records)?;
+
+    Ok(())
+}
+
+/// Enqueue prompt messages to CAS for external storage.
+/// For each prompt with non-empty messages:
+/// - Serialize messages to JSON
+/// - Enqueue to CAS (returns hash)
+/// - Set messages_url (format: {api_base_url}/cas/{hash}) and clear messages
+fn enqueue_prompt_messages_to_cas(
+    repo: &Repository,
+    prompts: &mut std::collections::BTreeMap<String, crate::authorship::authorship_log::PromptRecord>,
+) -> Result<(), GitAiError> {
+    use crate::authorship::internal_db::InternalDatabase;
+
+    let db = InternalDatabase::global()?;
+    let mut db_lock = db
+        .lock()
+        .map_err(|e| GitAiError::Generic(format!("Failed to lock database: {}", e)))?;
+
+    // CAS metadata for prompt messages
+    let mut metadata = HashMap::new();
+    metadata.insert("api_version".to_string(), "v1".to_string());
+    metadata.insert("kind".to_string(), "prompt".to_string());
+
+    // Get repo URL from default remote
+    let repo_url = repo
+        .get_default_remote()
+        .ok()
+        .flatten()
+        .and_then(|remote_name| {
+            repo.remotes_with_urls()
+                .ok()
+                .and_then(|remotes| {
+                    remotes
+                        .into_iter()
+                        .find(|(name, _)| name == &remote_name)
+                        .map(|(_, url)| url)
+                })
+        });
+
+    if let Some(url) = repo_url {
+        metadata.insert("repo_url".to_string(), url);
+    }
+
+    // Get API base URL for constructing messages_url
+    let api_base_url = Config::get().api_base_url();
+
+    for (_key, prompt) in prompts.iter_mut() {
+        if !prompt.messages.is_empty() {
+            // Serialize messages to JSON
+            let messages_json = serde_json::to_value(&prompt.messages)
+                .map_err(|e| GitAiError::Generic(format!("Failed to serialize messages: {}", e)))?;
+
+            // Enqueue to CAS (returns hash)
+            let hash = db_lock.enqueue_cas_object(&messages_json, Some(&metadata))?;
+
+            // Set full URL and clear messages
+            prompt.messages_url = Some(format!("{}/cas/{}", api_base_url, hash));
+            prompt.messages.clear();
+        }
+    }
 
     Ok(())
 }

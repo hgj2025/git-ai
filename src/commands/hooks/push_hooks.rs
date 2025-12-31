@@ -57,6 +57,11 @@ pub fn push_pre_command_hook(
 
         crate::observability::spawn_background_flush();
 
+        // Spawn CAS flush if prompt_storage is "default" (CAS upload mode)
+        if crate::config::Config::get().prompt_storage() == "default" {
+            crate::commands::flush_cas::spawn_background_cas_flush();
+        }
+
         // Spawn background thread to push authorship notes in parallel with main push
         Some(std::thread::spawn(move || {
             // Recreate repository in the background thread

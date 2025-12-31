@@ -45,7 +45,8 @@ impl TestRepo {
         };
 
         repo.patch_git_ai_config(|patch| {
-            patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+            patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions = share everywhere
+            patch.prompt_storage = Some("notes".to_string()); // Use notes mode for tests
         });
 
         repo
@@ -120,7 +121,8 @@ impl TestRepo {
         };
 
         mirror.patch_git_ai_config(|patch| {
-            patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+            patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions = share everywhere
+            patch.prompt_storage = Some("notes".to_string()); // Use notes mode for tests
         });
 
         (mirror, upstream)

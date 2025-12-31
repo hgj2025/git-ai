@@ -139,5 +139,10 @@ impl ApiClient {
     pub fn context_mut(&mut self) -> &mut ApiContext {
         &mut self.context
     }
+
+    /// Check if user is logged in (stub - always returns false for now)
+    pub fn is_logged_in(&self) -> bool {
+        false
+    }
 }
 

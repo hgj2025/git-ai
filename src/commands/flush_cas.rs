@@ -1,9 +1,35 @@
 use crate::api::{ApiClient, ApiContext, CasObject, CasUploadRequest};
 use crate::authorship::internal_db::{CasSyncRecord, InternalDatabase};
+use crate::observability::log_error;
 use std::collections::HashMap;
+
+/// Spawn a background process to flush CAS objects to the server
+pub fn spawn_background_cas_flush() {
+    use std::process::Command;
+
+    if let Ok(exe) = crate::utils::current_git_ai_exe() {
+        let _ = Command::new(exe)
+            .arg("flush-cas")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+}
 
 /// Handle the flush-cas command
 pub fn handle_flush_cas(_args: &[String]) {
+    // Create API client to check login status
+    let context = ApiContext::new(None);
+    let api_base_url = context.base_url.clone();
+    let client = ApiClient::new(context);
+
+    // Skip if using default API and not logged in
+    let using_default_api = api_base_url == crate::config::DEFAULT_API_BASE_URL;
+    if using_default_api && !client.is_logged_in() {
+        eprintln!("Skipping CAS sync: not logged in and using default API");
+        return;
+    }
+
     eprintln!("Starting CAS sync worker...");
 
     // Get database connection
@@ -16,10 +42,6 @@ pub fn handle_flush_cas(_args: &[String]) {
     };
 
     let mut total_synced = 0;
-
-    // Create API client once to reuse for all batches
-    let context = ApiContext::new(None);
-    let client = ApiClient::new(context);
 
     loop {
         // Dequeue batch of up to 50 objects
@@ -100,6 +122,19 @@ pub fn handle_flush_cas(_args: &[String]) {
                             // Failed - update error
                             let error =
                                 result.error.unwrap_or_else(|| "Unknown error".to_string());
+
+                            // Log to Sentry
+                            log_error(
+                                &crate::error::GitAiError::Generic(error.clone()),
+                                Some(serde_json::json!({
+                                    "operation": "cas_flush_object",
+                                    "api_host": api_base_url,
+                                    "object_hash": result.hash,
+                                    "object_metadata": record.metadata,
+                                    "attempt": record.attempts + 1,
+                                })),
+                            );
+
                             if let Err(e) = db_lock.update_cas_sync_failure(record.id, &error) {
                                 eprintln!("  ✗ Failed to update error for {}: {}", hash_short, e);
                             } else {
@@ -119,6 +154,16 @@ pub fn handle_flush_cas(_args: &[String]) {
                 );
             }
             Err(e) => {
+                // Log to Sentry (once for entire batch)
+                log_error(
+                    &e,
+                    Some(serde_json::json!({
+                        "operation": "cas_flush_batch",
+                        "api_host": api_base_url,
+                        "batch_size": batch.len(),
+                    })),
+                );
+
                 // Entire batch failed - mark all as failed
                 let error_msg = e.to_string();
                 let mut db_lock = db.lock().unwrap();

@@ -268,7 +268,7 @@ git-ai config unset <key>
 **Configuration Keys:**
 
 - **git_path** - Path to git binary
-- **share_prompts_in_repositories** - Repositories to share prompts in (array)
+- **exclude_prompts_in_repositories** - Repositories to exclude prompts in (array)
 - **allow_repositories** - Allowed repositories (array)
 - **exclude_repositories** - Excluded repositories (array)
 - **telemetry_oss** - OSS telemetry setting (on/off)
@@ -280,7 +280,7 @@ git-ai config unset <key>
 
 **Repository Patterns:**
 
-For `exclude_repositories`, `allow_repositories`, and `share_prompts_in_repositories`, you can provide:
+For `exclude_repositories`, `allow_repositories`, and `exclude_prompts_in_repositories`, you can provide:
 
 - **Glob pattern**: `"*"`, `"https://github.com/org/*"`
 - **URL/git protocol**: `"git@github.com:org/repo.git"`, `"https://github.com/org/repo.git"`

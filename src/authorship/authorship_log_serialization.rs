@@ -774,6 +774,7 @@ mod tests {
                 total_deletions: 0,
                 accepted_lines: 0,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 
@@ -840,6 +841,7 @@ mod tests {
                 total_deletions: 0,
                 accepted_lines: 0,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 
@@ -888,6 +890,7 @@ mod tests {
                 total_deletions: 0,
                 accepted_lines: 0,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 
@@ -1066,6 +1069,7 @@ mod tests {
                 total_deletions: 3,
                 accepted_lines: 11,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 
@@ -1236,6 +1240,7 @@ mod tests {
                 total_deletions: 0,
                 accepted_lines: 10,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 
@@ -1259,6 +1264,7 @@ mod tests {
                 total_deletions: 0,
                 accepted_lines: 20,
                 overriden_lines: 0,
+                messages_url: None,
             },
         );
 

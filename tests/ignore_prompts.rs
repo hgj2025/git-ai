@@ -83,9 +83,11 @@ fn checkpoint_with_empty_transcript(repo: &TestRepo, edited_files: Vec<String>) 
 fn test_checkpoint_with_prompt_sharing_enabled() {
     let mut repo = TestRepo::new();
 
-    // Enable prompt sharing for all repositories
+    // Enable prompt sharing for all repositories (empty blacklist = share everywhere)
+    // Use prompt_storage: "notes" to explicitly store messages in git notes for testing
     repo.patch_git_ai_config(|patch| {
-        patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+        patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions
+        patch.prompt_storage = Some("notes".to_string()); // Store in notes for testing
     });
 
     // Create initial commit with README
@@ -134,7 +136,7 @@ fn test_checkpoint_with_prompt_sharing_disabled_strips_messages() {
 
     // Prompt sharing is disabled by default (empty list), but let's be explicit
     repo.patch_git_ai_config(|patch| {
-        patch.share_prompts_in_repositories = Some(vec![]); // No repos share prompts
+        patch.exclude_prompts_in_repositories = Some(vec!["*".to_string()]); // Exclude all repos
     });
 
     // Create initial commit with README
@@ -194,9 +196,9 @@ fn test_checkpoint_with_prompt_sharing_disabled_strips_messages() {
 fn test_multiple_checkpoints_with_messages() {
     let mut repo = TestRepo::new();
 
-    // Enable prompt sharing for all repositories
+    // Enable prompt sharing for all repositories (empty blacklist = share everywhere)
     repo.patch_git_ai_config(|patch| {
-        patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+        patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions
     });
 
     // Create initial commit with README
@@ -281,7 +283,7 @@ fn test_prompt_sharing_disabled_with_empty_transcript() {
 
     // Disable prompt sharing (default behavior)
     repo.patch_git_ai_config(|patch| {
-        patch.share_prompts_in_repositories = Some(vec![]); // No repos share prompts
+        patch.exclude_prompts_in_repositories = Some(vec!["*".to_string()]); // Exclude all repos
     });
 
     // Create initial commit with README

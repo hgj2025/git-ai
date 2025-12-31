@@ -63,6 +63,7 @@ fn test_initial_only_no_blame_data() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
 
@@ -151,6 +152,7 @@ fn test_initial_wins_overlaps() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
 
@@ -226,6 +228,7 @@ fn test_initial_and_blame_merge() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
     prompts.insert(
@@ -242,6 +245,7 @@ fn test_initial_and_blame_merge() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
 
@@ -312,6 +316,7 @@ fn test_partial_file_coverage() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
 
@@ -400,6 +405,7 @@ fn test_initial_attributions_in_subsequent_checkpoint() {
             total_deletions: 0,
             accepted_lines: 0,
             overriden_lines: 0,
+            messages_url: None,
         },
     );
 

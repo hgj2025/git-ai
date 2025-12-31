@@ -142,6 +142,7 @@ impl PromptDbRecord {
             total_deletions: self.total_deletions.unwrap_or(0),
             accepted_lines: self.accepted_lines.unwrap_or(0),
             overriden_lines: self.overridden_lines.unwrap_or(0),
+            messages_url: None,
         }
     }
 
