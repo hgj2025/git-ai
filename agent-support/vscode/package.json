@@ -47,6 +47,14 @@
         "title": "Toggle Show AI Code",
         "category": "Git AI"
       }
+    ],
+    "keybindings": [
+      {
+        "command": "git-ai.toggleAICode",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorTextFocus"
+      }
     ]
   },
   "scripts": {

@@ -16,6 +16,9 @@ export class BlameLensManager {
   // Global setting to enable/disable blame functionality entirely
   private blameEnabled: boolean = true;
   
+  // Track notification timeout to prevent stacking
+  private notificationTimeout: NodeJS.Timeout | null = null;
+  
   // Virtual document provider for markdown content
   private static readonly VIRTUAL_SCHEME = 'git-ai-blame';
   private markdownContentStore: Map<string, string> = new Map();
@@ -23,6 +26,12 @@ export class BlameLensManager {
   
   // Decoration types for colored borders (one per color)
   private colorDecorations: vscode.TextEditorDecorationType[] = [];
+  
+  // Filtered colors that have sufficient contrast against the current theme
+  private filteredColors: string[] = [];
+  
+  // Minimum contrast ratio for WCAG AA compliance (3:1 for UI elements)
+  private static readonly MIN_CONTRAST_RATIO = 3.0;
   
   // 40 readable colors for AI hunks
   private readonly HUNK_COLORS = [
@@ -84,16 +93,8 @@ export class BlameLensManager {
     // Initialize from global setting
     this.blameEnabled = Config.isBlameEnabled();
 
-    // Create decoration types for each color
-    this.colorDecorations = this.HUNK_COLORS.map(color => 
-      vscode.window.createTextEditorDecorationType({
-        isWholeLine: true,
-        gutterIconPath: this.createGutterIconUri(color),
-        gutterIconSize: 'contain',
-        overviewRulerColor: color,
-        overviewRulerLane: vscode.OverviewRulerLane.Left,
-      })
-    );
+    // Initialize filtered colors and create decoration types based on theme contrast
+    this.rebuildColorDecorations();
 
     // Create status bar item for AI mode toggle and model display
     this.statusBarItem = vscode.window.createStatusBarItem(
@@ -189,6 +190,19 @@ export class BlameLensManager {
         if (event.affectsConfiguration('gitai.enableBlame')) {
           this.handleBlameEnabledChange();
         }
+        // Rebuild color decorations if workbench color customizations change
+        if (event.affectsConfiguration('workbench.colorCustomizations')) {
+          console.log('[git-ai] Color customizations changed, rebuilding color decorations');
+          this.rebuildColorDecorations();
+        }
+      })
+    );
+
+    // Listen for theme changes to rebuild color decorations with proper contrast
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeActiveColorTheme(() => {
+        console.log('[git-ai] Theme changed, rebuilding color decorations');
+        this.rebuildColorDecorations();
       })
     );
 
@@ -376,6 +390,18 @@ export class BlameLensManager {
     
     // Update status bar to reflect new state
     this.updateStatusBar(editor);
+    
+    // Show notification (debounced to prevent stacking)
+    if (this.notificationTimeout) {
+      clearTimeout(this.notificationTimeout);
+    }
+    this.notificationTimeout = setTimeout(() => {
+      const message = this.toggleAICodeEnabled 
+        ? 'Git AI Code Lens Enabled' 
+        : 'Git AI Code Lens Disabled';
+      vscode.window.showInformationMessage(message);
+      this.notificationTimeout = null;
+    }, 100);
   }
 
   /**
@@ -572,7 +598,7 @@ export class BlameLensManager {
       
       // Set status bar color to match gutter highlight
       const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
-      const gutterColorHex = this.rgbaToHex(this.HUNK_COLORS[colorIndex]);
+      const gutterColorHex = this.rgbaToHex(this.filteredColors[colorIndex] || this.HUNK_COLORS[colorIndex]);
       this.statusBarItem.color = gutterColorHex;
       
       // Always show robot emoji for AI code
@@ -638,6 +664,7 @@ export class BlameLensManager {
   /**
    * Get a deterministic color index for a prompt ID using hash modulo.
    * This ensures all users see the same color for the same prompt_id.
+   * Uses the filtered colors array length for the modulo.
    */
   private getColorIndexForPromptId(promptId: string): number {
     // Simple string hash function
@@ -646,7 +673,9 @@ export class BlameLensManager {
       hash = ((hash << 5) - hash) + promptId.charCodeAt(i);
       hash = hash & hash; // Convert to 32-bit integer
     }
-    return Math.abs(hash) % 40;
+    // Use filtered colors length (falls back to full palette if empty)
+    const colorCount = this.filteredColors.length || this.HUNK_COLORS.length;
+    return Math.abs(hash) % colorCount;
   }
 
   /**
@@ -662,6 +691,194 @@ export class BlameLensManager {
     const g = parseInt(match[2], 10);
     const b = parseInt(match[3], 10);
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }
+
+  /**
+   * Parse an rgba color string to RGB values.
+   * Input: 'rgba(96, 165, 250, 0.8)' -> { r: 96, g: 165, b: 250 }
+   */
+  private parseRgba(rgba: string): { r: number; g: number; b: number } | null {
+    const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (!match) {
+      return null;
+    }
+    return {
+      r: parseInt(match[1], 10),
+      g: parseInt(match[2], 10),
+      b: parseInt(match[3], 10),
+    };
+  }
+
+  /**
+   * Parse a hex color string to RGB values.
+   * Input: '#60a5fa' or '#fff' -> { r: 96, g: 165, b: 250 }
+   */
+  private hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    // Remove # if present
+    const cleanHex = hex.replace(/^#/, '');
+    
+    // Handle shorthand (e.g., #fff -> #ffffff)
+    let fullHex = cleanHex;
+    if (cleanHex.length === 3) {
+      fullHex = cleanHex.split('').map(c => c + c).join('');
+    }
+    
+    if (fullHex.length !== 6) {
+      return null;
+    }
+    
+    const bigint = parseInt(fullHex, 16);
+    if (isNaN(bigint)) {
+      return null;
+    }
+    
+    return {
+      r: (bigint >> 16) & 255,
+      g: (bigint >> 8) & 255,
+      b: bigint & 255,
+    };
+  }
+
+  /**
+   * Calculate the relative luminance of a color according to WCAG 2.1.
+   * https://www.w3.org/TR/WCAG21/#dfn-relative-luminance
+   */
+  private getRelativeLuminance(r: number, g: number, b: number): number {
+    const [rs, gs, bs] = [r, g, b].map(c => {
+      const sRGB = c / 255;
+      return sRGB <= 0.03928
+        ? sRGB / 12.92
+        : Math.pow((sRGB + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+  }
+
+  /**
+   * Calculate the contrast ratio between two colors according to WCAG 2.1.
+   * Returns a value between 1 (no contrast) and 21 (maximum contrast).
+   * https://www.w3.org/TR/WCAG21/#dfn-contrast-ratio
+   */
+  private getContrastRatio(
+    color1: { r: number; g: number; b: number },
+    color2: { r: number; g: number; b: number }
+  ): number {
+    const lum1 = this.getRelativeLuminance(color1.r, color1.g, color1.b);
+    const lum2 = this.getRelativeLuminance(color2.r, color2.g, color2.b);
+    const lighter = Math.max(lum1, lum2);
+    const darker = Math.min(lum1, lum2);
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  /**
+   * Get the background colors for the status bar and editor gutter from the current theme.
+   * Checks user colorCustomizations first, then falls back to defaults based on theme kind.
+   */
+  private getThemeBackgroundColors(): { statusBar: { r: number; g: number; b: number }; gutter: { r: number; g: number; b: number } } {
+    // Get user's color customizations
+    const colorCustomizations = vscode.workspace.getConfiguration('workbench').get<Record<string, string>>('colorCustomizations') || {};
+    
+    // Get the current theme kind
+    const themeKind = vscode.window.activeColorTheme.kind;
+    
+    // Default colors based on theme kind
+    let defaultStatusBar: string;
+    let defaultGutter: string;
+    
+    switch (themeKind) {
+      case vscode.ColorThemeKind.Light:
+        defaultStatusBar = '#f3f3f3';
+        defaultGutter = '#ffffff';
+        break;
+      case vscode.ColorThemeKind.HighContrastLight:
+        defaultStatusBar = '#ffffff';
+        defaultGutter = '#ffffff';
+        break;
+      case vscode.ColorThemeKind.HighContrast:
+        defaultStatusBar = '#000000';
+        defaultGutter = '#000000';
+        break;
+      case vscode.ColorThemeKind.Dark:
+      default:
+        defaultStatusBar = '#1e1e1e';
+        defaultGutter = '#1e1e1e';
+        break;
+    }
+    
+    // Check for user overrides
+    const statusBarColor = colorCustomizations['statusBar.background'] || defaultStatusBar;
+    const gutterColor = colorCustomizations['editorGutter.background'] 
+      || colorCustomizations['editor.background'] 
+      || defaultGutter;
+    
+    // Parse colors to RGB
+    const statusBarRgb = this.hexToRgb(statusBarColor) || this.hexToRgb(defaultStatusBar)!;
+    const gutterRgb = this.hexToRgb(gutterColor) || this.hexToRgb(defaultGutter)!;
+    
+    return { statusBar: statusBarRgb, gutter: gutterRgb };
+  }
+
+  /**
+   * Filter colors by contrast ratio against the status bar and gutter backgrounds.
+   * Returns only colors that have sufficient contrast (3:1 WCAG AA) against both backgrounds.
+   */
+  private filterColorsByContrast(
+    colors: string[],
+    backgrounds: { statusBar: { r: number; g: number; b: number }; gutter: { r: number; g: number; b: number } }
+  ): string[] {
+    return colors.filter(color => {
+      const colorRgb = this.parseRgba(color);
+      if (!colorRgb) {
+        return false;
+      }
+      
+      const statusContrast = this.getContrastRatio(colorRgb, backgrounds.statusBar);
+      const gutterContrast = this.getContrastRatio(colorRgb, backgrounds.gutter);
+      
+      return statusContrast >= BlameLensManager.MIN_CONTRAST_RATIO && 
+             gutterContrast >= BlameLensManager.MIN_CONTRAST_RATIO;
+    });
+  }
+
+  /**
+   * Rebuild color decorations based on the filtered colors.
+   * Called when theme changes or color customizations change.
+   */
+  private rebuildColorDecorations(): void {
+    // Dispose existing decorations
+    this.colorDecorations.forEach(decoration => decoration.dispose());
+    
+    // Get current theme background colors
+    const backgrounds = this.getThemeBackgroundColors();
+    
+    // Filter colors by contrast
+    this.filteredColors = this.filterColorsByContrast(this.HUNK_COLORS, backgrounds);
+    
+    // Ensure we always have at least some colors (fallback to full list if filtering removes all)
+    if (this.filteredColors.length === 0) {
+      console.log('[git-ai] All colors filtered out by contrast check, using full palette');
+      this.filteredColors = [...this.HUNK_COLORS];
+    } else {
+      console.log(`[git-ai] Filtered colors: ${this.filteredColors.length}/${this.HUNK_COLORS.length} colors have sufficient contrast`);
+    }
+    
+    // Create new decoration types for each filtered color
+    this.colorDecorations = this.filteredColors.map(color => 
+      vscode.window.createTextEditorDecorationType({
+        isWholeLine: true,
+        gutterIconPath: this.createGutterIconUri(color),
+        gutterIconSize: 'contain',
+        overviewRulerColor: color,
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
+      })
+    );
+    
+    // Re-apply decorations if toggle is enabled
+    if (this.toggleAICodeEnabled) {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && this.currentBlameResult) {
+        this.applyFullFileDecorations(editor, this.currentBlameResult);
+      }
+    }
   }
 
   /**
@@ -764,7 +981,7 @@ export class BlameLensManager {
     // COLOR BAR - Visual association with gutter highlight
     // ═══════════════════════════════════════════════════════════════
     const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
-    const gutterColorHex = this.rgbaToHex(this.HUNK_COLORS[colorIndex]);
+    const gutterColorHex = this.rgbaToHex(this.filteredColors[colorIndex] || this.HUNK_COLORS[colorIndex]);
     md.appendMarkdown(`<span style="color:${gutterColorHex};">████</span>\n\n`);
 
     // ═══════════════════════════════════════════════════════════════
@@ -1064,6 +1281,12 @@ export class BlameLensManager {
     if (this.documentChangeTimer) {
       clearTimeout(this.documentChangeTimer);
       this.documentChangeTimer = null;
+    }
+    
+    // Clear any pending notification timeout
+    if (this.notificationTimeout) {
+      clearTimeout(this.notificationTimeout);
+      this.notificationTimeout = null;
     }
     
     this.blameService.dispose();
