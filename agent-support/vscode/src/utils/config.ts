@@ -12,6 +12,10 @@ export class Config {
   static isAiTabTrackingEnabled(): boolean {
     return !!this.getRoot().get<boolean>("experiments.aiTabTracking");
   }
+
+  static isBlameEnabled(): boolean {
+    return this.getRoot().get<boolean>("enableBlame") ?? true;
+  }
 }
 
 

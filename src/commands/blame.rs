@@ -4,10 +4,11 @@ use crate::authorship::working_log::CheckpointKind;
 use crate::error::GitAiError;
 use crate::git::refs::get_reference_as_authorship_log_v3;
 use crate::git::repository::Repository;
-use crate::git::repository::exec_git;
+use crate::git::repository::{exec_git, exec_git_stdin};
 #[cfg(windows)]
 use crate::utils::normalize_to_posix;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -110,6 +111,10 @@ pub struct GitAiBlameOptions {
     // Encoding
     pub encoding: Option<String>,
 
+    // Pre-read contents data (from --contents flag, either from stdin or file)
+    // This is populated during argument parsing and used by blame
+    pub contents_data: Option<Vec<u8>>,
+
     // Use prompt hashes as name instead of author names
     pub use_prompt_hashes_as_names: bool,
 
@@ -121,6 +126,9 @@ pub struct GitAiBlameOptions {
 
     // Ignore whitespace
     pub ignore_whitespace: bool,
+
+    // JSON output format
+    pub json: bool,
 }
 
 impl Default for GitAiBlameOptions {
@@ -156,10 +164,12 @@ impl Default for GitAiBlameOptions {
             reverse: None,
             first_parent: false,
             encoding: None,
+            contents_data: None,
             use_prompt_hashes_as_names: false,
             return_human_authors_as_human: false,
             no_output: false,
             ignore_whitespace: false,
+            json: false,
         }
     }
 }
@@ -233,8 +243,29 @@ impl Repository {
                 .to_string()
         };
 
-        // Read file content either from a specific commit or from working directory
-        let (file_content, total_lines) = if let Some(ref commit) = options.newest_commit {
+        // For JSON output, default to HEAD to exclude uncommitted changes
+        // and use prompt hashes as names so we can correlate with prompt_records
+        let options = if options.json {
+            let mut opts = options.clone();
+            if opts.newest_commit.is_none() {
+                opts.newest_commit = Some("HEAD".to_string());
+            }
+            opts.use_prompt_hashes_as_names = true;
+            opts
+        } else {
+            options.clone()
+        };
+
+        // Read file content from one of:
+        // 1. Provided contents_data (from --contents flag)
+        // 2. A specific commit
+        // 3. The working directory
+        let (file_content, total_lines) = if let Some(ref data) = options.contents_data {
+            // Use pre-read contents data (from --contents stdin or file)
+            let content = String::from_utf8_lossy(data).to_string();
+            let lines_count = content.lines().count() as u32;
+            (content, lines_count)
+        } else if let Some(ref commit) = options.newest_commit {
             // Read file content from the specified commit
             // This ensures blame is independent of which branch is checked out
             let commit_obj = self.find_commit(commit.clone())?;
@@ -299,27 +330,35 @@ impl Repository {
         // Step 1: Get Git's native blame for all ranges
         let mut all_blame_hunks = Vec::new();
         for (start_line, end_line) in &line_ranges {
-            let hunks = self.blame_hunks(&relative_file_path, *start_line, *end_line, options)?;
+            let hunks = self.blame_hunks(&relative_file_path, *start_line, *end_line, &options)?;
             all_blame_hunks.extend(hunks);
         }
 
         // Step 2: Overlay AI authorship information
-        let (line_authors, prompt_records) =
-            overlay_ai_authorship(self, &all_blame_hunks, &relative_file_path, options)?;
+        let (line_authors, prompt_records, authorship_logs, prompt_commits) =
+            overlay_ai_authorship(self, &all_blame_hunks, &relative_file_path, &options)?;
 
         if options.no_output {
             return Ok((line_authors, prompt_records));
         }
 
         // Output based on format
-        if options.porcelain || options.line_porcelain {
+        if options.json {
+            output_json_format(
+                &line_authors,
+                &prompt_records,
+                &authorship_logs,
+                &prompt_commits,
+                &relative_file_path,
+            )?;
+        } else if options.porcelain || options.line_porcelain {
             output_porcelain_format(
                 self,
                 &line_authors,
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         } else if options.incremental {
             output_incremental_format(
@@ -328,7 +367,7 @@ impl Repository {
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         } else {
             output_default_format(
@@ -337,7 +376,7 @@ impl Repository {
                 &relative_file_path,
                 &lines,
                 &line_ranges,
-                options,
+                &options,
             )?;
         }
 
@@ -403,11 +442,21 @@ impl Repository {
             }
         }
 
-        // Separator then file path
+        // Add --contents flag if we have content data to pass via stdin
+        if options.contents_data.is_some() {
+            args.push("--contents".to_string());
+            args.push("-".to_string());
+        }
+
         args.push("--".to_string());
         args.push(file_path.to_string());
 
-        let output = exec_git(&args)?;
+        // Execute git blame, using stdin if we have contents data
+        let output = if let Some(ref data) = options.contents_data {
+            exec_git_stdin(&args, data)?
+        } else {
+            exec_git(&args)?
+        };
         let stdout = String::from_utf8(output.stdout)?;
 
         // Parser state for current hunk
@@ -629,9 +678,19 @@ fn overlay_ai_authorship(
     blame_hunks: &[BlameHunk],
     file_path: &str,
     options: &GitAiBlameOptions,
-) -> Result<(HashMap<u32, String>, HashMap<String, PromptRecord>), GitAiError> {
+) -> Result<
+    (
+        HashMap<u32, String>,
+        HashMap<String, PromptRecord>,
+        Vec<AuthorshipLog>,
+        HashMap<String, Vec<String>>, // prompt_hash -> commit_shas
+    ),
+    GitAiError,
+> {
     let mut line_authors: HashMap<u32, String> = HashMap::new();
     let mut prompt_records: HashMap<String, PromptRecord> = HashMap::new();
+    // Track which commits contain each prompt hash
+    let mut prompt_commits: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
 
     // Group hunks by commit SHA to avoid repeated lookups
     let mut commit_authorship_cache: HashMap<String, Option<AuthorshipLog>> = HashMap::new();
@@ -670,6 +729,11 @@ fn overlay_ai_authorship(
                     // If this line is AI-assisted, display the tool name; otherwise the human username
                     if let Some(prompt_record) = prompt {
                         let prompt_hash = prompt_hash.unwrap();
+                        // Track that this prompt hash appears in this commit
+                        prompt_commits
+                            .entry(prompt_hash.clone())
+                            .or_insert_with(std::collections::HashSet::new)
+                            .insert(hunk.commit_sha.clone());
                         if options.use_prompt_hashes_as_names {
                             line_authors.insert(current_line_num, prompt_hash.clone());
                         } else {
@@ -709,7 +773,163 @@ fn overlay_ai_authorship(
         }
     }
 
-    Ok((line_authors, prompt_records))
+    // Collect all authorship logs we've seen (for JSON output to find other files)
+    let authorship_logs: Vec<AuthorshipLog> = commit_authorship_cache
+        .into_iter()
+        .filter_map(|(_, log)| log)
+        .collect();
+
+    // Convert HashSet to Vec and sort for deterministic output
+    let prompt_commits_vec: HashMap<String, Vec<String>> = prompt_commits
+        .into_iter()
+        .map(|(hash, commits)| {
+            let mut commits_vec: Vec<String> = commits.into_iter().collect();
+            commits_vec.sort();
+            (hash, commits_vec)
+        })
+        .collect();
+
+    Ok((
+        line_authors,
+        prompt_records,
+        authorship_logs,
+        prompt_commits_vec,
+    ))
+}
+
+/// JSON output structure for blame
+#[derive(Debug, Serialize)]
+struct JsonBlameOutput {
+    lines: std::collections::BTreeMap<String, String>,
+    prompts: HashMap<String, PromptRecordWithOtherFiles>,
+}
+
+/// Read model that patches PromptRecord with other_files and commits fields
+#[derive(Debug, Serialize)]
+struct PromptRecordWithOtherFiles {
+    #[serde(flatten)]
+    prompt_record: PromptRecord,
+    other_files: Vec<String>,
+    commits: Vec<String>,
+}
+
+/// Helper function to get all files touched by a prompt hash across authorship logs
+fn get_files_for_prompt_hash(
+    prompt_hash: &str,
+    authorship_logs: &[AuthorshipLog],
+    exclude_file: &str,
+) -> Vec<String> {
+    let mut files = std::collections::HashSet::new();
+
+    for log in authorship_logs {
+        for file_attestation in &log.attestations {
+            // Skip the file we're currently blaming
+            if file_attestation.file_path == exclude_file {
+                continue;
+            }
+
+            // Check if any entry in this file has the prompt hash
+            let has_hash = file_attestation
+                .entries
+                .iter()
+                .any(|entry| entry.hash == prompt_hash);
+
+            if has_hash {
+                files.insert(file_attestation.file_path.clone());
+            }
+        }
+    }
+
+    let mut file_vec: Vec<String> = files.into_iter().collect();
+    file_vec.sort();
+    file_vec
+}
+
+fn output_json_format(
+    line_authors: &HashMap<u32, String>,
+    prompt_records: &HashMap<String, PromptRecord>,
+    authorship_logs: &[AuthorshipLog],
+    prompt_commits: &HashMap<String, Vec<String>>,
+    current_file: &str,
+) -> Result<(), GitAiError> {
+    // Filter to only AI lines (where author is a prompt_id in prompt_records)
+    let mut ai_lines: Vec<(u32, String)> = line_authors
+        .iter()
+        .filter(|(_, author)| prompt_records.contains_key(*author))
+        .map(|(line, author)| (*line, author.clone()))
+        .collect();
+
+    // Sort by line number
+    ai_lines.sort_by_key(|(line, _)| *line);
+
+    // Group consecutive lines with the same prompt_id into ranges
+    let mut lines_map: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+
+    if !ai_lines.is_empty() {
+        let mut range_start = ai_lines[0].0;
+        let mut range_end = ai_lines[0].0;
+        let mut current_prompt_id = ai_lines[0].1.clone();
+
+        for (line, prompt_id) in ai_lines.iter().skip(1) {
+            if *prompt_id == current_prompt_id && *line == range_end + 1 {
+                // Extend current range
+                range_end = *line;
+            } else {
+                // Save current range and start new one
+                let range_key = if range_start == range_end {
+                    range_start.to_string()
+                } else {
+                    format!("{}-{}", range_start, range_end)
+                };
+                lines_map.insert(range_key, current_prompt_id.clone());
+
+                range_start = *line;
+                range_end = *line;
+                current_prompt_id = prompt_id.clone();
+            }
+        }
+
+        // Don't forget the last range
+        let range_key = if range_start == range_end {
+            range_start.to_string()
+        } else {
+            format!("{}-{}", range_start, range_end)
+        };
+        lines_map.insert(range_key, current_prompt_id);
+    }
+
+    // Only include prompts that are actually referenced in lines
+    let referenced_prompt_ids: std::collections::HashSet<&String> = lines_map.values().collect();
+
+    // Create read models with other_files and commits populated
+    let filtered_prompts: HashMap<String, PromptRecordWithOtherFiles> = prompt_records
+        .iter()
+        .filter(|(k, _)| referenced_prompt_ids.contains(k))
+        .map(|(k, v)| {
+            let other_files = get_files_for_prompt_hash(k, authorship_logs, current_file);
+            let commits = prompt_commits.get(k).cloned().unwrap_or_default();
+            (
+                k.clone(),
+                PromptRecordWithOtherFiles {
+                    prompt_record: v.clone(),
+                    other_files,
+                    commits,
+                },
+            )
+        })
+        .collect();
+
+    let output = JsonBlameOutput {
+        lines: lines_map,
+        prompts: filtered_prompts,
+    };
+
+    let json_str = serde_json::to_string_pretty(&output)
+        .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON output: {}", e)))?;
+
+    println!("{}", json_str);
+    Ok(())
 }
 
 fn output_porcelain_format(
@@ -1331,7 +1551,28 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                         "Missing argument for --contents".to_string(),
                     ));
                 }
-                options.contents_file = Some(args[i + 1].clone());
+                let contents_arg = &args[i + 1];
+                options.contents_file = Some(contents_arg.clone());
+
+                // Read the contents now - either from stdin or from a file
+                let data = if contents_arg == "-" {
+                    // Read from stdin
+                    use std::io::Read;
+                    let mut buffer = Vec::new();
+                    io::stdin().read_to_end(&mut buffer).map_err(|e| {
+                        GitAiError::Generic(format!("Failed to read from stdin: {}", e))
+                    })?;
+                    buffer
+                } else {
+                    // Read from file
+                    fs::read(contents_arg).map_err(|e| {
+                        GitAiError::Generic(format!(
+                            "Failed to read contents file '{}': {}",
+                            contents_arg, e
+                        ))
+                    })?
+                };
+                options.contents_data = Some(data);
                 i += 2;
             }
 
@@ -1376,6 +1617,11 @@ pub fn parse_blame_args(args: &[String]) -> Result<(String, GitAiBlameOptions), 
                         .into(),
                 );
                 i += 2;
+            }
+            // JSON output format
+            "--json" => {
+                options.json = true;
+                i += 1;
             }
 
             // File path (non-option argument)

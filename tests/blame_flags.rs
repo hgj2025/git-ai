@@ -1,5 +1,6 @@
 #[macro_use]
 mod repos;
+use insta::assert_debug_snapshot;
 use repos::test_file::ExpectedLineExt;
 use repos::test_repo::TestRepo;
 
@@ -654,5 +655,40 @@ fn test_blame_with_ai_authorship() {
             .any(|a| a.contains("mock_ai") || a.contains("mock_ai")),
         "Should show AI as author. Got: {:?}",
         git_ai_authors
+    );
+}
+
+#[test]
+fn test_blame_contents_from_stdin() {
+    let repo = TestRepo::new();
+    let mut file = repo.filename("test.txt");
+
+    // Create initial file and commit
+    file.set_contents(lines!["Line 1", "Line 2".ai(), "Line 3", " "]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // Now simulate uncommitted changes that would be passed via stdin
+    // This is what an IDE would do - pass the buffer contents that haven't been saved yet
+    let modified_content = "Changed\nLine 2\nLine 3\nLine 4 NEW\n";
+
+    // Run git-ai blame with --contents - (read from stdin)
+    let git_ai_output = repo
+        .git_ai_with_stdin(
+            &["blame", "--contents", "-", "test.txt"],
+            modified_content.as_bytes(),
+        )
+        .unwrap();
+
+    println!("\n[DEBUG] git-ai blame output:\n{}", git_ai_output);
+    let lines = git_ai_output.lines().collect::<Vec<&str>>();
+
+    assert!(
+        lines[0].starts_with("0000000 (External file (--contents)"),
+        "First line should be the  --contents"
+    );
+
+    assert!(
+        lines[3].starts_with("0000000 (External file (--contents)"),
+        "Last line should be the --contents"
     );
 }
