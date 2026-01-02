@@ -113,3 +113,9 @@ pub struct CasUploadResponse {
     pub success_count: usize,
     pub failure_count: usize,
 }
+
+/// Wrapper for messages stored in CAS
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CasMessagesObject {
+    pub messages: Vec<crate::authorship::transcript::Message>,
+}

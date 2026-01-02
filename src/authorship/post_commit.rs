@@ -366,8 +366,11 @@ fn enqueue_prompt_messages_to_cas(
 
     for (_key, prompt) in prompts.iter_mut() {
         if !prompt.messages.is_empty() {
-            // Serialize messages to JSON
-            let messages_json = serde_json::to_value(&prompt.messages)
+            // Wrap messages in CasMessagesObject and serialize to JSON
+            let messages_obj = crate::api::types::CasMessagesObject {
+                messages: prompt.messages.clone(),
+            };
+            let messages_json = serde_json::to_value(&messages_obj)
                 .map_err(|e| GitAiError::Generic(format!("Failed to serialize messages: {}", e)))?;
 
             // Enqueue to CAS (returns hash)

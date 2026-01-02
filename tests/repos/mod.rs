@@ -51,6 +51,9 @@ macro_rules! subdir_test_variants {
                             }
                         }
 
+                        // Add test database path for isolation
+                        command.env("GIT_AI_TEST_DB_PATH", self.inner.test_db_path().to_str().unwrap());
+
                         let output = command.output().expect(&format!(
                             "Failed to execute git command with -C flag: {:?}", args
                         ));
@@ -92,6 +95,9 @@ macro_rules! subdir_test_variants {
                                     command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
                                 }
                             }
+
+                            // Add test database path for isolation
+                            command.env("GIT_AI_TEST_DB_PATH", self.inner.test_db_path().to_str().unwrap());
 
                             // Apply custom env vars
                             for (key, value) in envs {

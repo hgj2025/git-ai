@@ -285,9 +285,16 @@ impl InternalDatabase {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Open with WAL mode for better concurrency
+        // Open with WAL mode and performance optimizations
         let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.execute_batch(
+            r#"
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+            PRAGMA cache_size=-2000;
+            PRAGMA temp_store=MEMORY;
+            "#,
+        )?;
 
         let mut db = Self {
             conn,
@@ -299,7 +306,14 @@ impl InternalDatabase {
     }
 
     /// Get database path: ~/.git-ai/internal/db
+    /// In test mode, can be overridden via GIT_AI_TEST_DB_PATH environment variable
     fn database_path() -> Result<PathBuf, GitAiError> {
+        // Allow test override via environment variable
+        #[cfg(any(test, feature = "test-support"))]
+        if let Ok(test_path) = std::env::var("GIT_AI_TEST_DB_PATH") {
+            return Ok(PathBuf::from(test_path));
+        }
+
         let home = dirs::home_dir()
             .ok_or_else(|| GitAiError::Generic("Could not determine home directory".to_string()))?;
         Ok(home
@@ -312,6 +326,35 @@ impl InternalDatabase {
     /// This is the ONLY place where schema changes should be made
     /// Failures are FATAL - the program cannot continue without a valid database
     fn initialize_schema(&mut self) -> Result<(), GitAiError> {
+        // FAST PATH: Check if database is already at current version
+        // This avoids expensive schema operations on every process start
+        let version_check: Result<usize, _> = self.conn.query_row(
+            "SELECT value FROM schema_metadata WHERE key = 'version'",
+            [],
+            |row| {
+                let version_str: String = row.get(0)?;
+                version_str
+                    .parse::<usize>()
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+            },
+        );
+
+        if let Ok(current_version) = version_check {
+            if current_version == SCHEMA_VERSION {
+                // Database is up-to-date, no migrations needed
+                return Ok(());
+            }
+            if current_version > SCHEMA_VERSION {
+                return Err(GitAiError::Generic(format!(
+                    "Database schema version {} is newer than supported version {}. \
+                     Please upgrade git-ai to the latest version.",
+                    current_version, SCHEMA_VERSION
+                )));
+            }
+            // Fall through to apply missing migrations (current_version < SCHEMA_VERSION)
+        }
+        // If query failed, table doesn't exist - proceed with full initialization
+
         // Step 1: Create schema_metadata table (this is the only table we create directly)
         self.conn.execute_batch(
             r#"
@@ -337,16 +380,7 @@ impl InternalDatabase {
             )
             .unwrap_or(0); // Default to version 0 for new databases
 
-        // Step 3: Validate that we're not downgrading
-        if current_version > SCHEMA_VERSION {
-            return Err(GitAiError::Generic(format!(
-                "Database schema version {} is newer than supported version {}. \
-                 Please upgrade git-ai to the latest version.",
-                current_version, SCHEMA_VERSION
-            )));
-        }
-
-        // Step 4: Apply all missing migrations sequentially
+        // Step 3: Apply all missing migrations sequentially
         for target_version in current_version..SCHEMA_VERSION {
             debug_log(&format!(
                 "[Migration] Upgrading database from version {} to {}",
