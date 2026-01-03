@@ -30,6 +30,9 @@ export class BlameLensManager {
   // Filtered colors that have sufficient contrast against the current theme
   private filteredColors: string[] = [];
   
+  // After-text decoration for showing "[View $MODEL Thread]" on AI lines
+  private afterTextDecoration: vscode.TextEditorDecorationType | null = null;
+  
   // Minimum contrast ratio for WCAG AA compliance (3:1 for UI elements)
   private static readonly MIN_CONTRAST_RATIO = 3.0;
   
@@ -553,6 +556,7 @@ export class BlameLensManager {
   private async updateStatusBar(editor: vscode.TextEditor | undefined): Promise<void> {
     if (!editor) {
       this.statusBarItem.hide();
+      this.clearAfterTextDecoration();
       return;
     }
 
@@ -584,8 +588,9 @@ export class BlameLensManager {
         });
       }
       
-      // Hide status bar while loading
+      // Hide status bar and after-text while loading
       this.statusBarItem.hide();
+      this.clearAfterTextDecoration();
       return;
     }
 
@@ -620,6 +625,9 @@ export class BlameLensManager {
       if (!this.toggleAICodeEnabled) {
         this.applyDecorationsForPrompt(editor, lineInfo.commitHash, this.currentBlameResult);
       }
+      
+      // Show after-text decoration with hover for AI lines
+      this.updateAfterTextDecoration(editor, lineInfo, document.uri);
     } else {
       // Show human icon for human-authored code
       this.statusBarItem.text = '🧑‍💻';
@@ -630,6 +638,9 @@ export class BlameLensManager {
       if (!this.toggleAICodeEnabled) {
         this.clearColoredBorders(editor);
       }
+      
+      // Clear after-text decoration for human lines
+      this.clearAfterTextDecoration();
     }
     
     // Make sure the status bar is visible (may have been hidden during loading)
@@ -891,6 +902,78 @@ export class BlameLensManager {
   }
 
   /**
+   * Update the after-text decoration for the current cursor line.
+   * Shows "[View $MODEL Thread]" with hover content for AI-authored lines.
+   */
+  private updateAfterTextDecoration(
+    editor: vscode.TextEditor | undefined,
+    lineInfo: LineBlameInfo | undefined,
+    documentUri?: vscode.Uri
+  ): void {
+    // Dispose previous decoration since text is dynamic per model
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
+
+    // Don't show if no editor or line is not AI-authored
+    if (!editor || !lineInfo?.isAiAuthored) {
+      return;
+    }
+
+    // Extract model name for display
+    const model = lineInfo.promptRecord?.agent_id?.model;
+    const tool = lineInfo.promptRecord?.agent_id?.tool || lineInfo.author;
+    const modelName = this.extractModelName(model);
+    
+    // Build display text: prefer model name, fall back to tool name, then "AI"
+    let displayName: string;
+    if (modelName) {
+      displayName = modelName;
+    } else if (tool) {
+      displayName = tool.charAt(0).toUpperCase() + tool.slice(1);
+    } else {
+      displayName = 'AI';
+    }
+
+    // Get the color for this prompt (matches gutter stripe)
+    const colorIndex = this.getColorIndexForPromptId(lineInfo.commitHash);
+    const gutterColorHex = this.rgbaToHex(this.filteredColors[colorIndex] || this.HUNK_COLORS[colorIndex]);
+
+    // Create decoration type with after-text styling
+    this.afterTextDecoration = vscode.window.createTextEditorDecorationType({
+      after: {
+        contentText: ` + ${displayName}`,
+        color: gutterColorHex,
+        
+      },
+      overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+
+    // Build hover content (reuse existing method)
+    const hoverContent = this.buildHoverContent(lineInfo, documentUri);
+
+    // Apply decoration to current line with hover
+    const currentLine = editor.selection.active.line;
+    const decorationOptions: vscode.DecorationOptions = {
+      range: new vscode.Range(currentLine, Number.MAX_SAFE_INTEGER, currentLine, Number.MAX_SAFE_INTEGER),
+      hoverMessage: hoverContent,
+    };
+
+    editor.setDecorations(this.afterTextDecoration, [decorationOptions]);
+  }
+
+  /**
+   * Clear the after-text decoration.
+   */
+  private clearAfterTextDecoration(): void {
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
+  }
+
+  /**
    * Extract just the name from a git author string like "Aidan Cunniffe <acunniffe@gmail.com>"
    */
   private extractHumanName(authorString: string): string {
@@ -926,25 +1009,106 @@ export class BlameLensManager {
       return null; // Will display as "AI"
     }
     
-    const parts = modelString.split('-');
-    const firstPart = parts[0];
+    // Parse model string into parts, filtering out noise
+    const parts = modelString.toLowerCase().split('-').filter(p => {
+      // Skip date suffixes (8+ digits)
+      if (/^\d{8,}$/.test(p)) {
+        return false;
+      }
+      // Skip "thinking" variant
+      if (p === 'thinking') {
+        return false;
+      }
+      return true;
+    });
     
-    if (!firstPart || firstPart.trim() === '') {
-      return null;
+    // GPT models: gpt-4o -> GPT 4o, gpt-4o-mini -> GPT 4o Mini
+    if (parts[0] === 'gpt') {
+      const rest = parts.slice(1);
+      if (rest.length === 0) {
+        return 'GPT';
+      }
+      // Keep version (4o, 4, 5) as-is, capitalize others (mini -> Mini, turbo -> Turbo)
+      const variant = rest.map((p, i) => {
+        if (i === 0) {
+          return p; // 4o, 4, 5
+        }
+        return p.charAt(0).toUpperCase() + p.slice(1);
+      }).join(' ');
+      return `GPT ${variant}`;
     }
     
-    // Capitalize first letter
-    const capitalized = firstPart.charAt(0).toUpperCase() + firstPart.slice(1).toLowerCase();
-    
-    // Handle "Default" or "Unknown" after capitalization
-    if (capitalized === 'Default') {
-      return 'Cursor';
+    // Claude models: claude-3-5-sonnet -> Sonnet 3.5, claude-opus-4 -> Opus 4
+    if (parts[0] === 'claude') {
+      const rest = parts.slice(1);
+      
+      // Find model name (opus, sonnet, haiku) and version numbers
+      const modelNames = ['opus', 'sonnet', 'haiku'];
+      let modelName = '';
+      const versions: string[] = [];
+      
+      for (const p of rest) {
+        if (modelNames.includes(p)) {
+          modelName = p.charAt(0).toUpperCase() + p.slice(1);
+        } else if (/^[\d.]+$/.test(p)) {
+          versions.push(p);
+        }
+      }
+      
+      if (modelName) {
+        // Combine versions with dot: 3, 5 -> 3.5
+        const versionStr = versions.join('.');
+        return versionStr ? `${modelName} ${versionStr}` : modelName;
+      }
+      
+      return 'Claude';
     }
-    if (capitalized === 'Unknown') {
-      return null; // Will display as "AI"
+    
+    // Gemini models: gemini-1.5-flash -> Gemini Flash 1.5, gemini-2.0-pro -> Gemini Pro 2.0
+    if (parts[0] === 'gemini') {
+      const rest = parts.slice(1);
+      
+      // Find variant name and version
+      const variantNames = ['pro', 'flash', 'ultra', 'nano'];
+      let variantName = '';
+      let version = '';
+      
+      for (const p of rest) {
+        if (variantNames.includes(p)) {
+          variantName = p.charAt(0).toUpperCase() + p.slice(1);
+        } else if (/^[\d.]+$/.test(p)) {
+          version = p;
+        }
+      }
+      
+      if (variantName && version) {
+        return `Gemini ${variantName} ${version}`;
+      } else if (variantName) {
+        return `Gemini ${variantName}`;
+      } else if (version) {
+        return `Gemini ${version}`;
+      }
+      return 'Gemini';
     }
     
-    return capitalized;
+    // o1, o3, o4-mini models: o1 -> O1, o3-mini -> O3 Mini
+    if (/^o\d/.test(parts[0])) {
+      return parts.map(p => {
+        if (/^o\d/.test(p)) {
+          return p.toUpperCase();
+        }
+        return p.charAt(0).toUpperCase() + p.slice(1);
+      }).join(' ');
+    }
+    
+    // Codex models: codex-5.2 -> Codex 5.2
+    if (parts[0] === 'codex') {
+      const version = parts.find(p => /^[\d.]+$/.test(p));
+      return version ? `Codex ${version}` : 'Codex';
+    }
+    
+    // Fallback: return the original slug as-is
+    return modelString.trim();
   }
 
   /**
@@ -1298,6 +1462,12 @@ export class BlameLensManager {
     
     // Dispose all color decorations
     this.colorDecorations.forEach(decoration => decoration.dispose());
+    
+    // Dispose after-text decoration
+    if (this.afterTextDecoration) {
+      this.afterTextDecoration.dispose();
+      this.afterTextDecoration = null;
+    }
   }
 }
 
