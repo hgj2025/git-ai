@@ -1,8 +1,9 @@
 use crate::api::{ApiClient, ApiContext};
 use crate::api::{BundleData, CreateBundleRequest};
 use crate::authorship::prompt_utils::find_prompt_with_db_fallback;
+use crate::authorship::secrets::redact_secrets_from_prompts;
 use crate::git::find_repository;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Handle the `share` command
 ///
@@ -64,9 +65,7 @@ fn handle_share_cli(parsed: ParsedArgs) {
     // Create bundle using helper (single prompt only in CLI mode)
     match create_bundle(parsed.prompt_id, prompt_record, title, false) {
         Ok(response) => {
-            println!("Bundle created successfully!");
-            println!("ID: {}", response.id);
-            println!("URL: {}", response.url);
+            println!("{}", response.url);
         }
         Err(e) => {
             eprintln!("Failed to create bundle: {}", e);
@@ -144,6 +143,11 @@ pub fn create_bundle(
             }
         }
     }
+
+    // Redact secrets from all prompts before uploading
+    let mut prompts_btree: BTreeMap<String, _> = prompts.into_iter().collect();
+    redact_secrets_from_prompts(&mut prompts_btree);
+    let prompts: HashMap<String, _> = prompts_btree.into_iter().collect();
 
     // Create bundle with prompts
     let bundle_request = CreateBundleRequest {

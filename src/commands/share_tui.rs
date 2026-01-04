@@ -82,9 +82,7 @@ pub fn run_tui() -> Result<(), GitAiError> {
         )?;
 
         // Display result
-        println!("Bundle created successfully!");
-        println!("ID: {}", response.id);
-        println!("URL: {}", response.url);
+        println!("{}", response.url);
 
         return Ok(());
     }
