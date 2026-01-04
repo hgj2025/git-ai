@@ -202,13 +202,17 @@ fn benchmark_extract_tokens(text: &str, iterations: usize) -> Vec<Duration> {
 }
 
 /// Benchmark is_random on extracted tokens
-fn benchmark_is_random(tokens: &[(usize, String)], iterations: usize) -> Vec<Duration> {
+fn benchmark_is_random(
+    text: &str,
+    tokens: &[(usize, usize)],
+    iterations: usize,
+) -> Vec<Duration> {
     let mut durations = Vec::with_capacity(iterations);
 
     for _ in 0..iterations {
         let start = Instant::now();
-        for (_, token) in tokens {
-            let _ = is_random(token.as_bytes());
+        for &(start_idx, end_idx) in tokens {
+            let _ = is_random(text[start_idx..end_idx].as_bytes());
         }
         durations.push(start.elapsed());
     }
@@ -217,13 +221,17 @@ fn benchmark_is_random(tokens: &[(usize, String)], iterations: usize) -> Vec<Dur
 }
 
 /// Benchmark p_random (the core probability calculation) on tokens
-fn benchmark_p_random(tokens: &[(usize, String)], iterations: usize) -> Vec<Duration> {
+fn benchmark_p_random(
+    text: &str,
+    tokens: &[(usize, usize)],
+    iterations: usize,
+) -> Vec<Duration> {
     let mut durations = Vec::with_capacity(iterations);
 
     for _ in 0..iterations {
         let start = Instant::now();
-        for (_, token) in tokens {
-            let _ = p_random(token.as_bytes());
+        for &(start_idx, end_idx) in tokens {
+            let _ = p_random(text[start_idx..end_idx].as_bytes());
         }
         durations.push(start.elapsed());
     }
@@ -267,8 +275,8 @@ fn test_secrets_benchmark() {
 
     // Show token length distribution
     let mut length_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for (_, token) in &tokens {
-        *length_counts.entry(token.len()).or_insert(0) += 1;
+    for &(start, end) in &tokens {
+        *length_counts.entry(end - start).or_insert(0) += 1;
     }
     let mut lengths: Vec<_> = length_counts.into_iter().collect();
     lengths.sort_by_key(|(len, _)| *len);
@@ -289,7 +297,7 @@ fn test_secrets_benchmark() {
 
     // Benchmark 2: p_random (core probability calculation)
     println!("\n--- Benchmarking p_random on {} tokens ---", tokens.len());
-    let p_random_durations = benchmark_p_random(&tokens, ITERATIONS);
+    let p_random_durations = benchmark_p_random(&text, &tokens, ITERATIONS);
     let p_random_stats = DurationStats::from_durations(&p_random_durations);
     p_random_stats.print("p_random (all tokens)");
 
@@ -301,7 +309,7 @@ fn test_secrets_benchmark() {
 
     // Benchmark 3: is_random (includes p_random + additional checks)
     println!("\n--- Benchmarking is_random on {} tokens ---", tokens.len());
-    let is_random_durations = benchmark_is_random(&tokens, ITERATIONS);
+    let is_random_durations = benchmark_is_random(&text, &tokens, ITERATIONS);
     let is_random_stats = DurationStats::from_durations(&is_random_durations);
     is_random_stats.print("is_random (all tokens)");
 
@@ -402,12 +410,12 @@ fn test_secrets_performance_regression() {
     const TEXT_SIZE_KB: usize = 329; // Same as full benchmark
 
     // Different thresholds for debug vs release builds
-    // Release: ~12ms actual, 100ms threshold (tight)
-    // Debug: ~120ms actual, 300ms threshold (allows for variation)
+    // Release: ~0.9ms actual, 10ms threshold (10x buffer)
+    // Debug: ~10ms actual, 50ms threshold (allows for variation)
     #[cfg(debug_assertions)]
-    const MAX_ALLOWED_MS: u64 = 300;
+    const MAX_ALLOWED_MS: u64 = 50;
     #[cfg(not(debug_assertions))]
-    const MAX_ALLOWED_MS: u64 = 100;
+    const MAX_ALLOWED_MS: u64 = 10;
 
     let text = generate_test_data(TEXT_SIZE_KB);
 
@@ -430,4 +438,50 @@ fn test_secrets_performance_regression() {
 
     // Sanity check: should find some secrets
     assert!(secrets_found > 0, "Expected to find secrets in test data");
+}
+
+/// Test that secret detection scales linearly with input size.
+/// Compares 329KB vs 5x (1645KB) and verifies time ratio is ~5x.
+/// This ensures the implementation is O(n) and not O(n²) or worse.
+#[test]
+fn test_secrets_linear_scaling() {
+    const BASE_SIZE_KB: usize = 329;
+    const SCALE_FACTOR: usize = 5;
+    const ITERATIONS: usize = 5;
+
+    // Generate both sizes
+    let text_1x = generate_test_data(BASE_SIZE_KB);
+    let text_5x = generate_test_data(BASE_SIZE_KB * SCALE_FACTOR);
+
+    // Warm up caches (Stirling table, bigram table, log factorials)
+    let _ = redact_secrets_in_text(&text_1x);
+    let _ = redact_secrets_in_text(&text_5x);
+
+    // Benchmark 1x size
+    let start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = redact_secrets_in_text(&text_1x);
+    }
+    let time_1x = start.elapsed() / ITERATIONS as u32;
+
+    // Benchmark 5x size
+    let start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let _ = redact_secrets_in_text(&text_5x);
+    }
+    let time_5x = start.elapsed() / ITERATIONS as u32;
+
+    // Calculate ratio
+    let ratio = time_5x.as_secs_f64() / time_1x.as_secs_f64();
+
+    // For O(n) algorithm, ratio should be ~5.0
+    // Allow 4.0-6.5 range for variance (cache effects, measurement noise)
+    assert!(
+        ratio >= 4.0 && ratio <= 6.5,
+        "Expected linear scaling (~5x), but got {:.2}x ratio. \
+         1x: {:.2}ms, 5x: {:.2}ms. This suggests non-linear complexity.",
+        ratio,
+        time_1x.as_secs_f64() * 1000.0,
+        time_5x.as_secs_f64() * 1000.0
+    );
 }
