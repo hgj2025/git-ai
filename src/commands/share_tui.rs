@@ -9,7 +9,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -17,18 +17,15 @@ use ratatui::{
 };
 use std::io;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShareScope {
-    SinglePrompt,
-    AllInCommit,
-}
-
 #[derive(Clone)]
 struct ShareConfig {
     title: String,
     title_cursor: usize,
-    scope_selection: ShareScope,
+    share_all_in_commit: bool,
+    include_diffs: bool,
     can_share_commit: bool,
+    /// Which checkbox is focused (0 = share_all_in_commit, 1 = include_diffs)
+    focused_checkbox: usize,
 }
 
 impl ShareConfig {
@@ -40,8 +37,10 @@ impl ShareConfig {
         Self {
             title,
             title_cursor: 0,
-            scope_selection: ShareScope::SinglePrompt,
+            share_all_in_commit: false,
+            include_diffs: true,
             can_share_commit,
+            focused_checkbox: 0,
         }
     }
 }
@@ -70,15 +69,14 @@ pub fn run_tui() -> Result<(), GitAiError> {
         };
 
         // Step 3: Create and submit bundle
-        let include_all_in_commit = config.scope_selection == ShareScope::AllInCommit;
-
         let prompt_record = selected_prompt.to_prompt_record();
 
         let response = crate::commands::share::create_bundle(
             selected_prompt.id,
             prompt_record,
             config.title,
-            include_all_in_commit,
+            config.share_all_in_commit,
+            config.include_diffs,
         )?;
 
         // Display result
@@ -146,7 +144,7 @@ fn handle_config_key_event(
     match key.code {
         KeyCode::Esc => ConfigKeyResult::Back,
         KeyCode::Tab => {
-            // Cycle focus: 0 (title) -> 1 (scope) -> 0
+            // Cycle focus: 0 (title) -> 1 (options) -> 0
             *focused_field = (*focused_field + 1) % 2;
             ConfigKeyResult::Continue
         }
@@ -198,25 +196,35 @@ fn handle_config_key_event(
                     }
                 }
                 1 => {
-                    // Scope selection
+                    // Checkbox section
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => {
-                            config.scope_selection = match config.scope_selection {
-                                ShareScope::SinglePrompt => ShareScope::SinglePrompt,
-                                ShareScope::AllInCommit => ShareScope::SinglePrompt,
-                            };
+                            // Move focus up between checkboxes
+                            if config.focused_checkbox > 0 {
+                                config.focused_checkbox -= 1;
+                            }
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
-                            config.scope_selection = match config.scope_selection {
-                                ShareScope::SinglePrompt => {
+                            // Move focus down between checkboxes
+                            if config.focused_checkbox < 1 {
+                                config.focused_checkbox += 1;
+                            }
+                        }
+                        KeyCode::Char(' ') => {
+                            // Toggle focused checkbox
+                            match config.focused_checkbox {
+                                0 => {
+                                    // Share all in commit - only toggle if can_share_commit
                                     if config.can_share_commit {
-                                        ShareScope::AllInCommit
-                                    } else {
-                                        ShareScope::SinglePrompt
+                                        config.share_all_in_commit = !config.share_all_in_commit;
                                     }
                                 }
-                                ShareScope::AllInCommit => ShareScope::AllInCommit,
-                            };
+                                1 => {
+                                    // Include diffs - always toggleable
+                                    config.include_diffs = !config.include_diffs;
+                                }
+                                _ => {}
+                            }
                         }
                         _ => {}
                     }
@@ -229,13 +237,13 @@ fn handle_config_key_event(
 }
 
 fn render_config_screen(f: &mut Frame, config: &ShareConfig, focused_field: usize) {
-    // Layout: [Header 3] [Title 5] [Scope 8] [Footer 3]
+    // Layout: [Header 3] [Title 5] [Options 8] [Footer 3]
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Length(5), // Title input
-            Constraint::Length(8), // Scope selection
+            Constraint::Length(8), // Options (checkboxes)
             Constraint::Min(0),    // Spacer
             Constraint::Length(3), // Footer
         ])
@@ -280,60 +288,60 @@ fn render_config_screen(f: &mut Frame, config: &ShareConfig, focused_field: usiz
 
     f.render_widget(title_widget, chunks[1]);
 
-    // Scope selection
-    let scope_focused = focused_field == 1;
-    let scope_block = Block::default()
+    // Options section (checkboxes)
+    let options_focused = focused_field == 1;
+    let options_block = Block::default()
         .borders(Borders::ALL)
-        .title("Scope (↑↓ to select)")
-        .border_style(if scope_focused {
+        .title("Options (↑↓ to move, Space to toggle)")
+        .border_style(if options_focused {
             Style::default().fg(Color::Yellow)
         } else {
             Style::default()
         });
 
-    let single_selected = config.scope_selection == ShareScope::SinglePrompt;
-    let commit_selected = config.scope_selection == ShareScope::AllInCommit;
-
-    let single_style = if single_selected {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-
+    // Checkbox 0: Share all prompts in commit
+    let commit_marker = if config.share_all_in_commit { "[x]" } else { "[ ]" };
+    let commit_focused = options_focused && config.focused_checkbox == 0;
     let commit_style = if !config.can_share_commit {
         Style::default().fg(Color::DarkGray)
-    } else if commit_selected {
+    } else if commit_focused {
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
-
-    let single_marker = if single_selected { "(*)" } else { "( )" };
-    let commit_marker = if commit_selected { "(*)" } else { "( )" };
-
     let commit_text = if !config.can_share_commit {
-        format!("{} All prompts in commit (disabled - no commit)", commit_marker)
+        format!("{} Share all prompts in commit (no commit)", commit_marker)
     } else {
-        format!("{} All prompts in commit", commit_marker)
+        format!("{} Share all prompts in commit", commit_marker)
     };
+
+    // Checkbox 1: Include code diffs
+    let diffs_marker = if config.include_diffs { "[x]" } else { "[ ]" };
+    let diffs_focused = options_focused && config.focused_checkbox == 1;
+    let diffs_style = if diffs_focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let diffs_text = format!("{} Include code diffs", diffs_marker);
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(format!("{} Only this prompt", single_marker), single_style)),
-        Line::from(""),
         Line::from(Span::styled(commit_text, commit_style)),
+        Line::from(""),
+        Line::from(Span::styled(diffs_text, diffs_style)),
     ];
 
-    let scope_widget = Paragraph::new(lines).block(scope_block);
+    let options_widget = Paragraph::new(lines).block(options_block);
 
-    f.render_widget(scope_widget, chunks[2]);
+    f.render_widget(options_widget, chunks[2]);
 
     // Footer
-    let footer = Paragraph::new("Tab: Next field | Enter: Submit | Esc: Back | Ctrl+U: Clear title")
+    let footer = Paragraph::new("Tab: Next field | Space: Toggle | Enter: Submit | Esc: Back")
         .block(Block::default().borders(Borders::ALL))
         .style(Style::default().fg(Color::Cyan))
         .alignment(Alignment::Center);

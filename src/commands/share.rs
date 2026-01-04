@@ -1,7 +1,8 @@
-use crate::api::{ApiClient, ApiContext};
+use crate::api::{ApiClient, ApiContext, ApiFileRecord};
 use crate::api::{BundleData, CreateBundleRequest};
 use crate::authorship::prompt_utils::find_prompt_with_db_fallback;
 use crate::authorship::secrets::redact_secrets_from_prompts;
+use crate::commands::diff::{get_diff_json_filtered, DiffOptions};
 use crate::git::find_repository;
 use std::collections::{BTreeMap, HashMap};
 
@@ -62,8 +63,8 @@ fn handle_share_cli(parsed: ParsedArgs) {
         format!("Prompt {}", parsed.prompt_id)
     });
 
-    // Create bundle using helper (single prompt only in CLI mode)
-    match create_bundle(parsed.prompt_id, prompt_record, title, false) {
+    // Create bundle using helper (single prompt only in CLI mode, no diffs)
+    match create_bundle(parsed.prompt_id, prompt_record, title, false, false) {
         Ok(response) => {
             println!("{}", response.url);
         }
@@ -112,50 +113,89 @@ pub fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
 }
 
 /// Create a bundle from a prompt, optionally including all prompts in the commit
+/// and optionally including code diffs
 pub fn create_bundle(
     prompt_id: String,
     prompt_record: crate::authorship::authorship_log::PromptRecord,
     title: String,
     include_all_in_commit: bool,
+    include_diffs: bool,
 ) -> Result<crate::api::CreateBundleResponse, crate::error::GitAiError> {
+    use crate::authorship::internal_db::InternalDatabase;
+
     let mut prompts = HashMap::new();
     prompts.insert(prompt_id.clone(), prompt_record.clone());
 
+    // Get commit_sha from the database
+    let db = InternalDatabase::global()?;
+    let db_guard = db.lock().map_err(|e| {
+        crate::error::GitAiError::Generic(format!("Failed to lock database: {}", e))
+    })?;
+
+    let db_record = db_guard.get_prompt(&prompt_id)?;
+    let commit_sha = db_record.as_ref().and_then(|r| r.commit_sha.clone());
+
     // If include_all_in_commit, fetch all prompts with same commit_sha
     if include_all_in_commit {
-        // Get commit_sha from the prompt record - we need to look it up in the database
-        use crate::authorship::internal_db::InternalDatabase;
+        if let Some(ref sha) = commit_sha {
+            // Get all prompts for this commit
+            let commit_prompts = db_guard.get_prompts_by_commit(sha)?;
 
-        let db = InternalDatabase::global()?;
-        let db_guard = db.lock().map_err(|e| {
-            crate::error::GitAiError::Generic(format!("Failed to lock database: {}", e))
-        })?;
-
-        // Get the original database record to access commit_sha
-        if let Some(db_record) = db_guard.get_prompt(&prompt_id)? {
-            if let Some(commit_sha) = &db_record.commit_sha {
-                // Get all prompts for this commit
-                let commit_prompts = db_guard.get_prompts_by_commit(commit_sha)?;
-
-                for p in commit_prompts {
-                    prompts.insert(p.id.clone(), p.to_prompt_record());
-                }
+            for p in commit_prompts {
+                prompts.insert(p.id.clone(), p.to_prompt_record());
             }
         }
     }
+
+    // Drop the db guard before we do other work
+    drop(db_guard);
+
+    // Collect prompt IDs for diff filtering
+    let prompt_ids: Vec<String> = prompts.keys().cloned().collect();
 
     // Redact secrets from all prompts before uploading
     let mut prompts_btree: BTreeMap<String, _> = prompts.into_iter().collect();
     redact_secrets_from_prompts(&mut prompts_btree);
     let prompts: HashMap<String, _> = prompts_btree.into_iter().collect();
 
-    // Create bundle with prompts
+    // Get diff files if requested
+    let files: HashMap<String, ApiFileRecord> = if include_diffs {
+        if let Some(ref sha) = commit_sha {
+            // Try to get the repository
+            if let Ok(repo) = find_repository(&Vec::<String>::new()) {
+                // Configure diff options based on whether we're sharing all prompts or just one
+                let diff_options = DiffOptions {
+                    prompt_ids: Some(prompt_ids),
+                    // If sharing all in commit, don't filter to attributed files (include full diff)
+                    // If sharing single prompt, filter to only files touched by this prompt
+                    filter_to_attributed_files: !include_all_in_commit,
+                };
+
+                match get_diff_json_filtered(&repo, sha, diff_options) {
+                    Ok(diff_json) => {
+                        // Convert FileDiffJson to ApiFileRecord
+                        diff_json
+                            .files
+                            .iter()
+                            .map(|(path, file_diff)| (path.clone(), ApiFileRecord::from(file_diff)))
+                            .collect()
+                    }
+                    Err(_) => HashMap::new(), // Diff failed, proceed without files
+                }
+            } else {
+                HashMap::new() // No repo, proceed without files
+            }
+        } else {
+            HashMap::new() // No commit SHA, proceed without files
+        }
+    } else {
+        HashMap::new()
+    };
+
+    // Create bundle with prompts and optional files
     let bundle_request = CreateBundleRequest {
         title,
-        data: BundleData {
-            prompts,
-            files: HashMap::new(),
-        },
+        data: BundleData { prompts, files },
     };
 
     let context = ApiContext::new(None);

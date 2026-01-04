@@ -876,6 +876,73 @@ where
 }
 
 // ============================================================================
+// Filtered Diff for Bundle Sharing
+// ============================================================================
+
+/// Options for getting a diff with optional filtering
+pub struct DiffOptions {
+    /// If provided, only include files with attributions from these prompts
+    pub prompt_ids: Option<Vec<String>>,
+    /// Whether to filter files to only those with attributions from prompt_ids
+    pub filter_to_attributed_files: bool,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        Self {
+            prompt_ids: None,
+            filter_to_attributed_files: false,
+        }
+    }
+}
+
+/// Get diff JSON for a single commit with optional filtering by prompt attributions
+///
+/// This function is designed for bundle sharing:
+/// - If `options.filter_to_attributed_files` is true, only includes files that have
+///   attributions from the specified `prompt_ids`
+/// - If `options.prompt_ids` is Some, filters the returned prompts to only those IDs
+pub fn get_diff_json_filtered(
+    repo: &Repository,
+    commit_sha: &str,
+    options: DiffOptions,
+) -> Result<DiffJson, GitAiError> {
+    // Resolve the commit to get from/to SHAs (parent -> commit)
+    let to_commit = resolve_commit(repo, commit_sha)?;
+    let from_commit = resolve_parent(repo, &to_commit)?;
+
+    // Get diff hunks with line numbers
+    let hunks = get_diff_with_line_numbers(repo, &from_commit, &to_commit)?;
+
+    // Get attributions for overlay (not used directly, but needed for build_diff_json)
+    let attributions = overlay_diff_attributions(repo, &from_commit, &to_commit, &hunks)?;
+
+    // Build the full DiffJson structure
+    let mut diff_json = build_diff_json(repo, &from_commit, &to_commit, &hunks, &attributions)?;
+
+    // Apply filtering if requested
+    if options.filter_to_attributed_files {
+        if let Some(ref prompt_ids) = options.prompt_ids {
+            let prompt_id_set: std::collections::HashSet<&String> = prompt_ids.iter().collect();
+
+            // Filter files to only those with attributions from the specified prompts
+            diff_json.files.retain(|_file_path, file_diff| {
+                // Check if any annotation key matches a prompt_id
+                file_diff.annotations.keys().any(|key| prompt_id_set.contains(key))
+            });
+        }
+    }
+
+    // Filter prompts to only those specified (if any)
+    if let Some(ref prompt_ids) = options.prompt_ids {
+        let prompt_id_set: std::collections::HashSet<&String> = prompt_ids.iter().collect();
+        diff_json.prompts.retain(|key, _| prompt_id_set.contains(key));
+    }
+
+    Ok(diff_json)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
