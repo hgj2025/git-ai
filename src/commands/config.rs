@@ -1,4 +1,5 @@
 use serde_json::Value;
+use dirs;
 
 use crate::git::repository::find_repository_in_path;
 
@@ -49,10 +50,8 @@ fn detect_pattern_type(value: &str) -> PatternType {
 fn resolve_path_to_remotes(path: &str) -> Result<Vec<String>, String> {
     // Expand ~ to home directory
     let expanded_path = if path.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            format!("{}{}", home, &path[1..])
-        } else if let Ok(home) = std::env::var("USERPROFILE") {
-            format!("{}{}", home, &path[1..])
+        if let Some(home) = dirs::home_dir() {
+            format!("{}{}", home.to_string_lossy(), &path[1..])
         } else {
             path.to_string()
         }
@@ -97,7 +96,7 @@ fn print_config_help() {
     eprintln!("");
     eprintln!("Configuration Keys:");
     eprintln!("  git_path                     Path to git binary");
-    eprintln!("  share_prompts_in_repositories    Repos to share prompts in (array)");
+    eprintln!("  exclude_prompts_in_repositories  Repos to exclude prompts from (array)");
     eprintln!("  allow_repositories           Allowed repos (array)");
     eprintln!("  exclude_repositories         Excluded repos (array)");
     eprintln!("  telemetry_oss                OSS telemetry setting (on/off)");
@@ -108,7 +107,7 @@ fn print_config_help() {
     eprintln!("  feature_flags                Feature flags (object)");
     eprintln!("");
     eprintln!("Repository Patterns:");
-    eprintln!("  For exclude/allow/share_prompts_in_repositories, you can provide:");
+    eprintln!("  For exclude/allow/exclude_prompts_in_repositories, you can provide:");
     eprintln!("    - A glob pattern: \"*\", \"https://github.com/org/*\"");
     eprintln!("    - A URL/git protocol: \"git@github.com:org/repo.git\"");
     eprintln!("    - A file path: \".\" or \"/path/to/repo\" (resolves to repo's remotes)");
@@ -220,14 +219,14 @@ fn show_all_config() -> Result<(), String> {
     );
 
     // Arrays
-    if let Some(ref repos) = file_config.share_prompts_in_repositories {
+    if let Some(ref repos) = file_config.exclude_prompts_in_repositories {
         effective_config.insert(
-            "share_prompts_in_repositories".to_string(),
+            "exclude_prompts_in_repositories".to_string(),
             serde_json::to_value(repos).unwrap(),
         );
     } else {
         effective_config.insert(
-            "share_prompts_in_repositories".to_string(),
+            "exclude_prompts_in_repositories".to_string(),
             Value::Array(vec![]),
         );
     }
@@ -299,8 +298,8 @@ fn get_config_value(key: &str) -> Result<(), String> {
     if key_path.len() == 1 {
         let value = match key_path[0].as_str() {
             "git_path" => Value::String(runtime_config.git_cmd().to_string()),
-            "share_prompts_in_repositories" => {
-                if let Some(ref repos) = file_config.share_prompts_in_repositories {
+            "exclude_prompts_in_repositories" => {
+                if let Some(ref repos) = file_config.exclude_prompts_in_repositories {
                     serde_json::to_value(repos).unwrap()
                 } else {
                     Value::Array(vec![])
@@ -379,9 +378,9 @@ fn set_config_value(key: &str, value: &str, add_mode: bool) -> Result<(), String
                 crate::config::save_file_config(&file_config)?;
                 eprintln!("[git_path]: {}", value);
             }
-            "share_prompts_in_repositories" => {
+            "exclude_prompts_in_repositories" => {
                 let added = set_repository_array_field(
-                    &mut file_config.share_prompts_in_repositories,
+                    &mut file_config.exclude_prompts_in_repositories,
                     value,
                     add_mode,
                 )?;
@@ -526,8 +525,8 @@ fn unset_config_value(key: &str) -> Result<(), String> {
                     eprintln!("- [git_path]: {}", v);
                 }
             }
-            "share_prompts_in_repositories" => {
-                let old_values = file_config.share_prompts_in_repositories.take();
+            "exclude_prompts_in_repositories" => {
+                let old_values = file_config.exclude_prompts_in_repositories.take();
                 crate::config::save_file_config(&file_config)?;
                 if let Some(items) = old_values {
                     log_array_removals(&items);
@@ -656,7 +655,7 @@ fn parse_key_path(key: &str) -> Vec<String> {
     key.split('.').map(|s| s.to_string()).collect()
 }
 
-/// Set array field for repository patterns (exclude_repositories, allow_repositories, share_prompts_in_repositories)
+/// Set array field for repository patterns (exclude_repositories, allow_repositories, exclude_prompts_in_repositories)
 /// This function handles the special logic of detecting if a value is:
 /// - A global wildcard pattern like "*"
 /// - A URL or git protocol pattern

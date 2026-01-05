@@ -4,7 +4,7 @@
 //! It identifies high-entropy strings (likely secrets/API keys) and redacts them
 //! in-place before saving to git notes.
 
-use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// Minimum length for a string to be considered a potential secret
 const MIN_SECRET_LENGTH: usize = 15;
@@ -58,202 +58,309 @@ const BIGRAMS: &[&[u8]] = &[
     b"cu", b"br", b"TE", b"ST", b"R_", b"E8", b"/O",
 ];
 
-/// Check if a string matches hexadecimal pattern (16+ chars of 0-9a-fA-F)
-fn is_hex_string(s: &[u8]) -> bool {
-    if s.len() < 16 {
-        return false;
-    }
-    s.iter().all(|&b| b.is_ascii_hexdigit())
+/// Pre-computed ln(n!) lookup table for n = 0..=MAX_SECRET_LENGTH
+/// This avoids O(n) factorial computation on every call to p_binomial
+static LOG_FACTORIALS: OnceLock<[f64; MAX_SECRET_LENGTH + 1]> = OnceLock::new();
+
+/// Get the pre-computed log-factorial lookup table
+fn get_log_factorials() -> &'static [f64; MAX_SECRET_LENGTH + 1] {
+    LOG_FACTORIALS.get_or_init(|| {
+        let mut table = [0.0; MAX_SECRET_LENGTH + 1];
+        // ln(0!) = ln(1) = 0, already set
+        for i in 1..=MAX_SECRET_LENGTH {
+            table[i] = table[i - 1] + (i as f64).ln();
+        }
+        table
+    })
 }
 
-/// Check if a string matches uppercase + numbers pattern (16+ chars of 0-9A-Z)
-fn is_cap_and_numbers(s: &[u8]) -> bool {
-    if s.len() < 16 {
+/// Get ln(n!) from the lookup table
+#[inline]
+fn log_factorial(n: usize) -> f64 {
+    get_log_factorials()[n]
+}
+
+/// Pre-computed bigram lookup table for O(1) access.
+/// A 128x128 bool array where BIGRAM_TABLE[a][b] = true if "ab" is a common bigram.
+static BIGRAM_TABLE: OnceLock<[[bool; 128]; 128]> = OnceLock::new();
+
+/// Get the pre-computed bigram lookup table.
+fn get_bigram_table() -> &'static [[bool; 128]; 128] {
+    BIGRAM_TABLE.get_or_init(|| {
+        let mut table = [[false; 128]; 128];
+        for bigram in BIGRAMS {
+            if bigram.len() == 2 && bigram[0] < 128 && bigram[1] < 128 {
+                table[bigram[0] as usize][bigram[1] as usize] = true;
+            }
+        }
+        table
+    })
+}
+
+/// Check if a bigram is in the common set. O(1) lookup.
+#[inline]
+fn is_common_bigram(a: u8, b: u8) -> bool {
+    if a >= 128 || b >= 128 {
         return false;
     }
-    s.iter()
-        .all(|&b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    get_bigram_table()[a as usize][b as usize]
+}
+
+/// Get bigram count for p_binomial calculations.
+fn get_bigram_set_len() -> usize {
+    BIGRAMS.len()
+}
+
+
+/// Statistics collected in a single pass over the token.
+struct CharStats {
+    distinct_count: usize,
+    digit_count: usize,
+    upper_count: usize,
+    lower_count: usize,
+    is_all_hex: bool,
+    is_all_cap_num: bool,
+    bigram_count: usize,
+}
+
+/// Analyze a token in a single pass, collecting all needed statistics.
+#[inline]
+fn analyze_token(s: &[u8]) -> CharStats {
+    let mut seen = [false; 256];
+    let mut distinct_count = 0;
+    let mut digit_count = 0;
+    let mut upper_count = 0;
+    let mut lower_count = 0;
+    let mut is_all_hex = true;
+    let mut is_all_cap_num = true;
+    let mut bigram_count = 0;
+
+    for (i, &b) in s.iter().enumerate() {
+        // Track distinct characters
+        if !seen[b as usize] {
+            seen[b as usize] = true;
+            distinct_count += 1;
+        }
+
+        // Count character classes
+        if b.is_ascii_digit() {
+            digit_count += 1;
+        } else if b.is_ascii_uppercase() {
+            upper_count += 1;
+        } else if b.is_ascii_lowercase() {
+            lower_count += 1;
+            is_all_cap_num = false;
+        } else {
+            // Not alphanumeric
+            is_all_hex = false;
+            is_all_cap_num = false;
+        }
+
+        // Check hex validity (0-9, a-f, A-F)
+        if is_all_hex && !b.is_ascii_hexdigit() {
+            is_all_hex = false;
+        }
+
+        // Count bigrams using O(1) table lookup
+        if i + 1 < s.len() && is_common_bigram(b, s[i + 1]) {
+            bigram_count += 1;
+        }
+    }
+
+    CharStats {
+        distinct_count,
+        digit_count,
+        upper_count,
+        lower_count,
+        is_all_hex: is_all_hex && s.len() >= 16,
+        is_all_cap_num: is_all_cap_num && s.len() >= 16,
+        bigram_count,
+    }
 }
 
 /// Calculate the probability that a string is random based on various heuristics.
-///
-/// Returns a value between 0 and 1, where higher values indicate
-/// a higher probability of being a random/secret string.
+/// Uses a single-pass analysis for efficiency.
 pub fn p_random(s: &[u8]) -> f64 {
-    let base = if is_hex_string(s) {
+    let stats = analyze_token(s);
+
+    // Determine alphabet base
+    let base = if stats.is_all_hex {
         16.0
-    } else if is_cap_and_numbers(s) {
+    } else if stats.is_all_cap_num {
         36.0
     } else {
         64.0
     };
 
-    let mut p = p_random_distinct_values(s, base) * p_random_char_class(s, base);
+    // Calculate distinct values probability using precomputed Stirling
+    let p_distinct = p_random_distinct_values_with_stats(s.len(), stats.distinct_count, base);
 
+    // Calculate character class probability
+    let p_class = p_random_char_class_with_stats(&stats, s.len(), base);
+
+    let mut p = p_distinct * p_class;
+
+    // Bigram probability (only for base64)
     if base == 64.0 {
-        // Bigrams are only calibrated for base64
-        p *= p_random_bigrams(s);
+        p *= p_binomial(
+            s.len(),
+            stats.bigram_count,
+            (get_bigram_set_len() as f64) / (64.0 * 64.0),
+        );
     }
 
     p
 }
 
-/// Calculate probability based on bigram frequency.
-/// Random strings should have roughly 10% of common source code bigrams.
-fn p_random_bigrams(s: &[u8]) -> f64 {
-    let bigrams_set: HashSet<&[u8]> = BIGRAMS.iter().copied().collect();
+/// Calculate distinct values probability using pre-analyzed stats.
+fn p_random_distinct_values_with_stats(n: usize, num_distinct: usize, base: f64) -> f64 {
+    let total_possible = base.powi(n as i32);
 
-    let mut num_bigrams = 0;
-    for i in 0..s.len().saturating_sub(1) {
-        let bigram = &s[i..=i + 1];
-        if bigrams_set.contains(bigram) {
-            num_bigrams += 1;
-        }
+    let mut num_more_extreme: f64 = 0.0;
+    let mut falling = base;
+
+    for k in 1..=num_distinct {
+        num_more_extreme += stirling(n, k) * falling;
+        falling *= base - k as f64;
     }
 
-    p_binomial(
-        s.len(),
-        num_bigrams,
-        (bigrams_set.len() as f64) / (64.0 * 64.0),
-    )
+    num_more_extreme / total_possible
 }
 
-/// Calculate probability based on character class distribution.
-/// Looks at uppercase, lowercase, and digit ratios.
-fn p_random_char_class(s: &[u8], base: f64) -> f64 {
+/// Calculate character class probability using pre-analyzed stats.
+fn p_random_char_class_with_stats(stats: &CharStats, n: usize, base: f64) -> f64 {
     if base == 16.0 {
-        return p_random_char_class_aux(s, b'0', b'9', 16.0);
+        // For hex, check digit ratio
+        return p_binomial(n, stats.digit_count, 10.0 / 16.0);
     }
 
-    let char_classes_36: &[(u8, u8)] = &[(b'0', b'9'), (b'A', b'Z')];
-    let char_classes_64: &[(u8, u8)] = &[(b'0', b'9'), (b'A', b'Z'), (b'a', b'z')];
+    // For base36 and base64, check each character class
+    let digit_p = p_binomial(n, stats.digit_count, 10.0 / base);
+    let upper_p = p_binomial(n, stats.upper_count, 26.0 / base);
 
-    let char_classes = if base == 36.0 {
-        char_classes_36
-    } else {
-        char_classes_64
-    };
-
-    let mut min_p = f64::INFINITY;
-    for (min, max) in char_classes {
-        let p = p_random_char_class_aux(s, *min, *max, base);
-        if p < min_p {
-            min_p = p;
-        }
+    if base == 36.0 {
+        return digit_p.min(upper_p);
     }
 
-    min_p
+    // base64
+    let lower_p = p_binomial(n, stats.lower_count, 26.0 / base);
+    digit_p.min(upper_p).min(lower_p)
 }
 
-fn p_random_char_class_aux(s: &[u8], min: u8, max: u8, base: f64) -> f64 {
-    let mut count = 0;
-    for b in s {
-        if *b >= min && *b <= max {
-            count += 1;
-        }
+/// Fast erfc approximation (Abramowitz & Stegun 7.1.26), max error ~1.5e-7.
+/// Used by Normal approximation in p_binomial.
+#[inline]
+fn erfc_approx(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = t
+        * (0.254829592
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let result = poly * (-x * x).exp(); // Single exp() call
+    if x >= 0.0 {
+        result
+    } else {
+        2.0 - result
     }
-    let num_chars = (max - min + 1) as f64;
-    p_binomial(s.len(), count, num_chars / base)
 }
 
 /// Calculate binomial probability (cumulative tail probability).
+/// Uses Normal approximation for large n (O(1)) and falls back to exact
+/// calculation for small n (O(n)).
 fn p_binomial(n: usize, x: usize, p: f64) -> f64 {
-    let left_tail = (x as f64) < n as f64 * p;
+    // Handle edge cases
+    if p <= 0.0 {
+        return if x == 0 { 1.0 } else { 0.0 };
+    }
+    if p >= 1.0 {
+        return if x == n { 1.0 } else { 0.0 };
+    }
+
+    let mean = n as f64 * p;
+    let variance = n as f64 * p * (1.0 - p);
+
+    // Use Normal approximation when variance is sufficient (np > 5 and n(1-p) > 5)
+    // This is O(1) with a single exp() call vs O(n) exp() calls
+    if variance > 2.0 {
+        let std = variance.sqrt();
+        let left_tail = (x as f64) < mean;
+
+        // Continuity correction: use x+0.5 or x-0.5 depending on tail
+        let x_corrected = if left_tail {
+            x as f64 + 0.5
+        } else {
+            x as f64 - 0.5
+        };
+        let z = (x_corrected - mean) / std;
+
+        // P(X <= x) for left tail, P(X >= x) for right tail
+        // Using: P(Z <= z) = 0.5 * erfc(-z / sqrt(2))
+        return if left_tail {
+            0.5 * erfc_approx(-z * std::f64::consts::FRAC_1_SQRT_2)
+        } else {
+            0.5 * erfc_approx(z * std::f64::consts::FRAC_1_SQRT_2)
+        };
+    }
+
+    // Fallback to exact calculation for small variance (rare for our use case)
+    let left_tail = (x as f64) < mean;
     let min = if left_tail { 0 } else { x };
     let max = if left_tail { x } else { n };
 
+    let log_p = p.ln();
+    let log_1_minus_p = (1.0 - p).ln();
+
     let mut total_p = 0.0;
     for i in min..=max {
-        total_p += factorial(n) / (factorial(n - i) * factorial(i))
-            * p.powi(i as i32)
-            * (1.0 - p).powi((n - i) as i32);
+        let log_binom_coeff = log_factorial(n) - log_factorial(n - i) - log_factorial(i);
+        let log_term = log_binom_coeff + (i as f64) * log_p + ((n - i) as f64) * log_1_minus_p;
+        total_p += log_term.exp();
     }
 
     total_p
 }
 
-/// Calculate factorial with f64 to handle large numbers.
-fn factorial(n: usize) -> f64 {
-    let mut res = 1.0;
-    for i in 2..=n {
-        res *= i as f64;
-    }
-    res
+/// Pre-computed Stirling numbers table for O(1) lookup.
+/// STIRLING_TABLE[n][k] = S(n, k) for n=0..=MAX_SECRET_LENGTH, k=0..=64
+static STIRLING_TABLE: OnceLock<[[f64; 65]; MAX_SECRET_LENGTH + 1]> = OnceLock::new();
+
+/// Initialize the Stirling numbers table using DP.
+fn get_stirling_table() -> &'static [[f64; 65]; MAX_SECRET_LENGTH + 1] {
+    STIRLING_TABLE.get_or_init(|| {
+        let mut table = [[0.0; 65]; MAX_SECRET_LENGTH + 1];
+
+        // S(n, 1) = 1 for all n >= 1
+        // S(n, n) = 1 for all n >= 1
+        for n in 1..=MAX_SECRET_LENGTH {
+            table[n][1] = 1.0;
+            if n <= 64 {
+                table[n][n] = 1.0;
+            }
+        }
+
+        // Fill using DP: S(n,k) = k*S(n-1,k) + S(n-1,k-1)
+        for n in 2..=MAX_SECRET_LENGTH {
+            let max_k = n.min(64);
+            for k in 2..max_k {
+                table[n][k] = k as f64 * table[n - 1][k] + table[n - 1][k - 1];
+            }
+        }
+
+        table
+    })
 }
 
-/// Calculate probability based on number of distinct character values.
-/// Random strings tend to have more unique characters.
-fn p_random_distinct_values(s: &[u8], base: f64) -> f64 {
-    let total_possible: f64 = base.powi(s.len() as i32);
-    let num_distinct_values = count_distinct_values(s);
-
-    let mut num_more_extreme_outcomes: f64 = 0.0;
-    for i in 1..=num_distinct_values {
-        num_more_extreme_outcomes += num_possible_outcomes(s.len(), i, base as usize);
+/// Get Stirling number S(n, k) from precomputed table. O(1) lookup.
+#[inline]
+fn stirling(n: usize, k: usize) -> f64 {
+    if k == 0 || n == 0 || k > n {
+        return 0.0;
     }
-
-    num_more_extreme_outcomes / total_possible
-}
-
-fn count_distinct_values(s: &[u8]) -> usize {
-    let mut values_count = HashMap::<u8, usize>::new();
-    for b in s {
-        *values_count.entry(*b).or_insert(0) += 1;
-    }
-    values_count.len()
-}
-
-fn num_possible_outcomes(num_values: usize, num_distinct_values: usize, base: usize) -> f64 {
-    let mut res = base as f64;
-    for i in 1..num_distinct_values {
-        res *= (base - i) as f64;
-    }
-    res *= num_distinct_configurations(num_values, num_distinct_values);
-    res
-}
-
-/// Calculate number of distinct configurations using memoization.
-fn num_distinct_configurations(num_values: usize, num_distinct_values: usize) -> f64 {
-    if num_distinct_values == 1 || num_distinct_values == num_values {
+    if k == 1 || k == n {
         return 1.0;
     }
-
-    // Use a simple cache instead of the memoize crate
-    let mut cache: HashMap<(usize, usize, usize), f64> = HashMap::new();
-    num_distinct_configurations_aux(
-        num_distinct_values,
-        0,
-        num_values - num_distinct_values,
-        &mut cache,
-    )
+    get_stirling_table()[n][k]
 }
 
-fn num_distinct_configurations_aux(
-    num_positions: usize,
-    position: usize,
-    remaining_values: usize,
-    cache: &mut HashMap<(usize, usize, usize), f64>,
-) -> f64 {
-    if remaining_values == 0 {
-        return 1.0;
-    }
-
-    let key = (num_positions, position, remaining_values);
-    if let Some(&cached) = cache.get(&key) {
-        return cached;
-    }
-
-    let mut num_configs = 0.0;
-    if position + 1 < num_positions {
-        num_configs +=
-            num_distinct_configurations_aux(num_positions, position + 1, remaining_values, cache);
-    }
-    num_configs += (position + 1) as f64
-        * num_distinct_configurations_aux(num_positions, position, remaining_values - 1, cache);
-
-    cache.insert(key, num_configs);
-    num_configs
-}
 
 /// Check if a string is likely a random/secret string.
 /// Returns true if the string appears to be a secret.
@@ -281,8 +388,8 @@ fn is_secret_char(b: u8) -> bool {
 }
 
 /// Extract potential secret tokens from text.
-/// Returns a vector of (start_index, token) pairs.
-pub fn extract_tokens(text: &str) -> Vec<(usize, String)> {
+/// Returns a vector of (start_index, end_index) pairs to avoid string allocations.
+pub fn extract_tokens(text: &str) -> Vec<(usize, usize)> {
     let mut tokens = Vec::new();
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -300,12 +407,11 @@ pub fn extract_tokens(text: &str) -> Vec<(usize, String)> {
             i += 1;
         }
 
-        let token = &text[start..i];
-        let len = token.len();
+        let len = i - start;
 
         // Only consider tokens in the right length range
         if len >= MIN_SECRET_LENGTH && len <= MAX_SECRET_LENGTH {
-            tokens.push((start, token.to_string()));
+            tokens.push((start, i));
         }
     }
 
@@ -331,10 +437,10 @@ pub fn redact_secret(secret: &str) -> String {
 pub fn redact_secrets_in_text(text: &str) -> (String, usize) {
     let tokens = extract_tokens(text);
 
-    // Filter to only actual secrets
-    let secrets: Vec<(usize, String)> = tokens
+    // Filter to only actual secrets (start, end positions)
+    let secrets: Vec<(usize, usize)> = tokens
         .into_iter()
-        .filter(|(_, token)| is_random(token.as_bytes()))
+        .filter(|&(start, end)| is_random(text[start..end].as_bytes()))
         .collect();
 
     let count = secrets.len();
@@ -343,12 +449,19 @@ pub fn redact_secrets_in_text(text: &str) -> (String, usize) {
         return (text.to_string(), 0);
     }
 
-    // Replace secrets from end to start to preserve indices
-    let mut result = text.to_string();
-    for (start, secret) in secrets.into_iter().rev() {
-        let redacted = redact_secret(&secret);
-        result.replace_range(start..start + secret.len(), &redacted);
+    // Build result efficiently by copying non-secret parts and redacted secrets
+    let mut result = String::with_capacity(text.len());
+    let mut prev_end = 0;
+
+    for (start, end) in &secrets {
+        // Copy text before this secret
+        result.push_str(&text[prev_end..*start]);
+        // Add redacted secret
+        result.push_str(&redact_secret(&text[*start..*end]));
+        prev_end = *end;
     }
+    // Copy remaining text after last secret
+    result.push_str(&text[prev_end..]);
 
     (result, count)
 }
@@ -425,11 +538,9 @@ mod tests {
         let tokens = extract_tokens(text);
         assert!(!tokens.is_empty());
         // The token should be extracted (API_KEY is 7 chars, too short; the secret is 32 chars)
-        assert!(
-            tokens
-                .iter()
-                .any(|(_, t)| t == "sk_test_4eC39HqLyjWDarjtT1zdp7dc")
-        );
+        assert!(tokens
+            .iter()
+            .any(|&(start, end)| &text[start..end] == "sk_test_4eC39HqLyjWDarjtT1zdp7dc"));
     }
 
     #[test]
@@ -461,9 +572,9 @@ mod tests {
 
     #[test]
     fn test_distinct_values() {
-        assert_eq!(count_distinct_values(b"abca"), 3);
-        assert_eq!(count_distinct_values(b"aaaaaa"), 1);
-        assert_eq!(count_distinct_values(b"abcdef"), 6);
+        assert_eq!(analyze_token(b"abca").distinct_count, 3);
+        assert_eq!(analyze_token(b"aaaaaa").distinct_count, 1);
+        assert_eq!(analyze_token(b"abcdef").distinct_count, 6);
     }
 
     #[test]

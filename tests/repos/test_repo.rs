@@ -21,6 +21,7 @@ pub struct TestRepo {
     path: PathBuf,
     pub feature_flags: FeatureFlags,
     pub(crate) config_patch: Option<ConfigPatch>,
+    test_db_path: PathBuf,
 }
 
 impl TestRepo {
@@ -29,6 +30,8 @@ impl TestRepo {
         let n: u64 = rng.gen_range(0..10000000000);
         let base = std::env::temp_dir();
         let path = base.join(n.to_string());
+        // Create DB path as sibling to repo (not inside) to avoid git conflicts with WAL files
+        let test_db_path = base.join(format!("{}-db", n));
         let repo = Repository::init(&path).expect("failed to initialize git2 repository");
         let mut config = Repository::config(&repo).expect("failed to initialize git2 repository");
         config
@@ -42,10 +45,12 @@ impl TestRepo {
             path,
             feature_flags: FeatureFlags::default(),
             config_patch: None,
+            test_db_path,
         };
 
         repo.patch_git_ai_config(|patch| {
-            patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+            patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions = share everywhere
+            patch.prompt_storage = Some("notes".to_string()); // Use notes mode for tests
         });
 
         repo
@@ -73,17 +78,22 @@ impl TestRepo {
         // Create bare upstream repository (acts as the remote server)
         let upstream_n: u64 = rng.gen_range(0..10000000000);
         let upstream_path = base.join(upstream_n.to_string());
+        // Create DB path as sibling to repo (not inside) to avoid git conflicts with WAL files
+        let upstream_test_db_path = base.join(format!("{}-db", upstream_n));
         Repository::init_bare(&upstream_path).expect("failed to init bare upstream repository");
 
         let upstream = Self {
             path: upstream_path.clone(),
             feature_flags: FeatureFlags::default(),
             config_patch: None,
+            test_db_path: upstream_test_db_path,
         };
 
         // Clone upstream to create mirror with origin configured
         let mirror_n: u64 = rng.gen_range(0..10000000000);
         let mirror_path = base.join(mirror_n.to_string());
+        // Create DB path as sibling to repo (not inside) to avoid git conflicts with WAL files
+        let mirror_test_db_path = base.join(format!("{}-db", mirror_n));
 
         let clone_output = Command::new("git")
             .args([
@@ -117,16 +127,22 @@ impl TestRepo {
             path: mirror_path,
             feature_flags: FeatureFlags::default(),
             config_patch: None,
+            test_db_path: mirror_test_db_path,
         };
 
         mirror.patch_git_ai_config(|patch| {
-            patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+            patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions = share everywhere
+            patch.prompt_storage = Some("notes".to_string()); // Use notes mode for tests
         });
 
         (mirror, upstream)
     }
 
     pub fn new_at_path(path: &PathBuf) -> Self {
+        // Create DB path as sibling to repo (not inside) to avoid git conflicts with WAL files
+        let mut rng = rand::thread_rng();
+        let db_n: u64 = rng.gen_range(0..10000000000);
+        let test_db_path = std::env::temp_dir().join(format!("{}-db", db_n));
         let repo = Repository::init(path).expect("failed to initialize git2 repository");
         let mut config = Repository::config(&repo).expect("failed to initialize git2 repository");
         config
@@ -139,6 +155,7 @@ impl TestRepo {
             path: path.clone(),
             feature_flags: FeatureFlags::default(),
             config_patch: None,
+            test_db_path,
         }
     }
 
@@ -175,6 +192,10 @@ impl TestRepo {
         self.path
             .canonicalize()
             .expect("failed to canonicalize test repo path")
+    }
+
+    pub fn test_db_path(&self) -> &PathBuf {
+        &self.test_db_path
     }
 
     pub fn stats(&self) -> Result<CommitStats, String> {
@@ -313,6 +334,9 @@ impl TestRepo {
             }
         }
 
+        // Add test database path for isolation
+        command.env("GIT_AI_TEST_DB_PATH", self.test_db_path.to_str().unwrap());
+
         // Add custom environment variables
         for (key, value) in envs {
             command.env(key, value);
@@ -353,6 +377,9 @@ impl TestRepo {
                 command.env("GIT_AI_TEST_CONFIG_PATCH", patch_json);
             }
         }
+
+        // Add test database path for isolation
+        command.env("GIT_AI_TEST_DB_PATH", self.test_db_path.to_str().unwrap());
 
         // Add custom environment variables
         for (key, value) in envs {
@@ -534,6 +561,8 @@ impl TestRepo {
 impl Drop for TestRepo {
     fn drop(&mut self) {
         fs::remove_dir_all(self.path.clone()).expect("failed to remove test repo");
+        // Also clean up the test database directory (may not exist if no DB operations were done)
+        let _ = fs::remove_dir_all(self.test_db_path.clone());
     }
 }
 

@@ -1,16 +1,14 @@
+use crate::api::{ApiClient, ApiContext};
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
+use crate::authorship::prompt_utils::{update_prompt_from_tool, PromptUpdateResult};
 use crate::authorship::secrets::{redact_secrets_from_prompts, strip_prompt_messages};
 use crate::authorship::stats::{stats_for_commit_stats, write_stats_to_terminal};
 use crate::authorship::virtual_attribution::VirtualAttributions;
-use crate::authorship::working_log::Checkpoint;
-use crate::commands::checkpoint_agent::agent_presets::{
-    ClaudePreset, ContinueCliPreset, CursorPreset, GeminiPreset, GithubCopilotPreset,
-};
+use crate::authorship::working_log::{Checkpoint, CheckpointKind};
 use crate::config::Config;
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
 use crate::git::repository::Repository;
-use crate::observability::log_error;
 use crate::utils::debug_log;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
@@ -42,6 +40,22 @@ pub fn post_commit(
     // Update prompts/transcripts to their latest versions and persist to disk
     // Do this BEFORE filtering so that all checkpoints (including untracked files) are updated
     update_prompts_to_latest(&mut parent_working_log)?;
+
+    // Batch upsert all prompts to database after refreshing (non-fatal if it fails)
+    if let Err(e) = batch_upsert_prompts_to_db(&parent_working_log, &working_log, &commit_sha) {
+        debug_log(&format!(
+            "[Warning] Failed to batch upsert prompts to database: {}",
+            e
+        ));
+        crate::observability::log_error(
+            &e,
+            Some(serde_json::json!({
+                "operation": "post_commit_batch_upsert",
+                "commit_sha": commit_sha
+            })),
+        );
+    }
+
     working_log.write_all_checkpoints(&parent_working_log)?;
 
     // Filter out untracked files from the working log
@@ -74,13 +88,65 @@ pub fn post_commit(
 
     authorship_log.metadata.base_commit_sha = commit_sha.clone();
 
-    // Strip prompt messages if prompts should not be shared, otherwise redact secrets
-    if !Config::get().should_share_prompts(&Some(repo.clone())) {
-        strip_prompt_messages(&mut authorship_log.metadata.prompts);
-    } else {
-        let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
-        if count > 0 {
-            debug_log(&format!("Redacted {} secrets from prompts", count));
+    // Handle prompts based on prompt_storage setting and exclusion rules
+    let should_exclude = Config::get().should_exclude_prompts(&Some(repo.clone()));
+    let prompt_storage = Config::get().prompt_storage();
+
+    match prompt_storage {
+        "local" => {
+            // Local only: strip all messages from notes (they stay in sqlite only)
+            strip_prompt_messages(&mut authorship_log.metadata.prompts);
+        }
+        "notes" => {
+            // Store in notes: redact secrets but keep messages in notes
+            if should_exclude {
+                strip_prompt_messages(&mut authorship_log.metadata.prompts);
+            } else {
+                let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
+                if count > 0 {
+                    debug_log(&format!("Redacted {} secrets from prompts", count));
+                }
+            }
+        }
+        _ => {
+            // "default" - attempt CAS upload, NEVER keep messages in notes
+            // Check conditions for CAS upload:
+            // - prompt_storage == "default" (implied here)
+            // - repo not in exclusion list
+            // - user is logged in OR using custom API URL
+            let context = ApiContext::new(None);
+            let client = ApiClient::new(context);
+            let using_custom_api =
+                Config::get().api_base_url() != crate::config::DEFAULT_API_BASE_URL;
+            let should_enqueue_cas =
+                !should_exclude && (client.is_logged_in() || using_custom_api);
+
+            if should_enqueue_cas {
+                // Redact secrets before uploading to CAS
+                let redaction_count =
+                    redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
+                if redaction_count > 0 {
+                    debug_log(&format!(
+                        "Redacted {} secrets from prompts before CAS upload",
+                        redaction_count
+                    ));
+                }
+
+                if let Err(e) =
+                    enqueue_prompt_messages_to_cas(repo, &mut authorship_log.metadata.prompts)
+                {
+                    debug_log(&format!(
+                        "[Warning] Failed to enqueue prompt messages to CAS: {}",
+                        e
+                    ));
+                    // Enqueue failed - still strip messages (never keep in notes for "default")
+                    strip_prompt_messages(&mut authorship_log.metadata.prompts);
+                }
+                // Success: enqueue function already cleared messages
+            } else {
+                // Not enqueueing - strip messages (never keep in notes for "default")
+                strip_prompt_messages(&mut authorship_log.metadata.prompts);
+            }
         }
     }
 
@@ -99,9 +165,7 @@ pub fn post_commit(
     }
 
     // // Clean up old working log
-    // if !cfg!(debug_assertions) {
     repo_storage.delete_working_log_for_base_commit(&parent_sha)?;
-    // }
 
     if !supress_output {
         let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
@@ -178,197 +242,156 @@ fn update_prompts_to_latest(checkpoints: &mut [Checkpoint]) -> Result<(), GitAiE
         let checkpoint = &checkpoints[last_idx];
 
         if let Some(agent_id) = &checkpoint.agent_id {
-            // Dispatch to tool-specific update logic
-            let updated_data = match agent_id.tool.as_str() {
-                "cursor" => {
-                    let res = CursorPreset::fetch_latest_cursor_conversation(&agent_id.id);
-                    match res {
-                        Ok(Some((latest_transcript, latest_model))) => {
-                            Some((latest_transcript, latest_model))
-                        }
-                        Ok(None) => None,
-                        Err(e) => {
-                            debug_log(&format!(
-                                "Failed to fetch latest Cursor conversation for agent_id {}: {}",
-                                agent_id.id, e
-                            ));
-                            log_error(
-                                &e,
-                                Some(serde_json::json!({
-                                    "agent_tool": "cursor",
-                                    "operation": "fetch_latest_cursor_conversation"
-                                })),
-                            );
-                            None
-                        }
-                    }
-                }
-                "github-copilot" => {
-                    // Try to load transcript from agent_metadata if available
-                    if let Some(metadata) = &checkpoint.agent_metadata {
-                        if let Some(chat_session_path) = metadata.get("chat_session_path") {
-                            // Try to read and parse the chat session JSON
-                            match GithubCopilotPreset::transcript_and_model_from_copilot_session_json(chat_session_path) {
-                                Ok((transcript, model, _)) => {
-                                    // Update to the latest transcript (similar to Cursor behavior)
-                                    // This handles both cases: initial load failure and getting latest version
-                                    Some((transcript, model.unwrap_or_else(|| agent_id.model.clone())))
-                                }
-                                Err(e) => {
-                                    debug_log(&format!(
-                                        "Failed to parse GitHub Copilot chat session JSON from {} for agent_id {}: {}",
-                                        chat_session_path, agent_id.id, e
-                                    ));
-                                    log_error(
-                                        &e,
-                                        Some(serde_json::json!({
-                                            "agent_tool": "github-copilot",
-                                            "operation": "transcript_and_model_from_copilot_session_json"
-                                        })),
-                                    );
-                                    None
-                                }
-                            }
-                        } else {
-                            // No chat_session_path in metadata
-                            None
-                        }
-                    } else {
-                        // No agent_metadata available
-                        None
-                    }
-                }
-                "claude" => {
-                    // Try to load transcript from agent_metadata if available
-                    if let Some(metadata) = &checkpoint.agent_metadata {
-                        if let Some(transcript_path) = metadata.get("transcript_path") {
-                            // Try to read and parse the transcript JSONL
-                            match ClaudePreset::transcript_and_model_from_claude_code_jsonl(
-                                transcript_path,
-                            ) {
-                                Ok((transcript, model)) => {
-                                    // Update to the latest transcript (similar to Cursor behavior)
-                                    // This handles both cases: initial load failure and getting latest version
-                                    Some((
-                                        transcript,
-                                        model.unwrap_or_else(|| agent_id.model.clone()),
-                                    ))
-                                }
-                                Err(e) => {
-                                    debug_log(&format!(
-                                        "Failed to parse Claude JSONL transcript from {} for agent_id {}: {}",
-                                        transcript_path, agent_id.id, e
-                                    ));
-                                    log_error(
-                                        &e,
-                                        Some(serde_json::json!({
-                                            "agent_tool": "claude",
-                                            "operation": "transcript_and_model_from_claude_code_jsonl"
-                                        })),
-                                    );
-                                    None
-                                }
-                            }
-                        } else {
-                            // No transcript_path in metadata
-                            None
-                        }
-                    } else {
-                        // No agent_metadata available
-                        None
-                    }
-                }
-                "gemini" => {
-                    // Try to load transcript from agent_metadata if available
-                    if let Some(metadata) = &checkpoint.agent_metadata {
-                        if let Some(transcript_path) = metadata.get("transcript_path") {
-                            // Try to read and parse the transcript JSON
-                            match GeminiPreset::transcript_and_model_from_gemini_json(
-                                transcript_path,
-                            ) {
-                                Ok((transcript, model)) => {
-                                    // Update to the latest transcript (similar to Cursor behavior)
-                                    // This handles both cases: initial load failure and getting latest version
-                                    Some((
-                                        transcript,
-                                        model.unwrap_or_else(|| agent_id.model.clone()),
-                                    ))
-                                }
-                                Err(e) => {
-                                    debug_log(&format!(
-                                        "Failed to parse Gemini JSON transcript from {} for agent_id {}: {}",
-                                        transcript_path, agent_id.id, e
-                                    ));
-                                    log_error(
-                                        &e,
-                                        Some(serde_json::json!({
-                                            "agent_tool": "gemini",
-                                            "operation": "transcript_and_model_from_gemini_json"
-                                        })),
-                                    );
-                                    None
-                                }
-                            }
-                        } else {
-                            // No transcript_path in metadata
-                            None
-                        }
-                    } else {
-                        // No agent_metadata available
-                        None
-                    }
-                }
-                "continue-cli" => {
-                    // Try to load transcript from agent_metadata if available
-                    if let Some(metadata) = &checkpoint.agent_metadata {
-                        if let Some(transcript_path) = metadata.get("transcript_path") {
-                            // Try to read and parse the transcript JSON
-                            match ContinueCliPreset::transcript_from_continue_json(transcript_path)
-                            {
-                                Ok(transcript) => {
-                                    // Update to the latest transcript (similar to Cursor behavior)
-                                    // This handles both cases: initial load failure and getting latest version
-                                    // IMPORTANT: Always preserve the original model from agent_id (don't overwrite)
-                                    Some((transcript, agent_id.model.clone()))
-                                }
-                                Err(e) => {
-                                    debug_log(&format!(
-                                        "Failed to parse Continue CLI JSON transcript from {} for agent_id {}: {}",
-                                        transcript_path, agent_id.id, e
-                                    ));
-                                    log_error(
-                                        &e,
-                                        Some(serde_json::json!({
-                                            "agent_tool": "continue-cli",
-                                            "operation": "transcript_from_continue_json"
-                                        })),
-                                    );
-                                    None
-                                }
-                            }
-                        } else {
-                            // No transcript_path in metadata
-                            None
-                        }
-                    } else {
-                        // No agent_metadata available
-                        None
-                    }
-                }
-                _ => {
-                    // Unknown tool, skip updating
-                    None
-                }
-            };
+            // Use shared update logic from prompt_updater module
+            let result = update_prompt_from_tool(
+                &agent_id.tool,
+                &agent_id.id,
+                checkpoint.agent_metadata.as_ref(),
+                &agent_id.model,
+            );
 
             // Apply the update to the last checkpoint only
-            if let Some((latest_transcript, latest_model)) = updated_data {
-                let checkpoint = &mut checkpoints[last_idx];
-                checkpoint.transcript = Some(latest_transcript);
-                if let Some(agent_id) = &mut checkpoint.agent_id {
-                    agent_id.model = latest_model;
+            match result {
+                PromptUpdateResult::Updated(latest_transcript, latest_model) => {
+                    let checkpoint = &mut checkpoints[last_idx];
+                    checkpoint.transcript = Some(latest_transcript);
+                    if let Some(agent_id) = &mut checkpoint.agent_id {
+                        agent_id.model = latest_model;
+                    }
+                }
+                PromptUpdateResult::Unchanged => {
+                    // No update available, keep existing transcript
+                }
+                PromptUpdateResult::Failed(_e) => {
+                    // Error already logged in update_prompt_from_tool
+                    // Continue processing other checkpoints
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Batch upsert all prompts from checkpoints to the internal database.
+/// For each unique agent_id (tool:id), only the LAST checkpoint is inserted.
+/// This mirrors the deduplication logic in update_prompts_to_latest().
+fn batch_upsert_prompts_to_db(
+    checkpoints: &[Checkpoint],
+    working_log: &crate::git::repo_storage::PersistedWorkingLog,
+    commit_sha: &str,
+) -> Result<(), GitAiError> {
+    use crate::authorship::internal_db::{InternalDatabase, PromptDbRecord};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let workdir = working_log.repo_workdir.to_string_lossy().to_string();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    // Group checkpoints by agent_id, keeping track of the LAST index for each.
+    // This mirrors the logic in update_prompts_to_latest().
+    let mut last_checkpoint_by_agent: HashMap<String, usize> = HashMap::new();
+
+    for (idx, checkpoint) in checkpoints.iter().enumerate() {
+        if checkpoint.kind == CheckpointKind::Human {
+            continue;
+        }
+        if let Some(agent_id) = &checkpoint.agent_id {
+            let key = format!("{}:{}", agent_id.tool, agent_id.id);
+            // Always update to the latest index (overwrites previous)
+            last_checkpoint_by_agent.insert(key, idx);
+        }
+    }
+
+    // Only create records for the LAST checkpoint of each agent_id
+    let mut records = Vec::new();
+    for (_agent_key, idx) in last_checkpoint_by_agent {
+        let checkpoint = &checkpoints[idx];
+        if let Some(mut record) = PromptDbRecord::from_checkpoint(
+            checkpoint,
+            Some(workdir.clone()),
+            Some(commit_sha.to_string()),
+        ) {
+            record.updated_at = now;
+            records.push(record);
+        }
+    }
+
+    if records.is_empty() {
+        return Ok(());
+    }
+
+    let db = InternalDatabase::global()?;
+    let mut db_guard = db
+        .lock()
+        .map_err(|e| GitAiError::Generic(format!("Failed to lock database: {}", e)))?;
+
+    db_guard.batch_upsert_prompts(&records)?;
+
+    Ok(())
+}
+
+/// Enqueue prompt messages to CAS for external storage.
+/// For each prompt with non-empty messages:
+/// - Serialize messages to JSON
+/// - Enqueue to CAS (returns hash)
+/// - Set messages_url (format: {api_base_url}/cas/{hash}) and clear messages
+fn enqueue_prompt_messages_to_cas(
+    repo: &Repository,
+    prompts: &mut std::collections::BTreeMap<String, crate::authorship::authorship_log::PromptRecord>,
+) -> Result<(), GitAiError> {
+    use crate::authorship::internal_db::InternalDatabase;
+
+    let db = InternalDatabase::global()?;
+    let mut db_lock = db
+        .lock()
+        .map_err(|e| GitAiError::Generic(format!("Failed to lock database: {}", e)))?;
+
+    // CAS metadata for prompt messages
+    let mut metadata = HashMap::new();
+    metadata.insert("api_version".to_string(), "v1".to_string());
+    metadata.insert("kind".to_string(), "prompt".to_string());
+
+    // Get repo URL from default remote
+    let repo_url = repo
+        .get_default_remote()
+        .ok()
+        .flatten()
+        .and_then(|remote_name| {
+            repo.remotes_with_urls()
+                .ok()
+                .and_then(|remotes| {
+                    remotes
+                        .into_iter()
+                        .find(|(name, _)| name == &remote_name)
+                        .map(|(_, url)| url)
+                })
+        });
+
+    if let Some(url) = repo_url {
+        metadata.insert("repo_url".to_string(), url);
+    }
+
+    // Get API base URL for constructing messages_url
+    let api_base_url = Config::get().api_base_url();
+
+    for (_key, prompt) in prompts.iter_mut() {
+        if !prompt.messages.is_empty() {
+            // Wrap messages in CasMessagesObject and serialize to JSON
+            let messages_obj = crate::api::types::CasMessagesObject {
+                messages: prompt.messages.clone(),
+            };
+            let messages_json = serde_json::to_value(&messages_obj)
+                .map_err(|e| GitAiError::Generic(format!("Failed to serialize messages: {}", e)))?;
+
+            // Enqueue to CAS (returns hash)
+            let hash = db_lock.enqueue_cas_object(&messages_json, Some(&metadata))?;
+
+            // Set full URL and clear messages
+            prompt.messages_url = Some(format!("{}/cas/{}", api_base_url, hash));
+            prompt.messages.clear();
         }
     }
 

@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use crate::authorship::internal_db::InternalDatabase;
 use crate::authorship::range_authorship;
 use crate::authorship::stats::stats_command;
 use crate::authorship::working_log::{AgentId, CheckpointKind};
@@ -38,6 +39,14 @@ pub fn handle_git_ai(args: &[String]) {
     let config = config::Config::get();
 
     let allowed_repository = config.is_allowed_repository(&repository_option);
+
+    // Start DB warmup early for commands that need database access
+    match args[0].as_str() {
+        "checkpoint" | "show-prompt" | "share" | "sync-prompts" | "flush-cas" => {
+            InternalDatabase::warmup();
+        }
+        _ => {}
+    }
 
     match args[0].as_str() {
         "help" | "--help" | "-h" => {
@@ -115,8 +124,17 @@ pub fn handle_git_ai(args: &[String]) {
         "flush-logs" => {
             commands::flush_logs::handle_flush_logs(&args[1..]);
         }
+        "flush-cas" => {
+            commands::flush_cas::handle_flush_cas(&args[1..]);
+        }
         "show-prompt" => {
             commands::show_prompt::handle_show_prompt(&args[1..]);
+        }
+        "share" => {
+            commands::share::handle_share(&args[1..]);
+        }
+        "sync-prompts" => {
+            commands::sync_prompts::handle_sync_prompts(&args[1..]);
         }
         #[cfg(debug_assertions)]
         "show-transcript" => {
@@ -155,6 +173,12 @@ fn print_help() {
     eprintln!(
         "    --offset <n>          Skip n occurrences (0 = most recent, mutually exclusive with --commit)"
     );
+    eprintln!("  share <id>         Share a prompt by creating a bundle");
+    eprintln!("    --title <title>       Custom title for the bundle (default: auto-generated)");
+    eprintln!("  sync-prompts       Update prompts in database to latest versions");
+    eprintln!("    --since <time>        Only sync prompts updated after this time");
+    eprintln!("                          Formats: '1d', '2h', '1w', Unix timestamp, ISO8601, YYYY-MM-DD");
+    eprintln!("    --workdir <path>      Only sync prompts from specific repository");
     eprintln!("  config             View and manage git-ai configuration");
     eprintln!("                        Show all config as formatted JSON");
     eprintln!("    <key>                 Show specific config value (supports dot notation)");

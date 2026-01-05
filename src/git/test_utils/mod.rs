@@ -270,6 +270,19 @@ pub struct TmpRepo {
 impl TmpRepo {
     /// Creates a new temporary repository with a randomly generated directory
     pub fn new() -> Result<Self, GitAiError> {
+        // Set test database path if not already set (for in-process unit tests)
+        // OnceLock means DB is initialized once per process, so all unit tests
+        // in this process will share this test DB - but won't touch production DB
+        if std::env::var("GIT_AI_TEST_DB_PATH").is_err() {
+            let test_db_path = std::env::temp_dir().join("git-ai-unit-test-db");
+            // SAFETY: This is only called in test code, and we're setting a test-specific
+            // env var before any threads access the database. The OnceLock pattern ensures
+            // the database path is read only once, so this is safe.
+            unsafe {
+                std::env::set_var("GIT_AI_TEST_DB_PATH", &test_db_path);
+            }
+        }
+
         // Generate a robust, unique temporary directory path
         let tmp_dir = create_unique_tmp_dir("git-ai-tmp")?;
 

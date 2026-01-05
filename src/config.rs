@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use dirs;
 
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
@@ -12,9 +13,12 @@ use crate::git::repository::Repository;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::RwLock;
 
+/// Default API base URL for comparison
+pub const DEFAULT_API_BASE_URL: &str = "https://usegitai.com";
+
 pub struct Config {
     git_path: String,
-    share_prompts_in_repositories: Vec<Pattern>,
+    exclude_prompts_in_repositories: Vec<Pattern>,
     allow_repositories: Vec<Pattern>,
     exclude_repositories: Vec<Pattern>,
     telemetry_oss_disabled: bool,
@@ -23,6 +27,8 @@ pub struct Config {
     disable_auto_updates: bool,
     update_channel: UpdateChannel,
     feature_flags: FeatureFlags,
+    api_base_url: String,
+    prompt_storage: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +64,7 @@ pub struct FileConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub share_prompts_in_repositories: Option<Vec<String>>,
+    pub exclude_prompts_in_repositories: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_repositories: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,6 +81,10 @@ pub struct FileConfig {
     pub update_channel: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_flags: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_storage: Option<String>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -88,13 +98,15 @@ static TEST_FEATURE_FLAGS_OVERRIDE: RwLock<Option<FeatureFlags>> = RwLock::new(N
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub share_prompts_in_repositories: Option<Vec<String>>,
+    pub exclude_prompts_in_repositories: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telemetry_oss_disabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_version_checks: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disable_auto_updates: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_storage: Option<String>,
 }
 
 impl Config {
@@ -156,11 +168,25 @@ impl Config {
         }
     }
 
-    /// Returns true if prompts should be shared for the given repository.
-    /// Local repositories (no remotes) always share prompts as they're considered safe.
-    /// For repositories with remotes, empty share_prompts_in_repositories means no sharing (opt-in).
-    pub fn should_share_prompts(&self, repository: &Option<Repository>) -> bool {
-        // Fetch remotes once
+    /// Returns true if prompts should be excluded (not shared) for the given repository.
+    /// This uses a blacklist model: empty list = share everywhere, patterns = repos to exclude.
+    /// Local repositories (no remotes) are only excluded if wildcard "*" pattern is present.
+    pub fn should_exclude_prompts(&self, repository: &Option<Repository>) -> bool {
+        // Empty exclusion list = never exclude
+        if self.exclude_prompts_in_repositories.is_empty() {
+            return false;
+        }
+
+        // Check for wildcard "*" pattern - excludes ALL repos including local
+        let has_wildcard = self
+            .exclude_prompts_in_repositories
+            .iter()
+            .any(|pattern| pattern.as_str() == "*");
+        if has_wildcard {
+            return true;
+        }
+
+        // Fetch remotes
         let remotes = repository
             .as_ref()
             .and_then(|repo| repo.remotes_with_urls().ok());
@@ -168,21 +194,18 @@ impl Config {
         match remotes {
             Some(remotes) => {
                 if remotes.is_empty() {
-                    // No remotes = local-only repo, always safe to share
-                    true
-                } else if self.share_prompts_in_repositories.is_empty() {
-                    // Has remotes but no patterns configured = don't share
+                    // No remotes = local-only repo, not excluded (unless wildcard, handled above)
                     false
                 } else {
-                    // Has remotes and patterns, check if any match
+                    // Has remotes - check if any match exclusion patterns
                     remotes.iter().any(|remote| {
-                        self.share_prompts_in_repositories
+                        self.exclude_prompts_in_repositories
                             .iter()
                             .any(|pattern| pattern.matches(&remote.1))
                     })
                 }
             }
-            None => false, // No repository or can't get remotes = don't share
+            None => false, // Can't get remotes = don't exclude
         }
     }
 
@@ -210,6 +233,19 @@ impl Config {
 
     pub fn feature_flags(&self) -> &FeatureFlags {
         &self.feature_flags
+    }
+
+    /// Returns the API base URL
+    pub fn api_base_url(&self) -> &str {
+        &self.api_base_url
+    }
+
+    /// Returns the prompt storage mode: "default", "notes", or "local"
+    /// - "default": Messages uploaded via CAS API
+    /// - "notes": Messages stored in git notes
+    /// - "local": Messages only stored in sqlite (not in notes, not uploaded)
+    pub fn prompt_storage(&self) -> &str {
+        &self.prompt_storage
     }
 
     /// Override feature flags for testing purposes.
@@ -255,16 +291,16 @@ impl Config {
 
 fn build_config() -> Config {
     let file_cfg = load_file_config();
-    let share_prompts_in_repositories = file_cfg
+    let exclude_prompts_in_repositories = file_cfg
         .as_ref()
-        .and_then(|c| c.share_prompts_in_repositories.clone())
+        .and_then(|c| c.exclude_prompts_in_repositories.clone())
         .unwrap_or(vec![])
         .into_iter()
         .filter_map(|pattern_str| {
             Pattern::new(&pattern_str)
                 .map_err(|e| {
                     eprintln!(
-                        "Warning: Invalid glob pattern in share_prompts_in_repositories '{}': {}",
+                        "Warning: Invalid glob pattern in exclude_prompts_in_repositories '{}': {}",
                         pattern_str, e
                     );
                 })
@@ -337,11 +373,35 @@ fn build_config() -> Config {
     // Build feature flags from file config
     let feature_flags = build_feature_flags(&file_cfg);
 
+    // Get API base URL from config, env var, or default
+    let api_base_url = file_cfg
+        .as_ref()
+        .and_then(|c| c.api_base_url.clone())
+        .or_else(|| env::var("GIT_AI_API_BASE_URL").ok())
+        .unwrap_or_else(|| DEFAULT_API_BASE_URL.to_string());
+
+    // Get prompt_storage setting (defaults to "default")
+    // Valid values: "default", "notes", "local"
+    let prompt_storage = file_cfg
+        .as_ref()
+        .and_then(|c| c.prompt_storage.clone())
+        .unwrap_or_else(|| "default".to_string());
+    let prompt_storage = match prompt_storage.as_str() {
+        "default" | "notes" | "local" => prompt_storage,
+        other => {
+            eprintln!(
+                "Warning: Invalid prompt_storage value '{}', using 'default'",
+                other
+            );
+            "default".to_string()
+        }
+    };
+
     #[cfg(any(test, feature = "test-support"))]
     {
         let mut config = Config {
             git_path,
-            share_prompts_in_repositories,
+            exclude_prompts_in_repositories,
             allow_repositories,
             exclude_repositories,
             telemetry_oss_disabled,
@@ -350,6 +410,8 @@ fn build_config() -> Config {
             disable_auto_updates,
             update_channel,
             feature_flags,
+            api_base_url,
+            prompt_storage,
         };
         apply_test_config_patch(&mut config);
         config
@@ -358,7 +420,7 @@ fn build_config() -> Config {
     #[cfg(not(any(test, feature = "test-support")))]
     Config {
         git_path,
-        share_prompts_in_repositories,
+        exclude_prompts_in_repositories,
         allow_repositories,
         exclude_repositories,
         telemetry_oss_disabled,
@@ -367,6 +429,8 @@ fn build_config() -> Config {
         disable_auto_updates,
         update_channel,
         feature_flags,
+        api_base_url,
+        prompt_storage,
     }
 }
 
@@ -434,16 +498,8 @@ fn load_file_config() -> Option<FileConfig> {
 }
 
 fn config_file_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        let home = env::var("USERPROFILE").ok()?;
-        Some(Path::new(&home).join(".git-ai").join("config.json"))
-    }
-    #[cfg(not(windows))]
-    {
-        let home = env::var("HOME").ok()?;
-        Some(Path::new(&home).join(".git-ai").join("config.json"))
-    }
+    let home = dirs::home_dir()?;
+    Some(home.join(".git-ai").join("config.json"))
 }
 
 /// Public accessor for config file path
@@ -524,14 +580,14 @@ fn is_executable(path: &Path) -> bool {
 fn apply_test_config_patch(config: &mut Config) {
     if let Ok(patch_json) = env::var("GIT_AI_TEST_CONFIG_PATCH") {
         if let Ok(patch) = serde_json::from_str::<ConfigPatch>(&patch_json) {
-            if let Some(patterns) = patch.share_prompts_in_repositories {
-                config.share_prompts_in_repositories = patterns
+            if let Some(patterns) = patch.exclude_prompts_in_repositories {
+                config.exclude_prompts_in_repositories = patterns
                     .into_iter()
                     .filter_map(|pattern_str| {
                         Pattern::new(&pattern_str)
                             .map_err(|e| {
                                 eprintln!(
-                                    "Warning: Invalid test pattern in share_prompts_in_repositories '{}': {}",
+                                    "Warning: Invalid test pattern in exclude_prompts_in_repositories '{}': {}",
                                     pattern_str, e
                                 );
                             })
@@ -548,6 +604,17 @@ fn apply_test_config_patch(config: &mut Config) {
             if let Some(disable_auto_updates) = patch.disable_auto_updates {
                 config.disable_auto_updates = disable_auto_updates;
             }
+            if let Some(prompt_storage) = patch.prompt_storage {
+                // Validate the value
+                if matches!(prompt_storage.as_str(), "default" | "notes" | "local") {
+                    config.prompt_storage = prompt_storage;
+                } else {
+                    eprintln!(
+                        "Warning: Invalid test prompt_storage value '{}', ignoring",
+                        prompt_storage
+                    );
+                }
+            }
         }
     }
 }
@@ -562,7 +629,7 @@ mod tests {
     ) -> Config {
         Config {
             git_path: "/usr/bin/git".to_string(),
-            share_prompts_in_repositories: vec![],
+            exclude_prompts_in_repositories: vec![],
             allow_repositories: allow_repositories
                 .into_iter()
                 .filter_map(|s| Pattern::new(&s).ok())
@@ -577,6 +644,8 @@ mod tests {
             disable_auto_updates: false,
             update_channel: UpdateChannel::Latest,
             feature_flags: FeatureFlags::default(),
+            api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            prompt_storage: "default".to_string(),
         }
     }
 
@@ -661,12 +730,12 @@ mod tests {
         assert!(!config.allow_repositories[0].matches("git@github.com:other/repo"));
     }
 
-    // Tests for share_prompts_in_repositories
+    // Tests for exclude_prompts_in_repositories (blacklist)
 
-    fn create_test_config_with_share_prompts(share_prompts_patterns: Vec<String>) -> Config {
+    fn create_test_config_with_exclude_prompts(exclude_prompts_patterns: Vec<String>) -> Config {
         Config {
             git_path: "/usr/bin/git".to_string(),
-            share_prompts_in_repositories: share_prompts_patterns
+            exclude_prompts_in_repositories: exclude_prompts_patterns
                 .into_iter()
                 .filter_map(|s| Pattern::new(&s).ok())
                 .collect(),
@@ -678,72 +747,79 @@ mod tests {
             disable_auto_updates: false,
             update_channel: UpdateChannel::Latest,
             feature_flags: FeatureFlags::default(),
+            api_base_url: DEFAULT_API_BASE_URL.to_string(),
+            prompt_storage: "default".to_string(),
         }
     }
 
     #[test]
-    fn test_should_share_prompts_empty_patterns_returns_false() {
-        let config = create_test_config_with_share_prompts(vec![]);
+    fn test_should_exclude_prompts_empty_patterns_returns_false() {
+        let config = create_test_config_with_exclude_prompts(vec![]);
 
-        // Empty patterns = share nowhere (opt-in model)
-        assert!(!config.should_share_prompts(&None));
+        // Empty patterns = share everywhere (blacklist model)
+        assert!(!config.should_exclude_prompts(&None));
     }
 
     #[test]
-    fn test_should_share_prompts_no_repository_returns_false() {
+    fn test_should_exclude_prompts_no_repository_returns_false() {
         let config =
-            create_test_config_with_share_prompts(vec!["https://github.com/*".to_string()]);
+            create_test_config_with_exclude_prompts(vec!["https://github.com/*".to_string()]);
 
-        // Even with patterns, no repository provided = don't share
-        assert!(!config.should_share_prompts(&None));
+        // Even with patterns, no repository provided = don't exclude (can't verify)
+        assert!(!config.should_exclude_prompts(&None));
     }
 
     #[test]
-    fn test_should_share_prompts_pattern_matching() {
+    fn test_should_exclude_prompts_pattern_matching() {
         let config =
-            create_test_config_with_share_prompts(vec!["https://github.com/myorg/*".to_string()]);
+            create_test_config_with_exclude_prompts(vec!["https://github.com/myorg/*".to_string()]);
 
         // Test that pattern is compiled correctly
-        assert!(!config.share_prompts_in_repositories.is_empty());
-        assert!(config.share_prompts_in_repositories[0].matches("https://github.com/myorg/repo1"));
-        assert!(config.share_prompts_in_repositories[0].matches("https://github.com/myorg/repo2"));
-        assert!(!config.share_prompts_in_repositories[0].matches("https://github.com/other/repo"));
+        assert!(!config.exclude_prompts_in_repositories.is_empty());
+        assert!(config.exclude_prompts_in_repositories[0].matches("https://github.com/myorg/repo1"));
+        assert!(config.exclude_prompts_in_repositories[0].matches("https://github.com/myorg/repo2"));
+        assert!(!config.exclude_prompts_in_repositories[0].matches("https://github.com/other/repo"));
     }
 
     #[test]
-    fn test_should_share_prompts_wildcard_all() {
-        let config = create_test_config_with_share_prompts(vec!["*".to_string()]);
+    fn test_should_exclude_prompts_wildcard_all() {
+        let config = create_test_config_with_exclude_prompts(vec!["*".to_string()]);
 
-        // Wildcard * should match any remote URL pattern
-        assert!(!config.share_prompts_in_repositories.is_empty());
-        assert!(config.share_prompts_in_repositories[0].matches("https://github.com/any/repo"));
-        assert!(config.share_prompts_in_repositories[0].matches("git@gitlab.com:any/project"));
+        // Wildcard * should match any remote URL pattern (exclude all)
+        assert!(!config.exclude_prompts_in_repositories.is_empty());
+        assert!(config.exclude_prompts_in_repositories[0].matches("https://github.com/any/repo"));
+        assert!(config.exclude_prompts_in_repositories[0].matches("git@gitlab.com:any/project"));
+
+        // Wildcard * should also exclude repos without remotes (None case)
+        assert!(config.should_exclude_prompts(&None));
     }
 
     #[test]
-    fn test_should_share_prompts_local_repo_always_shares() {
-        // Test 1: Local repo with no patterns configured should still share
-        let config_no_patterns = create_test_config_with_share_prompts(vec![]);
-        // Even with empty patterns, local repos (no remotes) should share
-        // This is tested via integration tests since we can't easily mock Repository
+    fn test_should_exclude_prompts_local_repo_not_excluded_without_wildcard() {
+        // Test 1: Local repo with no patterns configured - never excluded
+        let config_no_patterns = create_test_config_with_exclude_prompts(vec![]);
+        assert!(!config_no_patterns.should_exclude_prompts(&None));
 
-        // Test 2: Local repo with patterns configured should share
+        // Test 2: Local repo with non-wildcard patterns - not excluded
+        // (patterns only match against remotes, local repos have none)
         let config_with_patterns =
-            create_test_config_with_share_prompts(vec!["https://github.com/*".to_string()]);
+            create_test_config_with_exclude_prompts(vec!["https://github.com/*".to_string()]);
         assert!(
-            config_with_patterns.share_prompts_in_repositories[0]
+            config_with_patterns.exclude_prompts_in_repositories[0]
                 .matches("https://github.com/myorg/repo")
         );
+        // Non-wildcard patterns should NOT exclude repos without remotes
+        assert!(!config_with_patterns.should_exclude_prompts(&None));
     }
 
     #[test]
-    fn test_should_share_prompts_respects_patterns_when_remotes_exist() {
+    fn test_should_exclude_prompts_respects_patterns_when_remotes_exist() {
         let config =
-            create_test_config_with_share_prompts(vec!["https://github.com/trusted/*".to_string()]);
+            create_test_config_with_exclude_prompts(vec!["https://github.com/private/*".to_string()]);
 
-        // Pattern should match trusted repos
-        assert!(config.share_prompts_in_repositories[0].matches("https://github.com/trusted/repo"));
-        // Pattern should not match untrusted repos
-        assert!(!config.share_prompts_in_repositories[0].matches("https://github.com/other/repo"));
+        // Pattern should match private repos (to exclude)
+        assert!(config.exclude_prompts_in_repositories[0].matches("https://github.com/private/repo"));
+        // Pattern should not match other repos
+        assert!(!config.exclude_prompts_in_repositories[0].matches("https://github.com/public/repo"));
     }
 }

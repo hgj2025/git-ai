@@ -52,18 +52,24 @@ A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
 
 ![alt](https://github.com/acunniffe/git-ai/raw/main/assets/docs/bot.jpg)
 
-## Prompt Saving
-By default Git AI does not save prompts in AI Authorship Notes. To start saving prompts and link them to the lines of code generated, run: 
+## Prompt Storage
+By default Git AI stores prompt data locally only. To include prompts in git notes (authorship logs), set `prompt_storage` to `notes`:
 
 ```bash
-git-ai config set --add share_prompts_in_repositories "*"
+git-ai config set prompt_storage notes
 ```
 
-*or for specific repositories like this*
+When using notes mode, you can exclude specific repositories from having prompt data included:
 
 ```bash
-git-ai config set --add share_prompts_in_repositories https://github.com/org/repo.git
-git-ai config set --add share_prompts_in_repositories /path/to/repo  
+git-ai config set --add exclude_prompts_in_repositories https://github.com/private-org/*
+git-ai config set --add exclude_prompts_in_repositories /path/to/private/repo
+```
+
+*or to exclude all repositories:*
+
+```bash
+git-ai config set --add exclude_prompts_in_repositories "*"
 ```
 
 ## Goals of `git-ai` project

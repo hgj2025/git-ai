@@ -101,9 +101,9 @@ fn test_claude_e2e_prefers_latest_checkpoint_for_prompts() {
 
     let mut repo = TestRepo::new();
 
-    // Enable prompt sharing for all repositories
+    // Enable prompt sharing for all repositories (empty blacklist = no exclusions)
     repo.patch_git_ai_config(|patch| {
-        patch.share_prompts_in_repositories = Some(vec!["*".to_string()]);
+        patch.exclude_prompts_in_repositories = Some(vec![]); // No exclusions = share everywhere
     });
 
     let repo_root = repo.canonical_path();
