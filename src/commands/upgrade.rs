@@ -1,5 +1,7 @@
+use crate::api::client::ApiContext;
 use crate::config::{self, UpdateChannel};
 use crate::observability::log_message;
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::IsTerminal;
@@ -78,9 +80,16 @@ impl UpdateCache {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChannelInfo {
+    version: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    checksum: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReleasesResponse {
-    latest: String,
-    next: String,
+    channels: HashMap<String, ChannelInfo>,
 }
 
 fn get_update_check_cache_path() -> Option<PathBuf> {
@@ -166,8 +175,8 @@ fn persist_update_state(channel: UpdateChannel, release: Option<&ChannelRelease>
     write_update_cache(&cache);
 }
 
-fn releases_endpoint(base: &str) -> String {
-    format!("{}/api/releases", base.trim_end_matches('/'))
+fn releases_endpoint() -> &'static str {
+    "/worker/releases"
 }
 
 fn fetch_release_for_channel(
@@ -179,12 +188,10 @@ fn fetch_release_for_channel(
         return result;
     }
 
-    let current_version = env!("CARGO_PKG_VERSION");
-    let url = releases_endpoint(api_base_url);
-    let response = minreq::get(&url)
-        .with_header("User-Agent", format!("git-ai/{}", current_version))
-        .with_timeout(5)
-        .send()
+    let context = ApiContext::new(Some(api_base_url.to_string())).with_timeout(5);
+
+    let response = context
+        .get(releases_endpoint())
         .map_err(|e| format!("Failed to check for updates: {}", e))?;
 
     let body = response
@@ -200,12 +207,14 @@ fn release_from_response(
     releases: ReleasesResponse,
     channel: UpdateChannel,
 ) -> Result<ChannelRelease, String> {
-    let tag_raw = match channel {
-        UpdateChannel::Latest => releases.latest,
-        UpdateChannel::Next => releases.next,
-    };
+    let channel_name = channel.as_str();
 
-    let tag = tag_raw.trim().to_string();
+    let channel_info = releases
+        .channels
+        .get(channel_name)
+        .ok_or_else(|| format!("Channel '{}' not found in releases", channel_name))?;
+
+    let tag = channel_info.version.trim().to_string();
     if tag.is_empty() {
         return Err("Release tag not found in response".to_string());
     }
@@ -626,7 +635,7 @@ mod tests {
         let action = run_impl_with_url(
             false,
             &mock_url(
-                r#"{"latest":"v999.0.0","next":"v999.0.0-next-deadbeef"}"#,
+                r#"{"channels":{"latest":{"version":"v999.0.0"},"next":{"version":"v999.0.0-next-deadbeef"}}}"#,
             ),
             UpdateChannel::Latest,
             true,
@@ -635,7 +644,7 @@ mod tests {
 
         // Same version without --force - already latest
         let same_version_payload = format!(
-            "{{\"latest\":\"v{}\",\"next\":\"v{}-next-deadbeef\"}}",
+            "{{\"channels\":{{\"latest\":{{\"version\":\"v{}\"}},\"next\":{{\"version\":\"v{}-next-deadbeef\"}}}}}}",
             current, current
         );
         let action = run_impl_with_url(
@@ -659,7 +668,7 @@ mod tests {
         let action = run_impl_with_url(
             false,
             &mock_url(
-                r#"{"latest":"v1.0.9","next":"v1.0.9-next-deadbeef"}"#,
+                r#"{"channels":{"latest":{"version":"v1.0.9"},"next":{"version":"v1.0.9-next-deadbeef"}}}"#,
             ),
             UpdateChannel::Latest,
             true,
@@ -670,7 +679,7 @@ mod tests {
         let action = run_impl_with_url(
             true,
             &mock_url(
-                r#"{"latest":"v1.0.9","next":"v1.0.9-next-deadbeef"}"#,
+                r#"{"channels":{"latest":{"version":"v1.0.9"},"next":{"version":"v1.0.9-next-deadbeef"}}}"#,
             ),
             UpdateChannel::Latest,
             true,
