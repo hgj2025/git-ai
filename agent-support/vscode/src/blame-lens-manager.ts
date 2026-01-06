@@ -942,6 +942,7 @@ export class BlameLensManager {
       after: {
         contentText: ` + ${displayName}`,
         color: gutterColorHex,
+        margin: '0 2px 0 0',
         
       },
       overviewRulerLane: vscode.OverviewRulerLane.Left,
