@@ -2,7 +2,7 @@
 # Add this job to your .gitlab-ci.yml file
 
 git-ai:
-  stage: deploy
+  stage: .pre
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
