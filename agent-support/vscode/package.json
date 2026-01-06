@@ -34,10 +34,20 @@
           "default": false,
           "description": "Enable tracking for AI tab completion detection (experimental)."
         },
-        "gitai.enableBlame": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable AI blame attribution in the status bar and gutter."
+        "gitai.blameMode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "line",
+            "all"
+          ],
+          "default": "line",
+          "enumDescriptions": [
+            "Disable gutter decorations (status bar still shows current line info)",
+            "Show gutter decorations for the current line's prompt only",
+            "Show gutter decorations for all AI-authored lines in the file"
+          ],
+          "description": "Control how AI blame attribution is displayed in the editor gutter."
         }
       }
     },
