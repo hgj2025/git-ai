@@ -30,27 +30,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com
 
 ### Next step: **Just code and commit!**
 
-Once installed, Cursor, Claude Code and GitHub Copilot will automatically call the CLI to mark the code they generate as AI-authored.
+Once installed, all your Coding Agents will call Git AI in the background and mark the code they generate AI-authored.
 
-When you create a new commit, `git-ai` adds a git note that tracks which lines were AI-authored and prints the code authorship:
+After you commit, `git-ai` adds a git note to track which lines were AI-authored and scores each commit:
 
 <img src="https://github.com/acunniffe/git-ai/raw/main/assets/docs/graph.jpg" width="400" />
 
-If you're curious about the AI authorship of any file `git-ai blame` will show you which lines are AI generated:
+## Installing the Stats Bot (currently in-development)
 
-![alt](https://github.com/acunniffe/git-ai/raw/main/assets/docs/blame-cmd.jpg)
-
-## Installing the PR Bot (currently in-development)
-
-A PR Bot aggregates `git-ai` data at the PR, Repository and Organization levels:
+Aggregate `git-ai` data at the PR, developer, Repository and Organization levels:
 
 - AI authorship breakdown for every Pull Request
-- Measure % of code that is AI generated (and the trend)
-- AI Cost per-PR and accepted AI rate (measures how often AI code is accepted on first generation)
-
+- Measure % of code that is AI generated through the entire SDLC
+- Compare accepted-rate for code written by each Agent + Model. 
+- AI-Code Halflife (how durable is the AI code)
 > [Get early access by chatting with the maintainers](https://calendly.com/acunniffe/meeting-with-git-ai-authors)
 
-![alt](https://github.com/acunniffe/git-ai/raw/main/assets/docs/bot.jpg)
+![alt](https://github.com/acunniffe/git-ai/raw/main/assets/docs/dashboard.png)
 
 ## Prompt Storage
 By default Git AI stores prompt data locally only. To include prompts in git notes (authorship logs), set `prompt_storage` to `notes`:
