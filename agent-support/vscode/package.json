@@ -42,6 +42,7 @@
             "all"
           ],
           "default": "line",
+          "scope": "application",
           "enumDescriptions": [
             "Disable gutter decorations (status bar still shows current line info)",
             "Show gutter decorations for the current line's prompt only",
