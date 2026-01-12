@@ -694,7 +694,7 @@ impl AgentCheckpointPreset for CursorPreset {
                 GitAiError::PresetError("workspace_roots not found in hook_input".to_string())
             })?
             .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter_map(|v| v.as_str().map(|s| Self::normalize_cursor_path(s)))
             .collect::<Vec<String>>();
 
         let hook_event_name = hook_data
@@ -723,7 +723,8 @@ impl AgentCheckpointPreset for CursorPreset {
         let file_path = hook_data
             .get("file_path")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(Self::normalize_cursor_path)
+            .unwrap_or_default();
 
         let repo_working_dir = if !file_path.is_empty() {
             workspace_roots
@@ -832,6 +833,35 @@ impl AgentCheckpointPreset for CursorPreset {
 }
 
 impl CursorPreset {
+    /// Normalize Windows paths that Cursor sends in Unix-style format.
+    ///
+    /// On Windows, Cursor sometimes sends paths like `/c:/Users/...` instead of `C:\Users\...`.
+    /// This function converts those paths to proper Windows format.
+    #[cfg(windows)]
+    fn normalize_cursor_path(path: &str) -> String {
+        // Check for pattern like /c:/ or /C:/ at the start
+        // e.g. "/c:/Users/foo" -> "C:\Users\foo"
+        let mut chars = path.chars();
+        if chars.next() == Some('/') {
+            if let (Some(drive), Some(':')) = (chars.next(), chars.next()) {
+                if drive.is_ascii_alphabetic() {
+                    let rest: String = chars.collect();
+                    // Convert forward slashes to backslashes for Windows
+                    let normalized_rest = rest.replace('/', "\\");
+                    return format!("{}:{}", drive.to_ascii_uppercase(), normalized_rest);
+                }
+            }
+        }
+        // No conversion needed
+        path.to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn normalize_cursor_path(path: &str) -> String {
+        // On non-Windows platforms, no conversion needed
+        path.to_string()
+    }
+
     /// Fetch the latest version of a Cursor conversation from the database
     pub fn fetch_latest_cursor_conversation(
         conversation_id: &str,
