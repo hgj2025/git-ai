@@ -125,8 +125,8 @@ jobs:
         run: |
           file target/${{ matrix.target }}/release/git-ai.exe
 
-      - name: Strip binary (Windows)
-        if: contains(matrix.os, 'windows')
+      - name: Strip binary (Windows x64)
+        if: matrix.os == 'windows-latest'
         run: |
           strip target/${{ matrix.target }}/release/git-ai.exe
 
