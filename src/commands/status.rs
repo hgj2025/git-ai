@@ -1,8 +1,10 @@
-use crate::authorship::stats::{CommitStats, write_stats_to_terminal};
+use crate::authorship::stats::write_stats_to_terminal;
+use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::authorship::working_log::CheckpointKind;
 use crate::commands::checkpoint;
 use crate::error::GitAiError;
 use crate::git::find_repository;
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct CheckpointInfo {
@@ -62,11 +64,9 @@ fn run_status() -> Result<(), GitAiError> {
         return Ok(());
     }
 
-    let mut human_additions = 0u32;
-    let mut ai_additions = 0u32;
-    let mut total_deletions = 0u32;
-
+    // Collect checkpoint info for display (raw stats from checkpoints)
     let mut checkpoint_infos = Vec::new();
+    let mut total_deletions = 0u32;
 
     for checkpoint in checkpoints.iter().rev() {
         let (additions, deletions) = (
@@ -76,20 +76,11 @@ fn run_status() -> Result<(), GitAiError> {
 
         total_deletions += deletions;
 
-        match checkpoint.kind {
-            CheckpointKind::Human => {
-                human_additions += additions;
-            }
-            CheckpointKind::AiAgent | CheckpointKind::AiTab => {
-                ai_additions += additions;
-            }
-        }
-
         let tool_model = checkpoint
             .agent_id
             .as_ref()
             .map(|a| format!("{} {}", capitalize(&a.tool), &a.model))
-            .unwrap_or_else(|| "Human".to_string());
+            .unwrap_or_else(|| default_user_name.clone());
 
         let is_human = checkpoint.kind == CheckpointKind::Human;
         checkpoint_infos.push(CheckpointInfo {
@@ -101,15 +92,39 @@ fn run_status() -> Result<(), GitAiError> {
         });
     }
 
-    // Build CommitStats to reuse existing display function
-    let stats = CommitStats {
-        human_additions,
-        ai_additions,
-        ai_accepted: ai_additions, // For status, treat all AI as accepted
-        git_diff_added_lines: human_additions + ai_additions,
-        git_diff_deleted_lines: total_deletions,
-        ..Default::default()
-    };
+    // Use VirtualAttributions to calculate proper stats (like post_commit does)
+    // This accounts for overwrites and gives accurate line-level attribution
+    let working_va = VirtualAttributions::from_just_working_log(
+        repo.clone(),
+        head_sha.clone(),
+        Some(default_user_name.clone()),
+    )?;
+
+    // Get pathspecs for files in the working log
+    let pathspecs: HashSet<String> = checkpoints
+        .iter()
+        .flat_map(|cp| cp.entries.iter().map(|e| e.file.clone()))
+        .collect();
+
+    // For status, we want to show what would be committed
+    // Use HEAD as both parent and commit since we're showing working state
+    // The authorship_log will contain only the AI-attributed lines
+    let (authorship_log, _initial) = working_va.to_authorship_log_and_initial_working_log(
+        &repo,
+        &head_sha,
+        &head_sha, // Use HEAD as commit_sha for comparison
+        Some(&pathspecs),
+    )?;
+
+    // Calculate stats from the authorship log
+    // For git_diff stats, use the raw checkpoint totals since we don't have a commit diff
+    let total_additions: u32 = checkpoints.iter().map(|c| c.line_stats.additions).sum();
+
+    let stats = crate::authorship::stats::stats_from_authorship_log(
+        Some(&authorship_log),
+        total_additions,
+        total_deletions,
+    );
 
     // Use existing stats display
     write_stats_to_terminal(&stats, true);
