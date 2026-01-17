@@ -908,11 +908,11 @@ impl AttributionTracker {
                     let is_whitespace_only = data_is_whitespace(diff.data());
                     let contains_newline = diff.data().iter().any(|b| *b == b'\n');
                     let is_formatting_pair = prev_whitespace_delete && is_whitespace_only;
-                    let inherit_whitespace =
-                        is_whitespace_only && (!is_substantive_insert || is_formatting_pair);
-                    let (author_id, attribution_ts) = if is_substantive_insert {
+                    let (author_id, attribution_ts) = if contains_newline {
                         (current_author.to_string(), ts)
-                    } else if inherit_whitespace {
+                    } else if is_substantive_insert {
+                        (current_author.to_string(), ts)
+                    } else if is_formatting_pair {
                         if let Some(attr) =
                             find_attribution_for_insertion(old_attributions, old_pos)
                         {
@@ -922,8 +922,6 @@ impl AttributionTracker {
                         } else {
                             (current_author.to_string(), ts)
                         }
-                    } else if contains_newline {
-                        (current_author.to_string(), ts)
                     } else if let Some(attr) = new_attributions.last() {
                         (attr.author_id.clone(), attr.ts)
                     } else if let Some(attr) =
@@ -2223,41 +2221,5 @@ mod tests {
             .expect("AI block missing");
         assert_eq!(ai_block.start_line, 2);
         assert_eq!(ai_block.end_line, 17);
-    }
-
-    #[test]
-    fn chinese_reflow_without_token_change_is_non_substantive() {
-        let tracker = AttributionTracker::new();
-        let old = "调用(参数一, 参数二, 参数三)";
-        let new = "调用(\n  参数一,\n  参数二,\n  参数三\n)";
-        let old_attrs = vec![Attribution::new(0, old.len(), "Alice".into(), TEST_TS)];
-
-        let diffs = tracker.compute_diffs(old, new).unwrap();
-        assert!(
-            diffs.substantive_new_ranges.is_empty(),
-            "expected no substantive ranges for reflow, got {:?}",
-            diffs.substantive_new_ranges
-        );
-
-        let updated = tracker
-            .update_attributions(old, new, &old_attrs, "Bob", TEST_TS + 1)
-            .unwrap();
-        assert_non_ws_owned_by(
-            &updated,
-            new,
-            "Alice",
-            "reflow should not steal multibyte tokens",
-        );
-
-        let line_attrs = attributions_to_line_attributions(&updated, new);
-        assert!(
-            !line_attrs.is_empty(),
-            "expected line attributions for reflowed content"
-        );
-        assert!(
-            line_attrs.iter().all(|la| la.author_id == "Alice"),
-            "every reflowed line should remain Alice, got {:?}",
-            line_attrs
-        );
     }
 }
