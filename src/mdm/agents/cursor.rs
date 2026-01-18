@@ -329,12 +329,14 @@ impl HookInstaller for CursorInstaller {
                             message: "Cursor: Pending extension install".to_string(),
                         });
                     } else {
+                        println!("Installing extensions...");
+                        println!("\tInstalling extension 'git-ai.git-ai-vscode'...");
                         match install_vsc_editor_extension("cursor", "git-ai.git-ai-vscode") {
                             Ok(()) => {
                                 results.push(InstallResult {
                                     changed: true,
                                     diff: None,
-                                    message: "Cursor: Extension installed".to_string(),
+                                    message: "\tExtension 'git-ai.git-ai-vscode' was successfully installed.".to_string(),
                                 });
                             }
                             Err(e) => {
