@@ -14,6 +14,12 @@ echo "Creating symlinks from in gitwrap folder to target/$BUILD_TYPE"
 ln -sf $(pwd)/target/$BUILD_TYPE/git-ai $(pwd)/target/gitwrap/bin/git
 ln -sf $(pwd)/target/$BUILD_TYPE/git-ai $(pwd)/target/gitwrap/bin/git-ai
 
+echo "Installing hooks..."
+if ! $(pwd)/target/gitwrap/bin/git-ai install-hooks; then
+    echo "Error: Failed to install hooks" >&2
+    exit 1
+fi
+
 echo "In your shell profile,"
 echo "1. Remove any artifacts from running 'install.sh'"
 echo "2. Remove any aliases to git"
