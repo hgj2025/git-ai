@@ -761,7 +761,11 @@ fn test_rebase_exec() {
 }
 
 /// Test rebase with merge commits (--rebase-merges)
-/// Note: This test verifies that --rebase-merges flag is accepted and doesn't break authorship
+/// This test verifies the BFS fix for issue #328 where walk_commits_to_base
+/// was only following parent(0), missing side branch commits.
+///
+/// The test checks that authorship notes for rebased commits include files
+/// from side branches (reached via parent(1) of merge commits).
 #[test]
 fn test_rebase_preserve_merges() {
     let repo = TestRepo::new();
@@ -779,15 +783,16 @@ fn test_rebase_preserve_merges() {
     feature_file.set_contents(lines!["// AI feature".ai()]);
     repo.stage_all_and_commit("AI feature").unwrap();
 
-    // Create side branch from feature
+    // Create side branch from feature - this commit is only reachable via parent(1) of the merge
     repo.git(&["checkout", "-b", "side"]).unwrap();
     let mut side_file = repo.filename("side.txt");
     side_file.set_contents(lines!["// AI side".ai()]);
     repo.stage_all_and_commit("AI side").unwrap();
 
-    // Merge side into feature
+    // Merge side into feature with --no-ff to force a merge commit
+    // (creates merge commit where side is parent(1), feature is parent(0))
     repo.git(&["checkout", "feature"]).unwrap();
-    repo.git(&["merge", "side", "-m", "Merge side into feature"])
+    repo.git(&["merge", "--no-ff", "side", "-m", "Merge side into feature"])
         .unwrap();
 
     // Advance main
@@ -797,12 +802,42 @@ fn test_rebase_preserve_merges() {
     repo.stage_all_and_commit("Main work").unwrap();
     let base = repo.git(&["rev-parse", "HEAD"]).unwrap().trim().to_string();
 
-    // Rebase feature onto main with --rebase-merges (hooks will handle authorship)
+    // Rebase feature onto main with --rebase-merges
     repo.git(&["checkout", "feature"]).unwrap();
     repo.git(&["rebase", "--rebase-merges", &base])
         .expect("Rebase with --rebase-merges should succeed");
 
-    // Verify authorship is preserved for both files
+    // Get the rebased side branch commit (the one that created side.txt)
+    // Use git log to find the commit that added side.txt
+    let side_commit_sha = repo
+        .git(&["log", "--all", "--format=%H", "--diff-filter=A", "--", "side.txt"])
+        .expect("Should find commit that added side.txt")
+        .trim()
+        .lines()
+        .next()
+        .expect("Should have at least one commit")
+        .to_string();
+
+    // Check that the rebased side commit has an authorship note with side.txt
+    // This is the key assertion: without BFS fix, walk_commits_to_base misses
+    // the side branch commit, so its authorship won't be rewritten
+    let note_output = repo.git(&["notes", "--ref=ai", "show", &side_commit_sha]);
+
+    assert!(
+        note_output.is_ok(),
+        "Rebased side branch commit should have authorship note. \
+         Without BFS fix, walk_commits_to_base misses commits from parent(1) \
+         and authorship is not rewritten for side branch commits."
+    );
+
+    let note_content = note_output.unwrap();
+    assert!(
+        note_content.contains("side.txt"),
+        "Authorship note should include side.txt. Got: {}",
+        note_content
+    );
+
+    // Also verify blame works correctly
     feature_file.assert_lines_and_blame(lines!["// AI feature".ai()]);
     side_file.assert_lines_and_blame(lines!["// AI side".ai()]);
 }
