@@ -94,6 +94,21 @@ impl ParsedGitInvocation {
 
         None
     }
+
+    /// Returns all arguments after the `--` separator in command_args.
+    /// These are typically pathspecs (file paths) that should be treated literally.
+    ///
+    /// Examples:
+    /// - `git checkout -- file.txt` => pathspecs() returns vec!["file.txt"]
+    /// - `git reset HEAD -- a.txt b.txt` => pathspecs() returns vec!["a.txt", "b.txt"]
+    /// - `git checkout main` => pathspecs() returns vec![]
+    pub fn pathspecs(&self) -> Vec<String> {
+        if let Some(separator_pos) = self.command_args.iter().position(|arg| arg == "--") {
+            self.command_args[separator_pos + 1..].to_vec()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 /// Returns true if the given flag typically takes a value as the next argument.

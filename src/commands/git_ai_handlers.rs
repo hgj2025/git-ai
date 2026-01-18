@@ -83,7 +83,7 @@ pub fn handle_git_ai(args: &[String]) {
                 eprintln!(
                     "Skipping checkpoint because repository is excluded or not in allow_repositories list"
                 );
-                std::process::exit(1);
+                std::process::exit(0);
             }
             handle_checkpoint(&args[1..]);
         }
@@ -250,22 +250,22 @@ fn handle_checkpoint(args: &[String]) {
                         let mut buffer = String::new();
                         if let Err(e) = stdin.read_to_string(&mut buffer) {
                             eprintln!("Failed to read stdin for hook input: {}", e);
-                            std::process::exit(1);
+                            std::process::exit(0);
                         }
                         if !buffer.trim().is_empty() {
                             hook_input = Some(buffer);
                         } else {
                             eprintln!("No hook input provided (via --hook-input or stdin).");
-                            std::process::exit(1);
+                            std::process::exit(0);
                         }
                     } else if hook_input.as_ref().unwrap().trim().is_empty() {
                         eprintln!("Error: --hook-input requires a value");
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                     i += 2;
                 } else {
                     eprintln!("Error: --hook-input requires a value or 'stdin' to read from stdin");
-                    std::process::exit(1);
+                    std::process::exit(0);
                 }
             }
 
@@ -291,7 +291,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Claude preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -307,7 +307,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Gemini preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -323,7 +323,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Continue CLI preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -339,7 +339,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Error running Cursor preset: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -352,7 +352,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Github Copilot preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -368,7 +368,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("ai_tab preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -381,7 +381,7 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Agent V1 preset error: {}", e);
-                        std::process::exit(1);
+                        std::process::exit(0);
                     }
                 }
             }
@@ -441,7 +441,7 @@ fn handle_checkpoint(args: &[String]) {
         Ok(repo) => repo,
         Err(e) => {
             eprintln!("Failed to find repository: {}", e);
-            std::process::exit(1);
+            std::process::exit(0);
         }
     };
 
@@ -522,7 +522,7 @@ fn handle_checkpoint(args: &[String]) {
                 "checkpoint_kind": format!("{:?}", checkpoint_kind)
             });
             observability::log_error(&e, Some(context));
-            std::process::exit(1);
+            std::process::exit(0);
         }
     }
 }
@@ -547,13 +547,47 @@ fn handle_ai_blame(args: &[String]) {
     };
 
     // Parse blame arguments
-    let (file_path, options) = match commands::blame::parse_blame_args(args) {
+    let (file_path, mut options) = match commands::blame::parse_blame_args(args) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("Failed to parse blame arguments: {}", e);
             std::process::exit(1);
         }
     };
+
+    // Auto-detect ignore-revs-file if not explicitly provided, not disabled via --no-ignore-revs-file,
+    // and git version supports --ignore-revs-file (git >= 2.23)
+    if options.ignore_revs_file.is_none()
+        && !options.no_ignore_revs_file
+        && repo.git_supports_ignore_revs_file()
+    {
+        // First, check git config for blame.ignoreRevsFile
+        if let Ok(Some(config_path)) = repo.config_get_str("blame.ignoreRevsFile") {
+            if !config_path.is_empty() {
+                // Config path could be relative to repo root or absolute
+                if let Ok(workdir) = repo.workdir() {
+                    let full_path = if std::path::Path::new(&config_path).is_absolute() {
+                        std::path::PathBuf::from(&config_path)
+                    } else {
+                        workdir.join(&config_path)
+                    };
+                    if full_path.exists() {
+                        options.ignore_revs_file = Some(full_path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        // If still not set, check for .git-blame-ignore-revs in the repository root
+        if options.ignore_revs_file.is_none() {
+            if let Ok(workdir) = repo.workdir() {
+                let ignore_revs_path = workdir.join(".git-blame-ignore-revs");
+                if ignore_revs_path.exists() {
+                    options.ignore_revs_file = Some(ignore_revs_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
 
     // Check if this is an interactive terminal
     let is_interactive = std::io::stdout().is_terminal();
