@@ -1,4 +1,5 @@
 use crate::authorship::virtual_attribution::VirtualAttributions;
+use crate::commands::hooks::checkout_hooks;
 use crate::commands::hooks::cherry_pick_hooks;
 use crate::commands::hooks::clone_hooks;
 use crate::commands::hooks::commit_hooks;
@@ -8,6 +9,7 @@ use crate::commands::hooks::push_hooks;
 use crate::commands::hooks::rebase_hooks;
 use crate::commands::hooks::reset_hooks;
 use crate::commands::hooks::stash_hooks;
+use crate::commands::hooks::switch_hooks;
 use crate::config;
 use crate::git::cli_parser::{ParsedGitInvocation, parse_git_cli_args};
 use crate::git::find_repository;
@@ -210,6 +212,12 @@ fn run_pre_command_hooks(
                     stash_hooks::pre_stash_hook(parsed_args, repository, command_hooks_context);
                 }
             }
+            Some("checkout") => {
+                checkout_hooks::pre_checkout_hook(parsed_args, repository, command_hooks_context);
+            }
+            Some("switch") => {
+                switch_hooks::pre_switch_hook(parsed_args, repository, command_hooks_context);
+            }
             _ => {}
         }
     }));
@@ -293,6 +301,12 @@ fn run_post_command_hooks(
                         exit_status,
                     );
                 }
+            }
+            Some("checkout") => {
+                checkout_hooks::post_checkout_hook(parsed_args, repository, exit_status, command_hooks_context);
+            }
+            Some("switch") => {
+                switch_hooks::post_switch_hook(parsed_args, repository, exit_status, command_hooks_context);
             }
             _ => {}
         }
