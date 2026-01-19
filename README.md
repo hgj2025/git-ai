@@ -93,4 +93,4 @@ Aggregate `git-ai` data at the PR, developer, Repository and Organization levels
 
 | _your agent here_                                                                          |            |         |
 
-> **Building a Coding Agent?** [Add support for Git AI by following this guide](https://usegitai.com/docs/add-your-agent)
+> **Building a Coding Agent?** [Add support for Git AI by following this guide](https://usegitai.com/docs/cli/add-your-agent)
