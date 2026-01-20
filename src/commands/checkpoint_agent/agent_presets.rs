@@ -916,7 +916,18 @@ impl CursorPreset {
                 .join("User"))
         }
 
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        {
+            // Linux: ~/.config/Cursor/User
+            let config_dir = dirs::config_dir().ok_or_else(|| {
+                GitAiError::Generic("Could not determine user config directory".to_string())
+            })?;
+            Ok(config_dir
+                .join("Cursor")
+                .join("User"))
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
             Err(GitAiError::PresetError(
                 "Cursor is only supported on Windows and macOS platforms".to_string(),
