@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use crate::authorship::internal_db::InternalDatabase;
 use crate::authorship::range_authorship;
 use crate::authorship::stats::stats_command;
@@ -141,6 +139,15 @@ pub fn handle_git_ai(args: &[String]) {
         "flush-cas" => {
             commands::flush_cas::handle_flush_cas(&args[1..]);
         }
+        "flush-metrics-db" => {
+            commands::flush_metrics_db::handle_flush_metrics_db(&args[1..]);
+        }
+        "login" => {
+            commands::login::handle_login(&args[1..]);
+        }
+        "logout" => {
+            commands::logout::handle_logout(&args[1..]);
+        }
         "show-prompt" => {
             commands::show_prompt::handle_show_prompt(&args[1..]);
         }
@@ -227,6 +234,8 @@ fn print_help() {
     eprintln!("    list                  List prompts as TSV");
     eprintln!("    next                  Get next prompt as JSON (iterator pattern)");
     eprintln!("    reset                 Reset iteration pointer to start");
+    eprintln!("  login              Authenticate with Git AI");
+    eprintln!("  logout             Clear stored credentials");
     eprintln!("  version, -v, --version     Print the git-ai version");
     eprintln!("  help, -h, --help           Show this help message");
     eprintln!("");
@@ -698,6 +707,11 @@ fn handle_checkpoint(args: &[String]) {
             let elapsed = checkpoint_start.elapsed();
             log_performance_for_checkpoint(files_edited, elapsed, checkpoint_kind);
             eprintln!("Checkpoint completed in {:?}", elapsed);
+
+            // Flush logs and metrics after checkpoint (skip for human checkpoints)
+            if checkpoint_kind != CheckpointKind::Human {
+                observability::spawn_background_flush();
+            }
         }
         Err(e) => {
             let elapsed = checkpoint_start.elapsed();
