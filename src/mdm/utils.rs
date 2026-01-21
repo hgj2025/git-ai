@@ -307,6 +307,19 @@ pub fn git_shim_path_string() -> String {
     git_shim_path().to_string_lossy().into_owned()
 }
 
+/// Get the path to the git-ai wrapper binary
+/// This is the path that git clients should be configured to use
+pub fn git_ai_wrapper_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        git_shim_path()
+    }
+    #[cfg(not(windows))]
+    {
+        home_dir().join(".local").join("bin").join("git-ai")
+    }
+}
+
 /// Update the git.path setting in a VS Code/Cursor settings file
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn update_git_path_setting(
