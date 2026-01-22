@@ -88,7 +88,7 @@ impl GitClientInstaller for ForkAppInstaller {
         let is_custom = git_type == Some(git_instance_type::CUSTOM);
         let path_matches = custom_path
             .as_ref()
-            .map(|p| p == params.git_wrapper_path.to_string_lossy().as_ref())
+            .map(|p| p == params.git_shim_path.to_string_lossy().as_ref())
             .unwrap_or(false);
 
         Ok(GitClientCheckResult {
@@ -111,7 +111,7 @@ impl GitClientInstaller for ForkAppInstaller {
         }
 
         let prefs = Self::prefs();
-        let git_wrapper_path = params.git_wrapper_path.to_string_lossy();
+        let git_wrapper_path = params.git_shim_path.to_string_lossy();
 
         // Build diff output
         let old_type = prefs.read_int("gitInstanceType").unwrap_or(0);
@@ -209,7 +209,7 @@ impl GitClientInstaller for ForkAppInstaller {
         let is_custom = git_type == Some(git_instance_type::CUSTOM);
         let path_matches = custom_path
             .as_ref()
-            .map(|p| p == params.git_wrapper_path.to_string_lossy().as_ref())
+            .map(|p| p == params.git_shim_path.to_string_lossy().as_ref())
             .unwrap_or(false);
 
         let prefs_configured = is_custom && custom_path.is_some();
@@ -239,7 +239,7 @@ impl GitClientInstaller for ForkAppInstaller {
         }
 
         let settings_path = Self::settings_path();
-        let git_wrapper_path = params.git_wrapper_path.to_string_lossy().into_owned();
+        let git_wrapper_path = params.git_shim_path.to_string_lossy().into_owned();
 
         // Read existing settings
         let original = if settings_path.exists() {

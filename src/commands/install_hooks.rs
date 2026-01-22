@@ -5,7 +5,7 @@ use crate::mdm::git_clients::get_all_git_client_installers;
 use crate::mdm::hook_installer::HookInstallerParams;
 use crate::mdm::skills_installer;
 use crate::mdm::spinner::{print_diff, Spinner};
-use crate::mdm::utils::{get_current_binary_path, git_ai_wrapper_path};
+use crate::mdm::utils::{get_current_binary_path, git_shim_path};
 use std::collections::HashMap;
 
 /// Installation status for a tool
@@ -99,6 +99,11 @@ async fn async_run_install(
         if result.changed {
             has_changes = true;
         }
+    }
+
+    // Ensure git symlinks for Fork compatibility
+    if let Err(e) = crate::mdm::ensure_git_symlinks() {
+        eprintln!("Warning: Failed to create git symlinks: {}", e);
     }
 
     // === Coding Agents ===
@@ -204,7 +209,7 @@ async fn async_run_install(
         println!("\n\x1b[1mGit Clients\x1b[0m");
 
         let git_client_params = GitClientInstallerParams {
-            git_wrapper_path: git_ai_wrapper_path(),
+            git_shim_path: git_shim_path(),
         };
 
         for installer in git_client_installers {
@@ -385,7 +390,7 @@ async fn async_run_uninstall(
         println!("\n\x1b[1mGit Clients\x1b[0m");
 
         let git_client_params = GitClientInstallerParams {
-            git_wrapper_path: git_ai_wrapper_path(),
+            git_shim_path: git_shim_path(),
         };
 
         for installer in git_client_installers {

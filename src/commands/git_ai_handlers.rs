@@ -13,7 +13,7 @@ use crate::commands::checkpoint_agent::agent_v1_preset::AgentV1Preset;
 use crate::config;
 use crate::git::find_repository;
 use crate::git::find_repository_in_path;
-use crate::git::repository::{group_files_by_repository, CommitRange};
+use crate::git::repository::{CommitRange, group_files_by_repository};
 use crate::observability::wrapper_performance_targets::log_performance_for_checkpoint;
 use crate::observability::{self, log_message};
 use crate::utils::is_interactive_terminal;
@@ -104,7 +104,7 @@ pub fn handle_git_ai(args: &[String]) {
             println!("{}", config.git_cmd());
             std::process::exit(0);
         }
-        "install-hooks" => match commands::install_hooks::run(&args[1..]) {
+        "install-hooks" | "install" => match commands::install_hooks::run(&args[1..]) {
             Ok(statuses) => {
                 if let Ok(statuses_value) = serde_json::to_value(&statuses) {
                     log_message("install-hooks", "info", Some(statuses_value));
@@ -556,7 +556,8 @@ fn handle_checkpoint(args: &[String]) {
                     // Create a modified agent_run_result with only this repo's files
                     let repo_agent_result = agent_run_result.as_ref().map(|r| {
                         let mut modified = r.clone();
-                        modified.repo_working_dir = Some(repo_workdir.to_string_lossy().to_string());
+                        modified.repo_working_dir =
+                            Some(repo_workdir.to_string_lossy().to_string());
                         if r.checkpoint_kind == CheckpointKind::Human {
                             modified.will_edit_filepaths = Some(repo_file_paths.clone());
                             modified.edited_filepaths = None;
@@ -588,11 +589,7 @@ fn handle_checkpoint(args: &[String]) {
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "  Checkpoint for {} failed: {}",
-                                repo_workdir.display(),
-                                e
-                            );
+                            eprintln!("  Checkpoint for {} failed: {}", repo_workdir.display(), e);
                             let context = serde_json::json!({
                                 "function": "checkpoint",
                                 "repo": repo_workdir.to_string_lossy(),
@@ -619,7 +616,9 @@ fn handle_checkpoint(args: &[String]) {
         }
 
         // No files to check, fall through to error
-        eprintln!("Failed to find repository: workspace root is not a git repository and no edited files provided");
+        eprintln!(
+            "Failed to find repository: workspace root is not a git repository and no edited files provided"
+        );
         std::process::exit(0);
     }
 

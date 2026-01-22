@@ -1,7 +1,7 @@
-use crate::authorship::imara_diff_utils::{compute_line_changes, LineChangeTag};
+use crate::authorship::imara_diff_utils::{LineChangeTag, compute_line_changes};
 use crate::error::GitAiError;
-use jsonc_parser::cst::CstRootNode;
 use jsonc_parser::ParseOptions;
+use jsonc_parser::cst::CstRootNode;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -216,7 +216,10 @@ pub fn settings_paths_for_products(product_names: &[&str]) -> Vec<PathBuf> {
 }
 
 /// Check if a VS Code extension is installed
-pub fn is_vsc_editor_extension_installed(program: &str, id_or_vsix: &str) -> Result<bool, GitAiError> {
+pub fn is_vsc_editor_extension_installed(
+    program: &str,
+    id_or_vsix: &str,
+) -> Result<bool, GitAiError> {
     // NOTE: We try up to 3 times, because the editor CLI can be flaky (throws intermittent JS errors)
     let mut last_error_message: Option<String> = None;
     for attempt in 1..=3 {
@@ -295,29 +298,22 @@ pub fn get_current_binary_path() -> Result<PathBuf, GitAiError> {
     Ok(canonical)
 }
 
-/// Path to the git shim on Windows
-#[cfg(windows)]
+/// Path to the git shim that git clients should use
+/// This is in the same directory as the git-ai executable, but named "git"
 pub fn git_shim_path() -> PathBuf {
-    home_dir().join(".git-ai").join("bin").join("git")
-}
-
-/// Git shim path as string on Windows
-#[cfg(windows)]
-pub fn git_shim_path_string() -> String {
-    git_shim_path().to_string_lossy().into_owned()
-}
-
-/// Get the path to the git-ai wrapper binary
-/// This is the path that git clients should be configured to use
-pub fn git_ai_wrapper_path() -> PathBuf {
-    #[cfg(windows)]
-    {
-        git_shim_path()
-    }
-    #[cfg(not(windows))]
-    {
-        home_dir().join(".local").join("bin").join("git-ai")
-    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.join("git")))
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                home_dir().join(".git-ai").join("bin").join("git")
+            }
+            #[cfg(not(windows))]
+            {
+                home_dir().join(".local").join("bin").join("git")
+            }
+        })
 }
 
 /// Update the git.path setting in a VS Code/Cursor settings file
@@ -454,7 +450,10 @@ mod tests {
 
         // Cursor 1.7.38 should meet requirement of 1.7
         let cursor_version = parse_version("1.7.38").unwrap();
-        assert!(version_meets_requirement(cursor_version, MIN_CURSOR_VERSION));
+        assert!(version_meets_requirement(
+            cursor_version,
+            MIN_CURSOR_VERSION
+        ));
 
         // Cursor 1.6.x should fail
         let old_cursor = parse_version("1.6.99").unwrap();
@@ -470,7 +469,10 @@ mod tests {
 
         // Claude Code 2.0.8 should meet requirement of 2.0
         let claude_version = parse_version("2.0.8 (Claude Code)").unwrap();
-        assert!(version_meets_requirement(claude_version, MIN_CLAUDE_VERSION));
+        assert!(version_meets_requirement(
+            claude_version,
+            MIN_CLAUDE_VERSION
+        ));
 
         // Claude Code 1.x should fail
         let old_claude = parse_version("1.9.9").unwrap();
@@ -480,12 +482,20 @@ mod tests {
     #[test]
     fn test_is_git_ai_checkpoint_command() {
         assert!(is_git_ai_checkpoint_command("git-ai checkpoint"));
-        assert!(is_git_ai_checkpoint_command("git-ai checkpoint claude --hook-input stdin"));
+        assert!(is_git_ai_checkpoint_command(
+            "git-ai checkpoint claude --hook-input stdin"
+        ));
         assert!(is_git_ai_checkpoint_command("git-ai checkpoint claude"));
-        assert!(is_git_ai_checkpoint_command("git-ai checkpoint --hook-input"));
-        assert!(is_git_ai_checkpoint_command("git-ai checkpoint claude --hook-input \"$(cat)\""));
+        assert!(is_git_ai_checkpoint_command(
+            "git-ai checkpoint --hook-input"
+        ));
+        assert!(is_git_ai_checkpoint_command(
+            "git-ai checkpoint claude --hook-input \"$(cat)\""
+        ));
         assert!(is_git_ai_checkpoint_command("git-ai checkpoint gemini"));
-        assert!(is_git_ai_checkpoint_command("git-ai checkpoint gemini --hook-input stdin"));
+        assert!(is_git_ai_checkpoint_command(
+            "git-ai checkpoint gemini --hook-input stdin"
+        ));
 
         // Non-matching commands
         assert!(!is_git_ai_checkpoint_command("echo hello"));

@@ -4,8 +4,9 @@ use std::path::PathBuf;
 /// Parameters passed to git client installers
 #[derive(Clone)]
 pub struct GitClientInstallerParams {
-    /// Path to the git-ai wrapper binary (e.g., ~/.local/bin/git-ai)
-    pub git_wrapper_path: PathBuf,
+    /// Path to the git shim that clients should use (e.g., ~/.local/bin/git)
+    /// This is the symlink/shim that points to git-ai, not git-ai itself
+    pub git_shim_path: PathBuf,
 }
 
 /// Result of checking git client configuration status

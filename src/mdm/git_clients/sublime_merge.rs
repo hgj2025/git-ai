@@ -125,7 +125,7 @@ impl GitClientInstaller for SublimeMergeInstaller {
         }
 
         let current_git_binary = Self::read_git_binary();
-        let desired_path = params.git_wrapper_path.to_string_lossy();
+        let desired_path = params.git_shim_path.to_string_lossy();
 
         let prefs_configured = current_git_binary.is_some();
         let prefs_up_to_date = current_git_binary
@@ -156,7 +156,7 @@ impl GitClientInstaller for SublimeMergeInstaller {
         }
 
         let prefs_path = Self::prefs_path();
-        let git_wrapper_path = params.git_wrapper_path.to_string_lossy();
+        let git_wrapper_path = params.git_shim_path.to_string_lossy();
 
         // Read existing content
         let original = if prefs_path.exists() {
@@ -383,7 +383,7 @@ mod tests {
     fn test_sublime_merge_check_when_not_installed() {
         let installer = SublimeMergeInstaller;
         let params = GitClientInstallerParams {
-            git_wrapper_path: PathBuf::from("/usr/local/bin/git-ai"),
+            git_shim_path: PathBuf::from("/usr/local/bin/git"),
         };
         // This test may pass or fail depending on whether Sublime Merge is installed
         // We just verify the function doesn't panic
