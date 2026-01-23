@@ -113,30 +113,12 @@ impl GitClientInstaller for ForkAppInstaller {
         let prefs = Self::prefs();
         let git_wrapper_path = params.git_shim_path.to_string_lossy();
 
-        // Build diff output
-        let old_type = prefs.read_int("gitInstanceType").unwrap_or(0);
-        let old_path = prefs
-            .read_string("customGitInstancePath")
-            .unwrap_or_default();
-
-        let mut diff = String::new();
-        diff.push_str(&format!("--- {}\n", FORK_BUNDLE_ID));
-        diff.push_str(&format!("+++ {}\n", FORK_BUNDLE_ID));
-
-        if old_type != git_instance_type::CUSTOM {
-            diff.push_str(&format!("-gitInstanceType = {}\n", old_type));
-            diff.push_str(&format!(
-                "+gitInstanceType = {}\n",
-                git_instance_type::CUSTOM
-            ));
-        }
-
-        if old_path != git_wrapper_path {
-            if !old_path.is_empty() {
-                diff.push_str(&format!("-customGitInstancePath = {}\n", old_path));
-            }
-            diff.push_str(&format!("+customGitInstancePath = {}\n", git_wrapper_path));
-        }
+        let diff = format!(
+            "+++ {}\n+gitInstanceType = {}\n+customGitInstancePath = {}\n",
+            FORK_BUNDLE_ID,
+            git_instance_type::CUSTOM,
+            git_wrapper_path
+        );
 
         if !dry_run {
             prefs.write_int("gitInstanceType", git_instance_type::CUSTOM)?;
@@ -164,16 +146,7 @@ impl GitClientInstaller for ForkAppInstaller {
             .read_string("customGitInstancePath")
             .unwrap_or_default();
 
-        // Build diff output
-        let mut diff = String::new();
-        diff.push_str(&format!("--- {}\n", FORK_BUNDLE_ID));
-        diff.push_str(&format!("+++ {}\n", FORK_BUNDLE_ID));
-        diff.push_str(&format!("-gitInstanceType = {}\n", old_type));
-        diff.push_str(&format!(
-            "+gitInstanceType = {}\n",
-            git_instance_type::SYSTEM
-        ));
-
+        let mut diff = format!("--- {}\n-gitInstanceType = {}\n", FORK_BUNDLE_ID, old_type);
         if !old_path.is_empty() {
             diff.push_str(&format!("-customGitInstancePath = {}\n", old_path));
         }
@@ -254,37 +227,12 @@ impl GitClientInstaller for ForkAppInstaller {
             serde_json::from_str(&original)?
         };
 
-        // Update settings
-        let old_type = settings
-            .get("GitInstanceType")
-            .and_then(|v| v.as_i64())
-            .map(|v| v as i32)
-            .unwrap_or(0);
-        let old_path = settings
-            .get("CustomGitInstancePath")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Build diff
-        let mut diff = String::new();
-        diff.push_str(&format!("--- {}\n", settings_path.display()));
-        diff.push_str(&format!("+++ {}\n", settings_path.display()));
-
-        if old_type != git_instance_type::CUSTOM {
-            diff.push_str(&format!("-GitInstanceType = {}\n", old_type));
-            diff.push_str(&format!(
-                "+GitInstanceType = {}\n",
-                git_instance_type::CUSTOM
-            ));
-        }
-
-        if old_path != git_wrapper_path {
-            if !old_path.is_empty() {
-                diff.push_str(&format!("-CustomGitInstancePath = {}\n", old_path));
-            }
-            diff.push_str(&format!("+CustomGitInstancePath = {}\n", git_wrapper_path));
-        }
+        let diff = format!(
+            "+++ {}\n+GitInstanceType = {}\n+CustomGitInstancePath = {}\n",
+            settings_path.display(),
+            git_instance_type::CUSTOM,
+            git_wrapper_path
+        );
 
         if !dry_run {
             if let Some(obj) = settings.as_object_mut() {
@@ -340,16 +288,11 @@ impl GitClientInstaller for ForkAppInstaller {
             .unwrap_or("")
             .to_string();
 
-        // Build diff
-        let mut diff = String::new();
-        diff.push_str(&format!("--- {}\n", settings_path.display()));
-        diff.push_str(&format!("+++ {}\n", settings_path.display()));
-        diff.push_str(&format!("-GitInstanceType = {}\n", old_type));
-        diff.push_str(&format!(
-            "+GitInstanceType = {}\n",
-            git_instance_type::SYSTEM
-        ));
-
+        let mut diff = format!(
+            "--- {}\n-GitInstanceType = {}\n",
+            settings_path.display(),
+            old_type
+        );
         if !old_path.is_empty() {
             diff.push_str(&format!("-CustomGitInstancePath = {}\n", old_path));
         }

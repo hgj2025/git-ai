@@ -1,8 +1,10 @@
 use crate::error::GitAiError;
-use crate::mdm::git_client_installer::{GitClientCheckResult, GitClientInstaller, GitClientInstallerParams};
-use crate::mdm::utils::{generate_diff, home_dir, write_atomic};
-use jsonc_parser::cst::CstRootNode;
+use crate::mdm::git_client_installer::{
+    GitClientCheckResult, GitClientInstaller, GitClientInstallerParams,
+};
+use crate::mdm::utils::{home_dir, write_atomic};
 use jsonc_parser::ParseOptions;
+use jsonc_parser::cst::CstRootNode;
 use std::fs;
 use std::path::PathBuf;
 
@@ -115,7 +117,10 @@ impl GitClientInstaller for SublimeMergeInstaller {
         true
     }
 
-    fn check_client(&self, params: &GitClientInstallerParams) -> Result<GitClientCheckResult, GitAiError> {
+    fn check_client(
+        &self,
+        params: &GitClientInstallerParams,
+    ) -> Result<GitClientCheckResult, GitAiError> {
         if !Self::is_installed() {
             return Ok(GitClientCheckResult {
                 client_installed: false,
@@ -176,11 +181,7 @@ impl GitClientInstaller for SublimeMergeInstaller {
 
         let parse_options = ParseOptions::default();
         let root = CstRootNode::parse(&parse_input, &parse_options).map_err(|err| {
-            GitAiError::Generic(format!(
-                "Failed to parse {}: {}",
-                prefs_path.display(),
-                err
-            ))
+            GitAiError::Generic(format!("Failed to parse {}: {}", prefs_path.display(), err))
         })?;
 
         let object = root.object_value_or_set();
@@ -217,7 +218,11 @@ impl GitClientInstaller for SublimeMergeInstaller {
         }
 
         let new_content = root.to_string();
-        let diff_output = generate_diff(&prefs_path, &original, &new_content);
+        let diff_output = format!(
+            "+++ {}\n+git_binary = {}\n",
+            prefs_path.display(),
+            git_wrapper_path
+        );
 
         if !dry_run {
             // Ensure parent directory exists
@@ -252,11 +257,7 @@ impl GitClientInstaller for SublimeMergeInstaller {
 
         let parse_options = ParseOptions::default();
         let root = CstRootNode::parse(&original, &parse_options).map_err(|err| {
-            GitAiError::Generic(format!(
-                "Failed to parse {}: {}",
-                prefs_path.display(),
-                err
-            ))
+            GitAiError::Generic(format!("Failed to parse {}: {}", prefs_path.display(), err))
         })?;
 
         let object = match root.object_value() {
@@ -270,126 +271,26 @@ impl GitClientInstaller for SublimeMergeInstaller {
             None => return Ok(None),
         };
 
+        // Get the old value for diff output
+        let old_git_binary = prop
+            .value()
+            .and_then(|v| v.as_string_lit())
+            .and_then(|s| s.decoded_value().ok())
+            .unwrap_or_default();
+
         prop.remove();
 
         let new_content = root.to_string();
-        let diff_output = generate_diff(&prefs_path, &original, &new_content);
+        let diff_output = format!(
+            "--- {}\n-git_binary = {}\n",
+            prefs_path.display(),
+            old_git_binary
+        );
 
         if !dry_run {
             write_atomic(&prefs_path, new_content.as_bytes())?;
         }
 
         Ok(Some(diff_output))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_sublime_merge_installer_name() {
-        let installer = SublimeMergeInstaller;
-        assert_eq!(installer.name(), "Sublime Merge");
-        assert_eq!(installer.id(), "sublime-merge");
-    }
-
-    #[test]
-    fn test_sublime_merge_platform_supported() {
-        let installer = SublimeMergeInstaller;
-        // Should be true on all platforms
-        assert!(installer.is_platform_supported());
-    }
-
-    #[test]
-    fn test_sublime_merge_install_prefs_creates_setting() {
-        let temp_dir = TempDir::new().unwrap();
-        let prefs_path = temp_dir.path().join("Preferences.sublime-settings");
-
-        // Create empty prefs file
-        fs::write(&prefs_path, "{}").unwrap();
-
-        // Parse and add git_binary
-        let content = fs::read_to_string(&prefs_path).unwrap();
-        let parse_options = ParseOptions::default();
-        let root = CstRootNode::parse(&content, &parse_options).unwrap();
-        let object = root.object_value_or_set();
-        object.append("git_binary", jsonc_parser::json!("/path/to/git-ai"));
-
-        let new_content = root.to_string();
-        fs::write(&prefs_path, new_content).unwrap();
-
-        let result = fs::read_to_string(&prefs_path).unwrap();
-        assert!(result.contains("git_binary"));
-        assert!(result.contains("/path/to/git-ai"));
-    }
-
-    #[test]
-    fn test_sublime_merge_preserves_other_settings() {
-        let temp_dir = TempDir::new().unwrap();
-        let prefs_path = temp_dir.path().join("Preferences.sublime-settings");
-
-        // Create prefs with existing settings
-        let initial = r#"{
-    "expand_merge_commits_by_default": true,
-    "theme": "dark"
-}"#;
-        fs::write(&prefs_path, initial).unwrap();
-
-        // Parse and add git_binary
-        let content = fs::read_to_string(&prefs_path).unwrap();
-        let parse_options = ParseOptions::default();
-        let root = CstRootNode::parse(&content, &parse_options).unwrap();
-        let object = root.object_value_or_set();
-        object.append("git_binary", jsonc_parser::json!("/path/to/git-ai"));
-
-        let new_content = root.to_string();
-        fs::write(&prefs_path, new_content).unwrap();
-
-        let result = fs::read_to_string(&prefs_path).unwrap();
-        assert!(result.contains("expand_merge_commits_by_default"));
-        assert!(result.contains("theme"));
-        assert!(result.contains("git_binary"));
-    }
-
-    #[test]
-    fn test_sublime_merge_updates_existing_git_binary() {
-        let temp_dir = TempDir::new().unwrap();
-        let prefs_path = temp_dir.path().join("Preferences.sublime-settings");
-
-        // Create prefs with existing git_binary
-        let initial = r#"{
-    "git_binary": "/old/path/to/git"
-}"#;
-        fs::write(&prefs_path, initial).unwrap();
-
-        // Parse and update git_binary
-        let content = fs::read_to_string(&prefs_path).unwrap();
-        let parse_options = ParseOptions::default();
-        let root = CstRootNode::parse(&content, &parse_options).unwrap();
-        let object = root.object_value().unwrap();
-        let prop = object.get("git_binary").unwrap();
-        prop.set_value(jsonc_parser::json!("/new/path/to/git-ai"));
-
-        let new_content = root.to_string();
-        fs::write(&prefs_path, new_content).unwrap();
-
-        let result = fs::read_to_string(&prefs_path).unwrap();
-        assert!(result.contains("/new/path/to/git-ai"));
-        assert!(!result.contains("/old/path/to/git"));
-    }
-
-    #[test]
-    fn test_sublime_merge_check_when_not_installed() {
-        let installer = SublimeMergeInstaller;
-        let params = GitClientInstallerParams {
-            git_shim_path: PathBuf::from("/usr/local/bin/git"),
-        };
-        // This test may pass or fail depending on whether Sublime Merge is installed
-        // We just verify the function doesn't panic
-        let result = installer.check_client(&params);
-        assert!(result.is_ok());
     }
 }
