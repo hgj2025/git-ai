@@ -203,6 +203,10 @@ async fn async_run_install(
         }
     }
 
+    if !any_checked {
+        println!("No compatible coding agents detected. Nothing to install.");
+    }
+
     // === Git Clients ===
     let git_client_installers = get_all_git_client_installers();
     if !git_client_installers.is_empty() {
