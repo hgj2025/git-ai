@@ -1834,8 +1834,18 @@ pub fn find_repository(global_args: &Vec<String>) -> Result<Repository, GitAiErr
     let both_dirs = String::from_utf8(output.stdout)?;
 
     let both_dirs = both_dirs.trim();
-    let git_dir_str = both_dirs.split("\n").next().unwrap();
-    let workdir_str = both_dirs.split("\n").nth(1).unwrap();
+    let lines: Vec<&str> = both_dirs.split("\n").collect();
+    
+    if lines.len() < 2 {
+        return Err(GitAiError::Generic(format!(
+            "Expected git rev-parse to return 2 lines (git dir and work dir), got {}:\n{}",
+            lines.len(),
+            both_dirs
+        )));
+    }
+    
+    let git_dir_str = lines[0];
+    let workdir_str = lines[1];
     let git_dir = PathBuf::from(git_dir_str);
     let workdir = PathBuf::from(workdir_str);
     if !git_dir.is_dir() {
