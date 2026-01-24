@@ -367,16 +367,18 @@ pub fn run(
                 let prompt_id = generate_short_hash(&agent_id.id, &agent_id.tool);
 
                 let values = crate::metrics::AgentUsageValues::new();
-                let mut attrs = crate::metrics::EventAttributes::with_version(env!("CARGO_PKG_VERSION"))
-                    .tool(&agent_id.tool)
-                    .model(&agent_id.model)
-                    .prompt_id(prompt_id)
-                    .external_prompt_id(&agent_id.id);
+                let mut attrs =
+                    crate::metrics::EventAttributes::with_version(env!("CARGO_PKG_VERSION"))
+                        .tool(&agent_id.tool)
+                        .model(&agent_id.model)
+                        .prompt_id(prompt_id)
+                        .external_prompt_id(&agent_id.id);
 
                 // Get repo URL from default remote
                 if let Ok(Some(remote_name)) = repo.get_default_remote() {
                     if let Ok(remotes) = repo.remotes_with_urls() {
-                        if let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name) {
+                        if let Some((_, url)) = remotes.into_iter().find(|(n, _)| n == &remote_name)
+                        {
                             if let Ok(normalized) = crate::repo_url::normalize_repo_url(&url) {
                                 attrs = attrs.repo_url(normalized);
                             }
@@ -519,10 +521,35 @@ fn get_all_tracked_files(
         .map(|paths| paths.iter().cloned().collect())
         .unwrap_or_default();
 
+    // Helper closure to check if a path is within the repository
+    // This prevents crashes when files outside the repo were tracked (e.g., opened in IDE but not in repo)
+    // Use ok() to gracefully handle cases where workdir() fails (e.g., bare repos, test scripts that use mock_ai, etc)
+    let repo_workdir = repo.workdir().ok();
+    let is_path_in_repo = |path: &str| -> bool {
+        // If we couldn't get workdir, skip filtering (allow all paths through)
+        let Some(ref workdir) = repo_workdir else {
+            return true;
+        };
+        let path_buf = if std::path::Path::new(path).is_absolute() {
+            std::path::PathBuf::from(path)
+        } else {
+            workdir.join(path)
+        };
+        repo.path_is_in_workdir(&path_buf)
+    };
+
     let initial_read_start = Instant::now();
     for file in working_log.read_initial_attributions().files.keys() {
         // Normalize path separators to forward slashes
         let normalized_path = normalize_to_posix(file);
+        // Filter out paths outside the repository to prevent git command failures
+        if !is_path_in_repo(&normalized_path) {
+            debug_log(&format!(
+                "Skipping INITIAL file outside repository: {}",
+                normalized_path
+            ));
+            continue;
+        }
         if is_text_file(working_log, &normalized_path) {
             files.insert(normalized_path);
         }
@@ -538,6 +565,14 @@ fn get_all_tracked_files(
             for entry in &checkpoint.entries {
                 // Normalize path separators to forward slashes
                 let normalized_path = normalize_to_posix(&entry.file);
+                // Filter out paths outside the repository to prevent git command failures
+                if !is_path_in_repo(&normalized_path) {
+                    debug_log(&format!(
+                        "Skipping checkpoint file outside repository: {}",
+                        normalized_path
+                    ));
+                    continue;
+                }
                 if !files.contains(&normalized_path) {
                     // Check if it's a text file before adding
                     if is_text_file(working_log, &normalized_path) {
@@ -576,6 +611,14 @@ fn get_all_tracked_files(
         for file_path in dirty_files.keys() {
             // Normalize path separators to forward slashes
             let normalized_path = normalize_to_posix(file_path);
+            // Filter out paths outside the repository to prevent git command failures
+            if !is_path_in_repo(&normalized_path) {
+                debug_log(&format!(
+                    "Skipping dirty file outside repository: {}",
+                    normalized_path
+                ));
+                continue;
+            }
             // Only add if not already in the files list
             if !results_for_tracked_files.contains(&normalized_path) {
                 // Check if it's a text file before adding
@@ -1333,6 +1376,68 @@ mod tests {
         // Should only process the valid file
         assert_eq!(files_len, 1, "Should process 1 valid file");
         assert_eq!(entries_len, 1, "Should create 1 entry");
+    }
+
+    #[test]
+    fn test_checkpoint_filters_external_paths_from_stored_checkpoints() {
+        use crate::authorship::working_log::{Checkpoint, WorkingLogEntry};
+
+        // Create a repo with an initial commit
+        let (tmp_repo, mut file, _) = TmpRepo::new_with_base_commit().unwrap();
+
+        // Get access to the working log storage
+        let repo =
+            crate::git::repository::find_repository_in_path(tmp_repo.path().to_str().unwrap())
+                .expect("Repository should exist");
+        let base_commit = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target().ok())
+            .unwrap_or_else(|| "initial".to_string());
+
+        // Manually inject a checkpoint with an external file path (simulating the bug)
+        // This is what happens when a file outside the repo was tracked before the fix
+        let working_log = repo.storage.working_log_for_base_commit(&base_commit);
+
+        let external_entry = WorkingLogEntry::new(
+            "/external/path/outside/repo.txt".to_string(),
+            "fake_sha_for_external".to_string(),
+            vec![],
+            vec![],
+        );
+
+        let fake_checkpoint = Checkpoint::new(
+            CheckpointKind::Human,
+            "fake_diff".to_string(),
+            "test_author".to_string(),
+            vec![external_entry],
+        );
+
+        // Store the checkpoint with external path
+        working_log
+            .append_checkpoint(&fake_checkpoint)
+            .expect("Should be able to append checkpoint");
+
+        // Now make actual changes to a file in the repo
+        file.append("New line for testing\n").unwrap();
+
+        // Run checkpoint - this should NOT crash even though there's an external path stored
+        // Previously this would fail with: "fatal: /external/path/outside/repo.txt is outside repository"
+        let result = tmp_repo.trigger_checkpoint_with_author("Human");
+
+        assert!(
+            result.is_ok(),
+            "Checkpoint should succeed even with external paths stored in previous checkpoints: {:?}",
+            result.err()
+        );
+
+        let (entries_len, files_len, _) = result.unwrap();
+        // Should only process the valid file in the repo
+        assert_eq!(
+            files_len, 1,
+            "Should process 1 valid file (external path should be filtered)"
+        );
+        assert_eq!(entries_len, 1, "Should create 1 entry for the in-repo file");
     }
 
     #[test]
