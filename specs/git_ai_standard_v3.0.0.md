@@ -166,7 +166,7 @@ Each entry in the `prompts` object MUST contain:
 | `total_additions` | integer | REQUIRED | Total lines added by this session |
 | `total_deletions` | integer | REQUIRED | Total lines deleted by this session |
 | `accepted_lines` | integer | REQUIRED | Lines accepted in the final commit |
-| `overriden_lines` | integer | REQUIRED | Lines that were later modified by human |
+| `overridden_lines` | integer | REQUIRED | Lines that were later modified by human |
 
 #### Agent ID Object
 
