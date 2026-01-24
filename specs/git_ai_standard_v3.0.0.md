@@ -730,3 +730,7 @@ When amend is used during a rebase or other operation:
 - Implementations of 3.0.0 or later SHOULD NOT attempt to process earlier versions
 - Implementations > 3.0.0 MUST process earlier versions, provided they are valid and match the schema they advertise
 
+### Errata
+
+E-001: The field name overriden_lines was introduced as a typographical error in v3.0.0 and shipped in the reference git-ai implementation, where it became canonical. In v4.x, this field WILL be renamed to overridden_lines.
+
