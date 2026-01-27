@@ -1032,7 +1032,7 @@ impl Repository {
     pub fn config_get_str(&self, key: &str) -> Result<Option<String>, GitAiError> {
         match self.get_git_config_file() {
             Ok(git_config_file) => Ok(git_config_file.string(key).map(|cow| cow.to_string())),
-            Err(e) => Err(GitAiError::GixError(e.to_string())),
+            Err(e) => Err(e),
         }
     }
 
@@ -1074,7 +1074,7 @@ impl Repository {
                 }
                 Ok(matches)
             }
-            Err(e) => Err(GitAiError::GixError(e.to_string())),
+            Err(e) => Err(e),
         }
     }
 
