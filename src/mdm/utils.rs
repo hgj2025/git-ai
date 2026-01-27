@@ -520,6 +520,36 @@ mod tests {
     }
 
     #[test]
+    fn test_is_github_codespaces() {
+        // Save original value
+        let original = std::env::var("CODESPACES").ok();
+
+        // Test when CODESPACES is not set
+        std::env::remove_var("CODESPACES");
+        assert!(!is_github_codespaces());
+
+        // Test when CODESPACES is set to "true"
+        std::env::set_var("CODESPACES", "true");
+        assert!(is_github_codespaces());
+
+        // Test when CODESPACES is set to other values
+        std::env::set_var("CODESPACES", "false");
+        assert!(!is_github_codespaces());
+
+        std::env::set_var("CODESPACES", "1");
+        assert!(!is_github_codespaces());
+
+        std::env::set_var("CODESPACES", "");
+        assert!(!is_github_codespaces());
+
+        // Restore original value
+        match original {
+            Some(val) => std::env::set_var("CODESPACES", val),
+            None => std::env::remove_var("CODESPACES"),
+        }
+    }
+
+    #[test]
     fn test_update_git_path_setting_appends_with_comments() {
         let temp_dir = TempDir::new().unwrap();
         let settings_path = temp_dir.path().join("settings.json");
