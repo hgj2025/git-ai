@@ -116,7 +116,7 @@ impl HookInstaller for VSCodeInstaller {
             results.push(InstallResult {
                 changed: false,
                 diff: None,
-                message: "VS Code: Skipped in GitHub Codespaces. Add the extension to your devcontainer.json: \"customizations\": { \"vscode\": { \"extensions\": [\"git-ai.git-ai-vscode\"] } }".to_string(),
+                message: "VS Code: Unable to install extension in GitHub Codespaces. Add to your devcontainer.json: \"customizations\": { \"vscode\": { \"extensions\": [\"git-ai.git-ai-vscode\"] } }".to_string(),
             });
             return Ok(results);
         }
