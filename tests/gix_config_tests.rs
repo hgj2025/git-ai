@@ -225,8 +225,8 @@ fn test_config_falls_back_to_global() {
     let repo = TestRepo::new();
 
     // Use a unique key to avoid conflicts with real config
-    let test_key = "gitaitest.globalfallback";
-    let global_value = "GLOBAL_TEST_VALUE_12345";
+    let test_key = "gitaici.globalcheck";
+    let global_value = "GLOBAL_CI_VALUE_12345";
 
     // Set a global value for our test key
     repo.git_og(&["config", "--global", test_key, global_value])
