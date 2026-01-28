@@ -107,11 +107,11 @@ impl HookInstaller for DroidInstaller {
 
         let desired_hooks = json!({
             "PreToolUse": {
-                "matcher": "^(Edit|Write|Create)$",
+                "matcher": "^(Edit|Write|Create|ApplyPatch)$",
                 "desired_cmd": pre_tool_cmd,
             },
             "PostToolUse": {
-                "matcher": "^(Edit|Write|Create)$",
+                "matcher": "^(Edit|Write|Create|ApplyPatch)$",
                 "desired_cmd": post_tool_cmd,
             }
         });
