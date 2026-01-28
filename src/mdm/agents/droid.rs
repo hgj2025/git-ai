@@ -107,11 +107,11 @@ impl HookInstaller for DroidInstaller {
 
         let desired_hooks = json!({
             "PreToolUse": {
-                "matcher": "Edit|Write",
+                "matcher": "^(Edit|Write|Create)$",
                 "desired_cmd": pre_tool_cmd,
             },
             "PostToolUse": {
-                "matcher": "Edit|Write",
+                "matcher": "^(Edit|Write|Create)$",
                 "desired_cmd": post_tool_cmd,
             }
         });
@@ -218,6 +218,13 @@ impl HookInstaller for DroidInstaller {
             root.insert("hooks".to_string(), hooks_obj);
         }
 
+        // Add claudeHooksImported flag if it doesn't exist
+        if let Some(hooks) = merged.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+            if !hooks.contains_key("claudeHooksImported") {
+                hooks.insert("claudeHooksImported".to_string(), json!(true));
+            }
+        }
+
         if existing == merged {
             return Ok(None);
         }
@@ -317,7 +324,7 @@ mod tests {
             "hooks": {
                 "PreToolUse": [
                     {
-                        "matcher": "Edit|Write",
+                        "matcher": "^(Edit|Write|Create)$",
                         "hooks": [
                             {
                                 "type": "command",
@@ -328,7 +335,7 @@ mod tests {
                 ],
                 "PostToolUse": [
                     {
-                        "matcher": "Edit|Write",
+                        "matcher": "^(Edit|Write|Create)$",
                         "hooks": [
                             {
                                 "type": "command",
@@ -353,11 +360,11 @@ mod tests {
 
         assert_eq!(
             pre_tool[0].get("matcher").unwrap().as_str().unwrap(),
-            "Edit|Write"
+            "^(Edit|Write|Create)$"
         );
         assert_eq!(
             post_tool[0].get("matcher").unwrap().as_str().unwrap(),
-            "Edit|Write"
+            "^(Edit|Write|Create)$"
         );
     }
 
@@ -373,7 +380,7 @@ mod tests {
             "hooks": {
                 "PreToolUse": [
                     {
-                        "matcher": "Edit|Write",
+                        "matcher": "^(Edit|Write|Create)$",
                         "hooks": [
                             {
                                 "type": "command",
@@ -384,7 +391,7 @@ mod tests {
                 ],
                 "PostToolUse": [
                     {
-                        "matcher": "Edit|Write",
+                        "matcher": "^(Edit|Write|Create)$",
                         "hooks": [
                             {
                                 "type": "command",
