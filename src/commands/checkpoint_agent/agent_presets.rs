@@ -1313,7 +1313,7 @@ impl AgentCheckpointPreset for DroidPreset {
         // Note: Droid uses camelCase field names
         // session_id is optional - generate a fallback if not present
         let session_id = hook_data
-            .get("sessionId")
+            .get("session_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -1329,7 +1329,7 @@ impl AgentCheckpointPreset for DroidPreset {
 
         // transcript_path is optional - Droid may not always provide it
         let transcript_path = hook_data
-            .get("transcriptPath")
+            .get("transcript_path")
             .and_then(|v| v.as_str());
 
         let cwd = hook_data
