@@ -55,7 +55,9 @@ fn test_parse_droid_jsonl_transcript() {
         match message {
             Message::User { timestamp, .. }
             | Message::Assistant { timestamp, .. }
-            | Message::ToolUse { timestamp, .. } => {
+            | Message::ToolUse { timestamp, .. }
+            | Message::Thinking { timestamp, .. }
+            | Message::Plan { timestamp, .. } => {
                 if let Some(ts) = timestamp {
                     assert!(
                         ts.contains("T") && ts.contains("Z"),
