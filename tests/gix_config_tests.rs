@@ -224,26 +224,25 @@ fn test_config_get_regexp_case_insensitive_keys() {
 fn test_config_falls_back_to_global() {
     let repo = TestRepo::new();
 
-    // Get the global value first
-    let global_value = repo
-        .git_og(&["config", "--global", "--get", "user.name"])
-        .ok()
-        .map(|s| s.trim().to_string());
+    // Use a unique key to avoid conflicts with real config
+    let test_key = "gitaitest.globalfallback";
+    let global_value = "GLOBAL_TEST_VALUE_12345";
 
-    // Fail if no global user.name configured - test requires it
-    let global_value = global_value
-        .filter(|v| !v.is_empty())
-        .expect("Test requires global user.name to be configured");
+    // Set a global value for our test key
+    repo.git_og(&["config", "--global", test_key, global_value])
+        .expect("Failed to set global config");
 
-    // Unset local user.name so we fall back to global
-    repo.git(&["config", "--local", "--unset", "user.name"])
-        .unwrap();
+    // Ensure no local value exists
+    let _ = repo.git(&["config", "--local", "--unset", test_key]);
 
     let git_ai_repo =
         GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
-    let result = git_ai_repo.config_get_str("user.name").unwrap();
+    let result = git_ai_repo.config_get_str(test_key).unwrap();
 
-    assert_eq!(result, Some(global_value));
+    // Clean up global config
+    let _ = repo.git_og(&["config", "--global", "--unset", test_key]);
+
+    assert_eq!(result, Some(global_value.to_string()));
 }
 
 #[test]
