@@ -4,17 +4,9 @@ mod test_utils;
 
 use std::collections::HashMap;
 
-use git_ai::{
-    error::GitAiError,
-    git::{find_repository, repository::exec_git},
-};
+use git_ai::git::repository as GitAiRepository;
 use repos::test_repo::TestRepo;
 
-/// Helper to get the git-ai Repository from a TestRepo
-fn get_git_ai_repo(repo: &TestRepo) -> git_ai::git::repository::Repository {
-    let args = vec!["-C".to_string(), repo.path().to_str().unwrap().to_string()];
-    find_repository(&args).expect("Failed to find repo")
-}
 /// Helper to get git config via CLI for comparison
 fn get_git_config_cli(repo: &TestRepo, command: &str, key: &str) -> Result<String, String> {
     repo.git_og(&["config", command, key])
@@ -47,7 +39,8 @@ fn test_config_get_str_simple_value() {
 
     repo.git(&["config", key, "custom_value"]).unwrap();
 
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
     let result = git_ai_repo
         .config_get_str(key)
         .expect("Failed to get custom.key value")
@@ -67,7 +60,8 @@ fn test_config_get_str_subsection() {
 
     repo.git(&["config", key, "custom_value"]).unwrap();
 
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
     let result = git_ai_repo
         .config_get_str(key)
         .expect("Failed to get custom.key value")
@@ -82,7 +76,8 @@ fn test_config_get_str_subsection() {
 #[test]
 fn test_config_get_str_missing_key_returns_none() {
     let repo = TestRepo::new();
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
 
     // Non-existent key should return None (same as git config --get exit code 1)
     let result = git_ai_repo.config_get_str("nonexistent.key").unwrap();
@@ -100,7 +95,8 @@ fn test_config_get_str_special_chars() {
     repo.git(&["config", alias_key, "log --oneline --graph"])
         .unwrap();
 
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
     let name_result = git_ai_repo
         .config_get_str(name_key)
         .expect("Failed to get custom.key value")
@@ -137,7 +133,8 @@ fn test_config_get_regexp_subsection() {
 
     repo.git(&["config", key, "custom_value"]).unwrap();
 
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
     let result = git_ai_repo
         .config_get_regexp(pattern)
         .expect("Failed to match pattern");
@@ -152,7 +149,8 @@ fn test_config_get_regexp_subsection() {
 fn test_config_get_regexp_no_matches() {
     let repo = TestRepo::new();
     let pattern = "nonexistant";
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
     let result = git_ai_repo
         .config_get_regexp(pattern)
         .expect("Failed to match pattern");
@@ -162,7 +160,8 @@ fn test_config_get_regexp_no_matches() {
 #[test]
 fn test_config_get_regexp_with_subsections() {
     let repo = TestRepo::new();
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
 
     // Set up remotes using TestRepo's git method
     repo.git(&[
@@ -199,7 +198,8 @@ fn test_config_get_regexp_case_insensitive_keys() {
     let value = "true";
 
     repo.git(&["config", key, value]).unwrap();
-    let git_ai_repo = get_git_ai_repo(&repo);
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
 
     // Our implementation normalizes to lowercase
     let result = git_ai_repo.config_get_regexp(r"^core\.autocrlf$").unwrap();
@@ -214,4 +214,93 @@ fn test_config_get_regexp_case_insensitive_keys() {
         git_config_cli_regexp(&repo, "--get-regexp", r"^core\.autocrlf$").unwrap();
 
     assert_eq!(result, git_config_result);
+}
+
+// ============================================================================
+// Global config fallback tests
+// ============================================================================
+
+#[test]
+fn test_config_falls_back_to_global() {
+    let repo = TestRepo::new();
+
+    // Get the global value first
+    let global_value = repo
+        .git_og(&["config", "--global", "--get", "user.name"])
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    // Fail if no global user.name configured - test requires it
+    let global_value = global_value
+        .filter(|v| !v.is_empty())
+        .expect("Test requires global user.name to be configured");
+
+    // Unset local user.name so we fall back to global
+    repo.git(&["config", "--local", "--unset", "user.name"])
+        .unwrap();
+
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
+    let result = git_ai_repo.config_get_str("user.name").unwrap();
+
+    assert_eq!(result, Some(global_value));
+}
+
+#[test]
+fn test_config_local_overrides_global() {
+    let repo = TestRepo::new();
+
+    // Get global value (may or may not exist)
+    let global_value = repo
+        .git_og(&["config", "--global", "--get", "user.name"])
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    let local_value = "TEST_LOCAL_USER_12345";
+
+    // Test is invalid if local happens to match global
+    if global_value.as_deref() == Some(local_value) {
+        panic!("Test invalid: local value matches global");
+    }
+
+    repo.git(&["config", "--local", "user.name", local_value])
+        .unwrap();
+
+    let git_ai_repo =
+        GitAiRepository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
+    let result = git_ai_repo.config_get_str("user.name").unwrap();
+
+    assert_eq!(result, Some(local_value.to_string()));
+}
+
+// ============================================================================
+// Bare repository tests
+// ============================================================================
+
+#[test]
+fn test_config_get_str_bare_repo() {
+    let repo = TestRepo::new_bare();
+    let key = "custom.baretest";
+
+    repo.git(&["config", key, "bare_value"]).unwrap();
+
+    let git_ai_repo = GitAiRepository::from_bare_repository(repo.path()).unwrap();
+    let result = git_ai_repo.config_get_str(key).unwrap();
+
+    assert_eq!(result, Some("bare_value".to_string()));
+}
+
+#[test]
+fn test_config_get_regexp_bare_repo() {
+    let repo = TestRepo::new_bare();
+
+    repo.git(&["config", "baretest.key1", "value1"]).unwrap();
+    repo.git(&["config", "baretest.key2", "value2"]).unwrap();
+
+    let git_ai_repo = GitAiRepository::from_bare_repository(repo.path()).unwrap();
+    let result = git_ai_repo.config_get_regexp(r"^baretest\.").unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(result.get("baretest.key1"), Some(&"value1".to_string()));
+    assert_eq!(result.get("baretest.key2"), Some(&"value2".to_string()));
 }
