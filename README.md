@@ -75,12 +75,13 @@ The format of the notes is outlined here in the [Git AI Standard v3.0.0](https:/
 | Continue CLI                                                                               | ✅         | ✅      |
 | OpenCode                                                                                   | ✅         | ✅      |
 | Atlassian RovoDev CLI                                                                      | ✅         | ✅      |
+| GitHub Copilot in Jetbrains IDEs (IntelliJ, etc.)                                          | 🔄         | 🔄      |
+| Jetbrains Junie                                                                            | 🔄         | 🔄      |
 | AWS Kiro (in-progress)                                                                     | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
 | Windsurf                                                                                   | 🔄         | 🔄      |
 | Augment Code                                                                               | 🔄         | 🔄      |
 | OpenAI Codex (waiting on [openai/codex #2109](https://github.com/openai/codex/issues/2109)) |            |         |
-| Junie &amp; Jetbrains IDEs                                                                 |            |         |
 | Ona                                                                                        |            |         |
 | Sourcegraph Cody + Amp                                                                     |            |         |
 | Google Antigravity                                                                         |            |         |
