@@ -148,7 +148,7 @@ pub fn handle_git_ai(args: &[String]) {
         "logout" => {
             commands::logout::handle_logout(&args[1..]);
         }
-        "personal-dashboard" | "dashboard" => {
+        "dash" | "dashboard" => {
             commands::personal_dashboard::handle_personal_dashboard(&args[1..]);
         }
         "show-prompt" => {

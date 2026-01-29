@@ -73,7 +73,7 @@ pub fn handle_login(_args: &[String]) {
                             // Spawn background metrics flush now that we're logged in
                             spawn_background_metrics_db_flush();
                             // Inform the user
-                            eprintln!("Syncing your AI usage metrics in the background...");
+                            eprintln!("Syncing your Git AI dashboard in the background...");
                         }
                     }
                 }
