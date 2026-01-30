@@ -1,6 +1,4 @@
-use crate::authorship::virtual_attribution::{
-    VirtualAttributions, restore_stashed_va,
-};
+use crate::authorship::virtual_attribution::{VirtualAttributions, restore_stashed_va};
 use crate::commands::git_handlers::CommandHooksContext;
 use crate::commands::hooks::commit_hooks::get_commit_default_author;
 use crate::commands::hooks::rebase_hooks::build_rebase_commit_mappings;
@@ -72,9 +70,6 @@ pub fn pull_pre_command_hook(
     let config = get_pull_rebase_autostash_config(parsed_args, repository);
     let has_changes = has_uncommitted_changes(repository);
 
-    // Store whether this is a rebase pull so post-hook can rewrite committed authorship
-    command_hooks_context.is_rebase_pull = config.is_rebase;
-
     debug_log(&format!(
         "pull pre-hook: rebase={}, autostash={}, has_changes={}",
         config.is_rebase, config.is_autostash, has_changes
@@ -140,7 +135,7 @@ pub fn fetch_pull_post_command_hook(
 /// 2. Renames working log for fast-forward pulls to preserve attributions.
 pub fn pull_post_command_hook(
     repository: &mut Repository,
-    _parsed_args: &ParsedGitInvocation,
+    parsed_args: &ParsedGitInvocation,
     exit_status: std::process::ExitStatus,
     command_hooks_context: &mut CommandHooksContext,
 ) {
@@ -187,7 +182,8 @@ pub fn pull_post_command_hook(
     }
 
     // Handle committed authorship rewriting for pull --rebase
-    if command_hooks_context.is_rebase_pull {
+    let config = get_pull_rebase_autostash_config(parsed_args, repository);
+    if config.is_rebase {
         process_completed_pull_rebase(repository, &old_head, &new_head);
     }
 }
@@ -312,11 +308,7 @@ fn has_uncommitted_changes(repository: &Repository) -> bool {
 
 /// Rewrite authorship for committed local changes that were rebased by `git pull --rebase`.
 /// Uses the same commit-mapping and rewrite logic as `rebase_hooks::process_completed_rebase`.
-fn process_completed_pull_rebase(
-    repository: &mut Repository,
-    original_head: &str,
-    new_head: &str,
-) {
+fn process_completed_pull_rebase(repository: &mut Repository, original_head: &str, new_head: &str) {
     debug_log(&format!(
         "Processing pull --rebase authorship: {} -> {}",
         original_head, new_head
