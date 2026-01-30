@@ -62,6 +62,11 @@ impl CiContext {
             } => {
                 println!("Working repository is in {}", self.repo.path().display());
 
+                println!("Fetching authorship history");
+                // Ensure we have the full authorship history before checking for existing notes
+                fetch_authorship_notes(&self.repo, "origin")?;
+                println!("Fetched authorship history");
+
                 // Check if authorship already exists for this commit
                 match get_reference_as_authorship_log_v3(&self.repo, merge_commit_sha) {
                     Ok(existing_log) => {
@@ -108,10 +113,7 @@ impl CiContext {
                         base_ref, e
                     ))
                 })?;
-                println!("Fetched base branch. Fetching authorship history");
-                // Ensure we have the full authorship history
-                fetch_authorship_notes(&self.repo, "origin")?;
-                println!("Fetched authorship history");
+                println!("Fetched base branch.");
                 // Rewrite authorship
                 rewrite_authorship_after_squash_or_rebase(
                     &self.repo,
