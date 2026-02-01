@@ -29,11 +29,6 @@ pub fn handle_git_ai(args: &[String]) {
     let current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
     let repository_option = find_repository_in_path(&current_dir).ok();
 
-    // Set repo context to flush buffered events
-    if let Some(repo) = repository_option.as_ref() {
-        observability::set_repo_context(repo);
-    }
-
     let config = config::Config::get();
 
     let allowed_repository = config.is_allowed_repository(&repository_option);
@@ -147,6 +142,9 @@ pub fn handle_git_ai(args: &[String]) {
         }
         "logout" => {
             commands::logout::handle_logout(&args[1..]);
+        }
+        "exchange-nonce" => {
+            commands::exchange_nonce::handle_exchange_nonce(&args[1..]);
         }
         "dash" | "dashboard" => {
             commands::personal_dashboard::handle_personal_dashboard(&args[1..]);
