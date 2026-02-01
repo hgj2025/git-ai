@@ -277,9 +277,10 @@ INSTALLED_VERSION=$(${INSTALL_DIR}/git-ai --version 2>&1 || echo "unknown")
 echo "Installed git-ai ${INSTALLED_VERSION}"
 
 # Login user with install token if provided
+NEED_LOGIN=false
 if [ -n "${INSTALL_NONCE:-}" ] && [ -n "${API_BASE:-}" ]; then
     if ! ${INSTALL_DIR}/git-ai exchange-nonce; then
-        warn "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
+        NEED_LOGIN=true
     fi
 fi
 
@@ -374,3 +375,10 @@ fi
 
 echo ""
 echo -e "${YELLOW}Close and reopen your terminal and IDE sessions to use git-ai.${NC}"
+
+# If nonce exchange failed, run interactive login
+if [ "$NEED_LOGIN" = true ]; then
+    echo ""
+    echo "Launching login..."
+    ${INSTALL_DIR}/git-ai login
+fi

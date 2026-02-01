@@ -370,14 +370,15 @@ try { Unblock-File -Path $gitOgShim -ErrorAction SilentlyContinue } catch { }
 # Exchange install nonce for credentials if provided (auto-login from web install page)
 # The INSTALL_NONCE, API_BASE, and INSTALL_PAGE_URL env vars are injected by the server
 # Uses the Rust command which works on both Mac and Windows
+$needLogin = $false
 if ($env:INSTALL_NONCE -and $env:API_BASE) {
     try {
         & $finalExe exchange-nonce | Out-Host
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
+            $needLogin = $true
         }
     } catch {
-        Write-Warning "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
+        $needLogin = $true
     }
 }
 
@@ -428,3 +429,10 @@ try {
 }
 
 Write-Host 'Close and reopen your terminal and IDE sessions to use git-ai.' -ForegroundColor Yellow
+
+# If nonce exchange failed, run interactive login
+if ($needLogin) {
+    Write-Host ''
+    Write-Host 'Launching login...'
+    & $finalExe login
+}
