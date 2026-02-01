@@ -76,8 +76,8 @@ The format of the notes is outlined here in the [Git AI Standard v3.0.0](https:/
 | Continue CLI                                                                               | ✅         | ✅      |
 | Droid CLI (Factory AI)                                                                     | ✅         | ✅      |
 | Atlassian RovoDev CLI                                                                      | ✅         | ✅      |
-| GitHub Copilot in Jetbrains IDEs (IntelliJ, etc.) (in-review)                              | 🔄         | 🔄      |
-| Jetbrains Junie (in-review)                                                                | 🔄         | 🔄      |
+| GitHub Copilot in Jetbrains IDEs (IntelliJ, etc.)                                          | ✅         | 🔄      |
+| Jetbrains Junie                                                                            | ✅         | 🔄      |
 | Amp (in-progress)                                                                          | 🔄         | 🔄      |
 | AWS Kiro (in-progress)                                                                     | 🔄         | 🔄      |
 | Continue VS Code/IntelliJ (in-progress)                                                    | 🔄         | 🔄      |
