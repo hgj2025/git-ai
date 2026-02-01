@@ -145,8 +145,19 @@ Environment variables used by the current project are related to the [plugin sig
 | `PRIVATE_KEY_PASSWORD`    | Password used for encrypting the certificate file.                                                           |
 | `CERTIFICATE_CHAIN`       | Certificate chain, should contain: `-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE----`                |
 | `PUBLISH_TOKEN`           | Publishing token generated in your JetBrains Marketplace profile dashboard.                                  |
+| `SENTRY_AUTH_TOKEN`       | Sentry auth token for source context uploads. Required for builds.                                           |
 
 For more details on how to generate proper values, check the relevant sections mentioned above.
+
+### Setting SENTRY_AUTH_TOKEN locally
+
+For local development, add the token to your Gradle user properties file at `~/.gradle/gradle.properties`:
+
+```properties
+SENTRY_AUTH_TOKEN=your_token_here
+```
+
+Then the build will automatically pick it up. This file is user-specific and not committed to version control.
 
 To configure GitHub secret environment variables, go to the `⚙️ Settings > Secrets and variables > Actions` section of your project repository:
 

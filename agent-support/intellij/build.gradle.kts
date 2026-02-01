@@ -9,6 +9,7 @@ plugins {
     alias(libs.plugins.changelog) // Gradle Changelog Plugin
     alias(libs.plugins.qodana) // Gradle Qodana Plugin
     alias(libs.plugins.kover) // Gradle Kover Plugin
+    id("io.sentry.jvm.gradle") version "5.5.0" // Sentry for error reporting
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -33,6 +34,11 @@ repositories {
 dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.opentest4j)
+
+    // PostHog Analytics (server SDK for JVM apps)
+    implementation("com.posthog.java:posthog:1.2.0")
+
+    // Note: Sentry SDK is auto-installed by the sentry plugin
 
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
@@ -142,6 +148,16 @@ tasks {
         dependsOn(patchChangelog)
     }
 
+}
+
+// Sentry configuration for source context uploads
+sentry {
+    includeSourceContext = true
+    org = "git-ai-oss"
+    projectName = "jetbrains-plugin"
+    authToken = System.getenv("SENTRY_AUTH_TOKEN")
+        ?: providers.gradleProperty("SENTRY_AUTH_TOKEN").orNull
+        ?: error("SENTRY_AUTH_TOKEN is required (set via env var or ~/.gradle/gradle.properties)")
 }
 
 intellijPlatformTesting {

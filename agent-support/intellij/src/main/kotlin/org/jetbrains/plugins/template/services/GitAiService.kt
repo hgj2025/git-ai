@@ -29,6 +29,13 @@ class GitAiService {
     @Volatile
     private var cachedVersion: Version? = null
 
+    // Cached path to git-ai binary once resolved
+    @Volatile
+    private var resolvedGitAiPath: String? = null
+
+    // Track which locations were searched (for error reporting)
+    private var lastSearchedPaths: List<String> = emptyList()
+
     data class Version(val major: Int, val minor: Int, val patch: Int) : Comparable<Version> {
         override fun compareTo(other: Version): Int {
             return compareValuesBy(this, other, { it.major }, { it.minor }, { it.patch })
@@ -58,22 +65,93 @@ class GitAiService {
     }
 
     /**
-     * Builds a shell command that wraps the given arguments in a login shell.
-     * This ensures the user's PATH is inherited so git-ai can be found.
+     * Finds the git-ai binary by checking known installation locations first,
+     * then falling back to PATH lookup.
+     *
+     * Known locations (from install.sh, install.ps1, dev-symlinks.sh):
+     * - Production: ~/.git-ai/bin/git-ai
+     * - Development: ~/.git-ai-local-dev/gitwrap/bin/git-ai
+     *
+     * @return The full path to git-ai if found, or null if not found
      */
-    private fun buildShellCommand(vararg args: String): List<String> {
-        val command = args.joinToString(" ") { arg ->
-            if (arg.contains(" ") || arg.contains("\"")) {
-                "'" + arg.replace("'", "'\\''") + "'"
-            } else {
-                arg
+    private fun findGitAiBinary(): String? {
+        // Return cached path if already resolved and still valid
+        resolvedGitAiPath?.let { path ->
+            if (File(path).canExecute()) {
+                return path
+            }
+            // Cached path no longer valid, clear it
+            resolvedGitAiPath = null
+        }
+
+        val homeDir = System.getProperty("user.home")
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+
+        // Known installation locations from install.sh/install.ps1/dev-symlinks.sh
+        val knownPaths = if (isWindows) {
+            listOf(
+                "$homeDir\\.git-ai\\bin\\git-ai.exe",           // Production install (install.ps1)
+                "$homeDir\\.git-ai-local-dev\\gitwrap\\bin\\git-ai.exe"  // Dev symlinks
+            )
+        } else {
+            listOf(
+                "$homeDir/.git-ai/bin/git-ai",                  // Production install (install.sh)
+                "$homeDir/.git-ai-local-dev/gitwrap/bin/git-ai" // Dev symlinks (dev-symlinks.sh)
+            )
+        }
+
+        lastSearchedPaths = knownPaths
+
+        // Check known locations first
+        for (path in knownPaths) {
+            val file = File(path)
+            if (file.exists() && file.canExecute()) {
+                logger.info("Found git-ai at known location: $path")
+                resolvedGitAiPath = path
+                return path
             }
         }
-        return if (System.getProperty("os.name").lowercase().contains("win")) {
-            listOf("cmd", "/c", command)
-        } else {
-            // Use login shell to inherit user's PATH
-            listOf("/bin/sh", "-l", "-c", command)
+
+        // Fall back to PATH lookup via shell (may work if launched from terminal)
+        logger.info("git-ai not found in known locations, trying PATH lookup")
+        return tryPathLookup()
+    }
+
+    /**
+     * Attempts to find git-ai via PATH using the shell.
+     * This may work when IntelliJ is launched from a terminal with proper PATH.
+     */
+    private fun tryPathLookup(): String? {
+        return try {
+            val isWindows = System.getProperty("os.name").lowercase().contains("win")
+            val command = if (isWindows) {
+                listOf("cmd", "/c", "where git-ai")
+            } else {
+                listOf("/bin/sh", "-l", "-c", "which git-ai")
+            }
+
+            val process = ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+
+            val completed = process.waitFor(5, TimeUnit.SECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                return null
+            }
+
+            if (process.exitValue() == 0) {
+                val path = process.inputStream.bufferedReader().readText().trim().lines().firstOrNull()
+                if (path != null && File(path).canExecute()) {
+                    logger.info("Found git-ai via PATH lookup: $path")
+                    resolvedGitAiPath = path
+                    return path
+                }
+            }
+            null
+        } catch (e: Exception) {
+            logger.warn("PATH lookup for git-ai failed: ${e.message}")
+            null
         }
     }
 
@@ -98,8 +176,34 @@ class GitAiService {
 
     private fun checkGitAiInstalled(): Boolean {
         return try {
-            val process = ProcessBuilder(buildShellCommand("git-ai", "version"))
-                .redirectErrorStream(true)
+            // First, try to find the git-ai binary
+            val gitAiPath = findGitAiBinary()
+
+            if (gitAiPath == null) {
+                val currentPath = System.getenv("PATH") ?: "PATH not set"
+                logger.warn("""
+                    git-ai not found
+                    Searched locations: ${lastSearchedPaths.joinToString(", ")}
+                    PATH: $currentPath
+
+                    To fix: Install git-ai using one of these methods:
+                    - cargo install git-ai
+                    - curl -fsSL https://install.usegitai.com | sh
+                    - Or ensure git-ai is in your PATH
+                """.trimIndent())
+                TelemetryService.getInstance().reportGitAiNotFound(
+                    exitCode = null,
+                    output = null,
+                    searchedPaths = lastSearchedPaths,
+                    currentPath = currentPath
+                )
+                return false
+            }
+
+            // Run version check using the resolved path
+            val command = listOf(gitAiPath, "version")
+            val process = ProcessBuilder(command)
+                .redirectErrorStream(false)
                 .start()
 
             val completed = process.waitFor(5, TimeUnit.SECONDS)
@@ -109,12 +213,29 @@ class GitAiService {
                 return false
             }
 
+            val output = process.inputStream.bufferedReader().readText().trim()
+            val errorOutput = process.errorStream.bufferedReader().readText().trim()
+
             if (process.exitValue() != 0) {
-                logger.warn("git-ai not found or returned error")
+                val currentPath = System.getenv("PATH") ?: "PATH not set"
+                logger.warn("""
+                    git-ai returned error
+                    Command: ${command.joinToString(" ")}
+                    Exit code: ${process.exitValue()}
+                    Stdout: $output
+                    Stderr: $errorOutput
+                    PATH: $currentPath
+                    Resolved path: $gitAiPath
+                """.trimIndent())
+                TelemetryService.getInstance().reportGitAiNotFound(
+                    exitCode = process.exitValue(),
+                    output = if (errorOutput.isNotEmpty()) errorOutput else output,
+                    searchedPaths = lastSearchedPaths,
+                    currentPath = currentPath
+                )
                 return false
             }
 
-            val output = process.inputStream.bufferedReader().readText().trim()
             val version = Version.parse(output)
 
             if (version == null) {
@@ -126,13 +247,24 @@ class GitAiService {
 
             if (version < minVersion) {
                 logger.warn("git-ai version $version is below minimum required version $minVersion")
+                TelemetryService.getInstance().reportVersionMismatch(version.toString(), minVersion.toString())
                 return false
             }
 
-            logger.warn("git-ai CLI available, version: $version")
+            logger.info("git-ai CLI available at $gitAiPath, version: $version")
             true
         } catch (e: Exception) {
-            logger.warn("git-ai CLI not available: ${e.message}")
+            val currentPath = System.getenv("PATH") ?: "PATH not set"
+            logger.warn("""
+                git-ai CLI not available: ${e.message}
+                Searched locations: ${lastSearchedPaths.joinToString(", ")}
+                PATH: $currentPath
+            """.trimIndent(), e)
+            TelemetryService.getInstance().captureError(e, mapOf(
+                "context" to "git_ai_availability_check",
+                "searched_paths" to lastSearchedPaths.joinToString(","),
+                "current_path" to currentPath
+            ))
             false
         }
     }
@@ -150,6 +282,12 @@ class GitAiService {
             return false
         }
 
+        val gitAiPath = resolvedGitAiPath
+        if (gitAiPath == null) {
+            logger.warn("Skipping checkpoint - git-ai path not resolved")
+            return false
+        }
+
         return try {
             val jsonInput = input.toJson()
             val inputType = when (input) {
@@ -157,14 +295,13 @@ class GitAiService {
                 is AgentV1Input.AiAgent -> "ai_agent (${input.agentName})"
             }
 
-            logger.warn("Creating checkpoint (agent-v1): $inputType")
-            logger.warn("Checkpoint input: $jsonInput")
+            logger.info("Creating checkpoint (agent-v1): $inputType")
+            logger.info("Checkpoint input: $jsonInput")
 
-            val process = ProcessBuilder(buildShellCommand(
-                "git-ai", "checkpoint", "agent-v1", "--hook-input", "stdin"
-            ))
+            val command = listOf(gitAiPath, "checkpoint", "agent-v1", "--hook-input", "stdin")
+            val process = ProcessBuilder(command)
                 .directory(File(workingDirectory))
-                .redirectErrorStream(true)
+                .redirectErrorStream(false)
                 .start()
 
             // Write JSON to stdin
@@ -176,24 +313,35 @@ class GitAiService {
             if (!completed) {
                 process.destroyForcibly()
                 logger.warn("git-ai checkpoint timed out")
+                TelemetryService.getInstance().reportCheckpointTimeout()
                 return false
             }
 
             val output = process.inputStream.bufferedReader().readText().trim()
+            val errorOutput = process.errorStream.bufferedReader().readText().trim()
             val exitCode = process.exitValue()
 
             if (exitCode != 0) {
-                logger.warn("git-ai checkpoint failed (exit $exitCode): $output")
+                val combinedOutput = if (errorOutput.isNotEmpty()) "$output\n$errorOutput" else output
+                logger.warn("""
+                    git-ai checkpoint failed
+                    Command: ${command.joinToString(" ")}
+                    Exit code: $exitCode
+                    Stdout: $output
+                    Stderr: $errorOutput
+                """.trimIndent())
+                TelemetryService.getInstance().reportCheckpointFailure(exitCode, combinedOutput)
                 return false
             }
 
-            logger.warn("Checkpoint created successfully ($inputType)")
+            logger.info("Checkpoint created successfully ($inputType)")
             if (output.isNotEmpty()) {
-                logger.warn("git-ai output: $output")
+                logger.info("git-ai output: $output")
             }
             true
         } catch (e: Exception) {
             logger.warn("Failed to create checkpoint: ${e.message}", e)
+            TelemetryService.getInstance().captureError(e, mapOf("context" to "checkpoint_creation"))
             false
         }
     }
@@ -206,6 +354,8 @@ class GitAiService {
         synchronized(this) {
             availabilityChecked = false
             cachedVersion = null
+            resolvedGitAiPath = null
+            lastSearchedPaths = emptyList()
         }
     }
 
