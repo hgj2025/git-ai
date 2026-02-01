@@ -29,11 +29,6 @@ pub fn handle_git_ai(args: &[String]) {
     let current_dir = env::current_dir().unwrap().to_string_lossy().to_string();
     let repository_option = find_repository_in_path(&current_dir).ok();
 
-    // Set repo context to flush buffered events
-    if let Some(repo) = repository_option.as_ref() {
-        observability::set_repo_context(repo);
-    }
-
     let config = config::Config::get();
 
     let allowed_repository = config.is_allowed_repository(&repository_option);

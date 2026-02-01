@@ -373,8 +373,11 @@ try { Unblock-File -Path $gitOgShim -ErrorAction SilentlyContinue } catch { }
 if ($env:INSTALL_NONCE -and $env:API_BASE) {
     try {
         & $finalExe exchange-nonce | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
+        }
     } catch {
-        # Ignore errors - install should continue even if login fails
+        Write-Warning "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
     }
 }
 

@@ -278,7 +278,9 @@ echo "Installed git-ai ${INSTALLED_VERSION}"
 
 # Login user with install token if provided
 if [ -n "${INSTALL_NONCE:-}" ] && [ -n "${API_BASE:-}" ]; then
-    ${INSTALL_DIR}/git-ai exchange-nonce || true
+    if ! ${INSTALL_DIR}/git-ai exchange-nonce; then
+        warn "Warning: Automatic login failed. Please run 'git-ai login' to authenticate manually."
+    fi
 fi
 
 echo "Setting up IDE/agent hooks..."

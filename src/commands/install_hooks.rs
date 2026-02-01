@@ -7,7 +7,6 @@ use crate::mdm::hook_installer::HookInstallerParams;
 use crate::mdm::skills_installer;
 use crate::mdm::spinner::{print_diff, Spinner};
 use crate::mdm::utils::{get_current_binary_path, git_shim_path};
-use crate::observability::set_global_log_context;
 use std::collections::HashMap;
 
 /// Installation status for a tool
@@ -104,10 +103,6 @@ pub fn to_hashmap(statuses: HashMap<String, InstallStatus>) -> HashMap<String, S
 
 /// Main entry point for install-hooks command
 pub fn run(args: &[String]) -> Result<HashMap<String, String>, GitAiError> {
-    // Set up global log context (for logging outside git repos)
-    // Logs go to ~/.git-ai/internal/logs/{PID}.log
-    set_global_log_context();
-
     // Parse flags
     let mut dry_run = false;
     let mut verbose = false;
@@ -127,15 +122,9 @@ pub fn run(args: &[String]) -> Result<HashMap<String, String>, GitAiError> {
     // Run async operations with smol and convert result
     let statuses = smol::block_on(async_run_install(&params, dry_run, verbose))?;
 
-    // Flush logs immediately so install metrics are captured right away (only if logged in)
-    let store = crate::auth::CredentialStore::new();
-    if let Ok(Some(creds)) = store.load() {
-        if !creds.is_refresh_token_expired() {
-            crate::observability::flush::handle_flush_logs(&[]);
-            // Also flush any queued metrics from the local database
-            spawn_background_metrics_db_flush();
-        }
-    }
+    // Flush logs immediately so install metrics are captured right away
+    crate::observability::flush::handle_flush_logs(&[]);
+    spawn_background_metrics_db_flush();
 
     Ok(to_hashmap(statuses))
 }
