@@ -376,13 +376,6 @@ impl MetricsUploader {
 
         let using_default_api = api_base_url == crate::config::DEFAULT_API_BASE_URL;
 
-        // In debug builds, skip uploading to production API to avoid hangs.
-        // Each failed upload can take 30s timeout + 60s retry + 30s = 120s.
-        // For local dev, set api_base_url in ~/.git-ai/config.json to point to local worker.
-        #[cfg(debug_assertions)]
-        let should_upload = !using_default_api;
-
-        #[cfg(not(debug_assertions))]
         let should_upload = !using_default_api || client.is_logged_in();
 
         Self {
