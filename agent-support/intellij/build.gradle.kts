@@ -152,12 +152,18 @@ tasks {
 
 // Sentry configuration for source context uploads
 sentry {
-    includeSourceContext = true
-    org = "git-ai-oss"
-    projectName = "jetbrains-plugin"
-    authToken = System.getenv("SENTRY_AUTH_TOKEN")
+    val sentryToken = System.getenv("SENTRY_AUTH_TOKEN")
         ?: providers.gradleProperty("SENTRY_AUTH_TOKEN").orNull
-        ?: error("SENTRY_AUTH_TOKEN is required (set via env var or ~/.gradle/gradle.properties)")
+
+    if (sentryToken != null) {
+        includeSourceContext = true
+        org = "git-ai-oss"
+        projectName = "jetbrains-plugin"
+        authToken = sentryToken
+    } else {
+        // Disable Sentry when no token is available (e.g., Qodana analysis, local dev without token)
+        enabled = false
+    }
 }
 
 intellijPlatformTesting {
