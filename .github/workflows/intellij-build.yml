@@ -169,7 +169,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         with:
           cache-default-branch-only: true
-          args: --project-dir,agent-support/intellij
+          args: --project-dir,agent-support/intellij,--env,SENTRY_AUTH_TOKEN
 
   # Run plugin structure verification along with IntelliJ Plugin Verifier
   verify:
