@@ -162,7 +162,7 @@ sentry {
         authToken = sentryToken
     } else {
         // Disable Sentry when no token is available (e.g., Qodana analysis, local dev without token)
-        enabled = false
+        enabled.set(false)
     }
 }
 
