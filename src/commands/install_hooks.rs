@@ -196,36 +196,38 @@ async fn async_run_install(
 
                 any_checked = true;
 
-                // Install/update hooks
-                let spinner = Spinner::new(&format!("{}: checking hooks", name));
-                spinner.start();
+                // Install/update hooks (only for tools that use config file hooks)
+                if installer.uses_config_hooks() {
+                    let spinner = Spinner::new(&format!("{}: checking hooks", name));
+                    spinner.start();
 
-                match installer.install_hooks(params, dry_run) {
-                    Ok(Some(diff)) => {
-                        if dry_run {
-                            spinner.pending(&format!("{}: Pending updates", name));
-                        } else {
-                            spinner.success(&format!("{}: Hooks updated", name));
+                    match installer.install_hooks(params, dry_run) {
+                        Ok(Some(diff)) => {
+                            if dry_run {
+                                spinner.pending(&format!("{}: Pending updates", name));
+                            } else {
+                                spinner.success(&format!("{}: Hooks updated", name));
+                            }
+                            if verbose {
+                                println!();
+                                print_diff(&diff);
+                            }
+                            has_changes = true;
+                            statuses.insert(id.to_string(), InstallStatus::Installed);
+                            detailed_results.push((id.to_string(), InstallResult::installed()));
                         }
-                        if verbose {
-                            println!();
-                            print_diff(&diff);
+                        Ok(None) => {
+                            spinner.success(&format!("{}: Hooks already up to date", name));
+                            statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
+                            detailed_results.push((id.to_string(), InstallResult::already_installed()));
                         }
-                        has_changes = true;
-                        statuses.insert(id.to_string(), InstallStatus::Installed);
-                        detailed_results.push((id.to_string(), InstallResult::installed()));
-                    }
-                    Ok(None) => {
-                        spinner.success(&format!("{}: Hooks already up to date", name));
-                        statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
-                        detailed_results.push((id.to_string(), InstallResult::already_installed()));
-                    }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        spinner.error(&format!("{}: Failed to update hooks", name));
-                        eprintln!("  Error: {}", error_msg);
-                        statuses.insert(id.to_string(), InstallStatus::NotFound);
-                        detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            spinner.error(&format!("{}: Failed to update hooks", name));
+                            eprintln!("  Error: {}", error_msg);
+                            statuses.insert(id.to_string(), InstallStatus::NotFound);
+                            detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
+                        }
                     }
                 }
 
