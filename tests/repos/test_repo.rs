@@ -647,8 +647,10 @@ fn compile_binary() -> PathBuf {
         );
     }
 
-    
-    PathBuf::from(manifest_dir).join("target/debug/git-ai")
+    // Respect CARGO_TARGET_DIR if set, otherwise fall back to manifest-relative target/
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .unwrap_or_else(|_| PathBuf::from(manifest_dir).join("target").to_string_lossy().into_owned());
+    PathBuf::from(target_dir).join("debug/git-ai")
 }
 
 pub(crate) fn get_binary_path() -> &'static PathBuf {
