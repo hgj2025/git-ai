@@ -560,4 +560,48 @@ mod tests {
             "Ἑλληνική.txt"
         );
     }
+
+    // =========================================================================
+    // Phase 6: Extended Emoji Tests (ZWJ, skin tones, flags)
+    // =========================================================================
+
+    #[test]
+    fn test_unescape_emoji_skin_tone() {
+        // Emoji with skin tone modifier 👋🏽 = 👋 (U+1F44B) + 🏽 (U+1F3FD)
+        // 👋 = \360\237\221\213, 🏽 = \360\237\217\275
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\221\\213\\360\\237\\217\\275.txt\""),
+            "👋🏽.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_emoji_zwj_sequence() {
+        // ZWJ emoji sequence: 👨‍💻 (man technologist) = man + ZWJ + laptop
+        // 👨 = \360\237\221\250, ZWJ = \342\200\215, 💻 = \360\237\222\273
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\221\\250\\342\\200\\215\\360\\237\\222\\273.txt\""),
+            "👨‍💻.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_emoji_flag() {
+        // Flag emoji 🇯🇵 (Japan) = regional indicator J + regional indicator P
+        // 🇯 = \360\237\207\257, 🇵 = \360\237\207\265
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\207\\257\\360\\237\\207\\265.txt\""),
+            "🇯🇵.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_multiple_emoji() {
+        // Multiple emoji: 🚀🎉 (rocket + party)
+        // 🚀 = \360\237\232\200, 🎉 = \360\237\216\211
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\232\\200\\360\\237\\216\\211.txt\""),
+            "🚀🎉.txt"
+        );
+    }
 }

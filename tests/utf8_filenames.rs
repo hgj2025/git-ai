@@ -458,6 +458,179 @@ fn test_japanese_kanji_filename() {
 }
 
 // =============================================================================
+// Phase 6: Extended Emoji (ZWJ, skin tones, flags, keycaps)
+// =============================================================================
+
+#[test]
+fn test_emoji_with_skin_tone_modifiers() {
+    let repo = TestRepo::new();
+
+    // Create an initial commit
+    let mut readme = repo.filename("README.md");
+    readme.set_contents(lines!["# Project"]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // AI creates a file with emoji skin tone modifier
+    // 👋🏽 = 👋 (U+1F44B) + 🏽 (U+1F3FD skin tone modifier)
+    let mut emoji_file = repo.filename("👋🏽wave.txt");
+    emoji_file.set_contents(lines![
+        "Hello with wave!".ai(),
+        "Skin tone modifier test".ai(),
+    ]);
+
+    // Commit the emoji file with skin tone modifier
+    let commit = repo.stage_all_and_commit("Add emoji with skin tone").unwrap();
+
+    assert_eq!(
+        commit.authorship_log.attestations[0].file_path,
+        "👋🏽wave.txt",
+        "File path should preserve emoji with skin tone modifier"
+    );
+
+    let raw = repo.git_ai(&["stats", "--json"]).unwrap();
+    let json = extract_json_object(&raw);
+    let stats: CommitStats = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(stats.ai_additions, 2, "Both lines should be attributed to AI");
+    assert_eq!(stats.human_additions, 0, "No lines should be attributed to human");
+}
+
+#[test]
+fn test_emoji_zwj_sequences() {
+    let repo = TestRepo::new();
+
+    // Create an initial commit
+    let mut readme = repo.filename("README.md");
+    readme.set_contents(lines!["# Project"]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // AI creates a file with ZWJ (Zero-Width Joiner) emoji sequence
+    // 👨‍👩‍👧‍👦 = family emoji (man + ZWJ + woman + ZWJ + girl + ZWJ + boy)
+    let mut zwj_file = repo.filename("👨‍👩‍👧‍👦_family.txt");
+    zwj_file.set_contents(lines![
+        "Family emoji ZWJ sequence test".ai(),
+        "Complex unicode handling".ai(),
+    ]);
+
+    // Commit the ZWJ emoji file
+    let commit = repo.stage_all_and_commit("Add ZWJ emoji file").unwrap();
+
+    assert_eq!(
+        commit.authorship_log.attestations[0].file_path,
+        "👨‍👩‍👧‍👦_family.txt",
+        "File path should preserve ZWJ emoji sequences"
+    );
+
+    let raw = repo.git_ai(&["stats", "--json"]).unwrap();
+    let json = extract_json_object(&raw);
+    let stats: CommitStats = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(stats.ai_additions, 2, "Both lines should be attributed to AI");
+    assert_eq!(stats.human_additions, 0, "No lines should be attributed to human");
+}
+
+#[test]
+fn test_emoji_flag_sequences() {
+    let repo = TestRepo::new();
+
+    // Create an initial commit
+    let mut readme = repo.filename("README.md");
+    readme.set_contents(lines!["# Project"]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // AI creates a file with flag emoji (regional indicator sequence)
+    // 🇺🇸 = U+1F1FA (regional indicator U) + U+1F1F8 (regional indicator S)
+    let mut flag_file = repo.filename("🇺🇸_usa.txt");
+    flag_file.set_contents(lines![
+        "USA flag emoji test".ai(),
+        "Regional indicator sequence".ai(),
+    ]);
+
+    // Commit the flag emoji file
+    let commit = repo.stage_all_and_commit("Add flag emoji file").unwrap();
+
+    assert_eq!(
+        commit.authorship_log.attestations[0].file_path,
+        "🇺🇸_usa.txt",
+        "File path should preserve flag emoji (regional indicator sequences)"
+    );
+
+    let raw = repo.git_ai(&["stats", "--json"]).unwrap();
+    let json = extract_json_object(&raw);
+    let stats: CommitStats = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(stats.ai_additions, 2, "Both lines should be attributed to AI");
+    assert_eq!(stats.human_additions, 0, "No lines should be attributed to human");
+}
+
+#[test]
+fn test_multiple_complex_emoji_filename() {
+    let repo = TestRepo::new();
+
+    // Create an initial commit
+    let mut readme = repo.filename("README.md");
+    readme.set_contents(lines!["# Project"]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // AI creates a file with multiple complex emoji
+    let mut multi_emoji_file = repo.filename("🚀🎉🌟💻🔥_launch.txt");
+    multi_emoji_file.set_contents(lines![
+        "Multiple emoji test".ai(),
+        "Rocket, party, star, laptop, fire".ai(),
+        "All 4-byte UTF-8".ai(),
+    ]);
+
+    // Commit the multi-emoji file
+    let commit = repo.stage_all_and_commit("Add multi-emoji file").unwrap();
+
+    assert_eq!(
+        commit.authorship_log.attestations[0].file_path,
+        "🚀🎉🌟💻🔥_launch.txt",
+        "File path should preserve multiple emoji"
+    );
+
+    let raw = repo.git_ai(&["stats", "--json"]).unwrap();
+    let json = extract_json_object(&raw);
+    let stats: CommitStats = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(stats.ai_additions, 3, "All 3 lines should be attributed to AI");
+    assert_eq!(stats.human_additions, 0, "No lines should be attributed to human");
+}
+
+#[test]
+fn test_emoji_in_directory_names() {
+    let repo = TestRepo::new();
+
+    // Create an initial commit
+    let mut readme = repo.filename("README.md");
+    readme.set_contents(lines!["# Project"]);
+    repo.stage_all_and_commit("Initial commit").unwrap();
+
+    // AI creates a file in directories with emoji names
+    let mut nested_emoji_file = repo.filename("src/🔧tools/📝notes.txt");
+    nested_emoji_file.set_contents(lines![
+        "Emoji in directory names".ai(),
+        "Tool and note emoji".ai(),
+    ]);
+
+    // Commit the file in emoji-named directories
+    let commit = repo.stage_all_and_commit("Add file in emoji directories").unwrap();
+
+    assert_eq!(
+        commit.authorship_log.attestations[0].file_path,
+        "src/🔧tools/📝notes.txt",
+        "File path should preserve emoji in directory names"
+    );
+
+    let raw = repo.git_ai(&["stats", "--json"]).unwrap();
+    let json = extract_json_object(&raw);
+    let stats: CommitStats = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(stats.ai_additions, 2, "Both lines should be attributed to AI");
+    assert_eq!(stats.human_additions, 0, "No lines should be attributed to human");
+}
+
+// =============================================================================
 // Phase 5: Cyrillic and Greek Scripts
 // =============================================================================
 
