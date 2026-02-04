@@ -1,4 +1,4 @@
-use super::ide_types::{DetectedIde, JetBrainsIde, JETBRAINS_IDES};
+use super::ide_types::{DetectedIde, JETBRAINS_IDES, JetBrainsIde};
 use crate::mdm::utils::home_dir;
 use crate::utils::debug_log;
 use std::path::{Path, PathBuf};
@@ -35,9 +35,10 @@ fn find_macos_installations() -> Vec<DetectedIde> {
     for ide in JETBRAINS_IDES {
         for bundle_id in ide.bundle_ids {
             if let Some(app_path) = find_app_by_bundle_id(bundle_id)
-                && let Some(detected_ide) = detect_macos_ide(ide, &app_path) {
-                    detected.push(detected_ide);
-                }
+                && let Some(detected_ide) = detect_macos_ide(ide, &app_path)
+            {
+                detected.push(detected_ide);
+            }
         }
     }
 
@@ -50,22 +51,27 @@ fn find_macos_installations() -> Vec<DetectedIde> {
 
     for scan_dir in scan_dirs {
         if scan_dir.exists()
-            && let Ok(entries) = std::fs::read_dir(&scan_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "app") {
-                        for ide in JETBRAINS_IDES {
-                            if is_matching_macos_app(ide, &path)
-                                && let Some(detected_ide) = detect_macos_ide(ide, &path) {
-                                    // Avoid duplicates
-                                    if !detected.iter().any(|d| d.install_path == detected_ide.install_path) {
-                                        detected.push(detected_ide);
-                                    }
-                                }
+            && let Ok(entries) = std::fs::read_dir(&scan_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "app") {
+                    for ide in JETBRAINS_IDES {
+                        if is_matching_macos_app(ide, &path)
+                            && let Some(detected_ide) = detect_macos_ide(ide, &path)
+                        {
+                            // Avoid duplicates
+                            if !detected
+                                .iter()
+                                .any(|d| d.install_path == detected_ide.install_path)
+                            {
+                                detected.push(detected_ide);
+                            }
                         }
                     }
                 }
             }
+        }
     }
 
     detected
@@ -88,10 +94,7 @@ fn find_app_by_bundle_id(bundle_id: &str) -> Option<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn is_matching_macos_app(ide: &JetBrainsIde, app_path: &Path) -> bool {
-    let app_name = app_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let app_name = app_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
     let app_name_lower = app_name.to_lowercase();
 
@@ -148,11 +151,12 @@ fn get_macos_build_number(app_path: &Path) -> (Option<String>, Option<u32>) {
     let product_info_path = app_path.join("Contents/Resources/product-info.json");
     if product_info_path.exists()
         && let Ok(content) = std::fs::read_to_string(&product_info_path)
-            && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
-                && let Some(build) = json.get("buildNumber").and_then(|v| v.as_str()) {
-                    let major = parse_major_build(build);
-                    return (Some(build.to_string()), major);
-                }
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(build) = json.get("buildNumber").and_then(|v| v.as_str())
+    {
+        let major = parse_major_build(build);
+        return (Some(build.to_string()), major);
+    }
 
     // Fall back to Info.plist
     let output = Command::new("defaults")
@@ -165,11 +169,12 @@ fn get_macos_build_number(app_path: &Path) -> (Option<String>, Option<u32>) {
         .ok();
 
     if let Some(output) = output
-        && output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let major = parse_major_build(&version);
-            return (Some(version), major);
-        }
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let major = parse_major_build(&version);
+        return (Some(version), major);
+    }
 
     (None, None)
 }
@@ -207,7 +212,10 @@ fn find_windows_installations() -> Vec<DetectedIde> {
                     if path.is_dir() {
                         for ide in JETBRAINS_IDES {
                             if let Some(detected_ide) = detect_windows_ide(ide, &path) {
-                                if !detected.iter().any(|d| d.install_path == detected_ide.install_path) {
+                                if !detected
+                                    .iter()
+                                    .any(|d| d.install_path == detected_ide.install_path)
+                                {
                                     detected.push(detected_ide);
                                 }
                             }
@@ -233,10 +241,7 @@ fn scan_windows_toolbox_dir(toolbox_apps: &Path) -> Vec<DetectedIde> {
             }
 
             // Find matching IDE by toolbox app name
-            let dir_name = app_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let dir_name = app_dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
             for ide in JETBRAINS_IDES {
                 if dir_name.contains(ide.toolbox_app_name) {
@@ -330,7 +335,10 @@ fn find_linux_installations() -> Vec<DetectedIde> {
                     if path.is_dir() {
                         for ide in JETBRAINS_IDES {
                             if let Some(detected_ide) = detect_linux_ide(ide, &path) {
-                                if !detected.iter().any(|d| d.install_path == detected_ide.install_path) {
+                                if !detected
+                                    .iter()
+                                    .any(|d| d.install_path == detected_ide.install_path)
+                                {
                                     detected.push(detected_ide);
                                 }
                             }
@@ -355,10 +363,7 @@ fn scan_linux_toolbox_dir(toolbox_apps: &Path) -> Vec<DetectedIde> {
                 continue;
             }
 
-            let dir_name = app_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let dir_name = app_dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
             for ide in JETBRAINS_IDES {
                 if dir_name.contains(ide.toolbox_app_name) {
@@ -372,7 +377,9 @@ fn scan_linux_toolbox_dir(toolbox_apps: &Path) -> Vec<DetectedIde> {
                                     for version_entry in versions.flatten() {
                                         let version_dir = version_entry.path();
                                         if version_dir.is_dir() {
-                                            if let Some(detected_ide) = detect_linux_ide(ide, &version_dir) {
+                                            if let Some(detected_ide) =
+                                                detect_linux_ide(ide, &version_dir)
+                                            {
                                                 detected.push(detected_ide);
                                             }
                                         }
