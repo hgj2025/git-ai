@@ -8,13 +8,13 @@ use git_ai::git::repository as GitAiRepository;
 use repos::test_repo::TestRepo;
 
 /// Helper to get git config via CLI for comparison
-fn get_git_config_cli(repo: &TestRepo, command: &str, key: &str) -> Result<String, String> {
-    repo.git_og(&["config", command, key])
+fn get_git_config_cli(repo: &TestRepo, _command: &str, key: &str) -> Result<String, String> {
+    repo.git_og(&["config", "--get", key])
 }
 
 fn git_config_cli_regexp(
     repo: &TestRepo,
-    command: &str,
+    _command: &str,
     key: &str,
 ) -> Result<HashMap<String, String>, String> {
     let mut result = HashMap::new();

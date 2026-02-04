@@ -84,7 +84,7 @@ fn test_simple_additions_new_file_not_git_added() {
     let commit = repo.stage_all_and_commit("Initial commit").unwrap();
 
     // All lines should be attributed correctly
-    assert!(commit.authorship_log.attestations.len() > 0);
+    assert!(!commit.authorship_log.attestations.is_empty());
 
     file.assert_lines_and_blame(lines![
         "Line 1 from human",
@@ -452,7 +452,7 @@ fn test_unstaged_changes_not_committed() {
     let commit = repo.commit("Commit only staged lines").unwrap();
 
     // Only the staged lines should be in the commit
-    assert!(commit.authorship_log.attestations.len() > 0);
+    assert!(!commit.authorship_log.attestations.is_empty());
 
     // Only check committed lines
     file.assert_committed_lines(lines![
