@@ -130,3 +130,239 @@ pub fn current_git_ai_exe() -> Result<PathBuf, GitAiError> {
 pub fn is_interactive_terminal() -> bool {
     *IS_TERMINAL.get_or_init(|| std::io::stdin().is_terminal())
 }
+
+/// Unescape a git-quoted path that may contain octal escape sequences.
+///
+/// Git quotes filenames containing non-ASCII characters (and some special characters)
+/// using C-style escaping with octal sequences. For example, a Chinese filename like
+/// "中文.txt" would appear as `"\344\270\255\346\226\207.txt"` in git output.
+///
+/// This function handles:
+/// - Quoted paths: removes surrounding quotes and unescapes content
+/// - Octal escapes: converts `\NNN` sequences back to UTF-8 bytes
+/// - Other escapes: `\\`, `\"`, `\n`, `\t`, etc.
+/// - Unquoted paths: returned as-is
+///
+/// # Examples
+///
+/// ```
+/// use git_ai::utils::unescape_git_path;
+///
+/// // Unquoted path - returned as-is
+/// assert_eq!(unescape_git_path("simple.txt"), "simple.txt");
+///
+/// // Quoted path with spaces
+/// assert_eq!(unescape_git_path("\"path with spaces.txt\""), "path with spaces.txt");
+///
+/// // Chinese characters encoded as octal
+/// assert_eq!(unescape_git_path("\"\\344\\270\\255\\346\\226\\207.txt\""), "中文.txt");
+/// ```
+pub fn unescape_git_path(path: &str) -> String {
+    // If not quoted, return as-is
+    if !path.starts_with('"') || !path.ends_with('"') {
+        return path.to_string();
+    }
+
+    // Remove surrounding quotes
+    let inner = &path[1..path.len() - 1];
+
+    // Parse escape sequences and collect bytes
+    let mut bytes: Vec<u8> = Vec::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('\\') => {
+                    chars.next();
+                    bytes.push(b'\\');
+                }
+                Some('"') => {
+                    chars.next();
+                    bytes.push(b'"');
+                }
+                Some('n') => {
+                    chars.next();
+                    bytes.push(b'\n');
+                }
+                Some('t') => {
+                    chars.next();
+                    bytes.push(b'\t');
+                }
+                Some('r') => {
+                    chars.next();
+                    bytes.push(b'\r');
+                }
+                Some(d) if d.is_ascii_digit() => {
+                    // Octal escape sequence: \NNN (1-3 octal digits)
+                    let mut octal = String::new();
+                    for _ in 0..3 {
+                        if let Some(&d) = chars.peek() {
+                            if d.is_ascii_digit() && d <= '7' {
+                                octal.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Ok(byte_val) = u8::from_str_radix(&octal, 8) {
+                        bytes.push(byte_val);
+                    }
+                }
+                _ => {
+                    // Unknown escape - keep the backslash
+                    bytes.push(b'\\');
+                }
+            }
+        } else {
+            // Regular character - encode as UTF-8
+            let mut buf = [0u8; 4];
+            let encoded = c.encode_utf8(&mut buf);
+            bytes.extend_from_slice(encoded.as_bytes());
+        }
+    }
+
+    // Convert bytes to UTF-8 string
+    String::from_utf8(bytes).unwrap_or_else(|e| {
+        // If invalid UTF-8, try lossy conversion
+        String::from_utf8_lossy(e.as_bytes()).into_owned()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unescape_git_path_simple() {
+        // Unquoted path - no change
+        assert_eq!(unescape_git_path("simple.txt"), "simple.txt");
+        assert_eq!(unescape_git_path("path/to/file.rs"), "path/to/file.rs");
+    }
+
+    #[test]
+    fn test_unescape_git_path_quoted_with_spaces() {
+        // Quoted path with spaces
+        assert_eq!(
+            unescape_git_path("\"path with spaces.txt\""),
+            "path with spaces.txt"
+        );
+        assert_eq!(
+            unescape_git_path("\"dir name/file name.txt\""),
+            "dir name/file name.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_git_path_chinese_characters() {
+        // Chinese characters "中文" encoded as octal: \344\270\255\346\226\207
+        assert_eq!(
+            unescape_git_path("\"\\344\\270\\255\\346\\226\\207.txt\""),
+            "中文.txt"
+        );
+
+        // More complex Chinese filename: "中文文件.txt"
+        // 中 = \344\270\255, 文 = \346\226\207, 件 = \344\273\266
+        assert_eq!(
+            unescape_git_path(
+                "\"\\344\\270\\255\\346\\226\\207\\346\\226\\207\\344\\273\\266.txt\""
+            ),
+            "中文文件.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_git_path_emoji() {
+        // Emoji "🚀" (rocket) = U+1F680 = \360\237\232\200 in octal UTF-8
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\232\\200.txt\""),
+            "🚀.txt"
+        );
+
+        // Emoji "😀" (grinning face) = U+1F600 = \360\237\230\200 in octal UTF-8
+        assert_eq!(
+            unescape_git_path("\"\\360\\237\\230\\200.txt\""),
+            "😀.txt"
+        );
+
+        // Mixed: "test_🎉_file.txt" where 🎉 = \360\237\216\211
+        assert_eq!(
+            unescape_git_path("\"test_\\360\\237\\216\\211_file.txt\""),
+            "test_🎉_file.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_git_path_escaped_characters() {
+        // Escaped backslash
+        assert_eq!(unescape_git_path("\"path\\\\with\\\\slashes\""), "path\\with\\slashes");
+
+        // Escaped quotes
+        assert_eq!(unescape_git_path("\"file\\\"name.txt\""), "file\"name.txt");
+
+        // Escaped newline and tab
+        assert_eq!(unescape_git_path("\"line1\\nline2\""), "line1\nline2");
+        assert_eq!(unescape_git_path("\"col1\\tcol2\""), "col1\tcol2");
+    }
+
+    #[test]
+    fn test_unescape_git_path_mixed_content() {
+        // Mix of ASCII, Chinese, and escapes
+        assert_eq!(
+            unescape_git_path("\"src/\\344\\270\\255\\346\\226\\207/file.txt\""),
+            "src/中文/file.txt"
+        );
+    }
+
+    // =========================================================================
+    // Phase 1: CJK Extended Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unescape_japanese_hiragana() {
+        // Japanese Hiragana "ひらがな" = \343\201\262\343\202\211\343\201\214\343\201\252
+        assert_eq!(
+            unescape_git_path("\"\\343\\201\\262\\343\\202\\211\\343\\201\\214\\343\\201\\252.txt\""),
+            "ひらがな.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_japanese_katakana() {
+        // Japanese Katakana "カタカナ" = \343\202\253\343\202\277\343\202\253\343\203\212
+        assert_eq!(
+            unescape_git_path("\"\\343\\202\\253\\343\\202\\277\\343\\202\\253\\343\\203\\212.txt\""),
+            "カタカナ.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_korean_hangul() {
+        // Korean Hangul "한글" = \355\225\234\352\270\200
+        assert_eq!(
+            unescape_git_path("\"\\355\\225\\234\\352\\270\\200.txt\""),
+            "한글.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_traditional_chinese() {
+        // Traditional Chinese "繁體" = \347\271\201\351\253\224
+        assert_eq!(
+            unescape_git_path("\"\\347\\271\\201\\351\\253\\224.txt\""),
+            "繁體.txt"
+        );
+    }
+
+    #[test]
+    fn test_unescape_mixed_cjk() {
+        // Mixed CJK: "日中韓" (Japanese, Chinese, Korean characters mixed)
+        // 日 = \346\227\245, 中 = \344\270\255, 韓 = \351\237\223
+        assert_eq!(
+            unescape_git_path("\"\\346\\227\\245\\344\\270\\255\\351\\237\\223.txt\""),
+            "日中韓.txt"
+        );
+    }
+}
