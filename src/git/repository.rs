@@ -2222,7 +2222,7 @@ fn parse_diff_added_lines(diff_output: &str) -> Result<HashMap<String, Vec<u32>>
     for line in diff_output.lines() {
         // Track current file being diffed
         // Git outputs paths in two formats:
-        // 1. Unquoted: +++ b/path/to/file.txt
+        // 1. Unquoted: +++ b/path/to/file.txt (or w/ for workdir diffs)
         // 2. Quoted (for non-ASCII): +++ "b/path/to/file.txt" (with octal escapes inside)
         if line.starts_with("+++ b/") {
             // Unquoted path (ASCII only)
@@ -2230,14 +2230,17 @@ fn parse_diff_added_lines(diff_output: &str) -> Result<HashMap<String, Vec<u32>>
             let raw_path = &line[6..].trim_end();
             let file_path = crate::utils::unescape_git_path(raw_path);
             current_file = Some(file_path);
-        } else if line.starts_with("+++ \"b/") {
+        } else if line.starts_with("+++ w/") {
+            // Workdir diff uses w/ prefix instead of b/
+            let raw_path = &line[6..].trim_end();
+            let file_path = crate::utils::unescape_git_path(raw_path);
+            current_file = Some(file_path);
+        } else if line.starts_with("+++ \"b/") || line.starts_with("+++ \"w/") {
             // Quoted path (non-ASCII chars) - extract the quoted portion and unescape
-            // Format: +++ "b/\344\270\255\346\226\207.txt"
-            // We need to extract "b/\344\270\255\346\226\207.txt" and then strip the "b/" after unescaping
-            let quoted_path = &line[4..]; // Gets "b/\344\270\255\346\226\207.txt"
+            let quoted_path = &line[4..];
             let unescaped = crate::utils::unescape_git_path(quoted_path);
-            // Now unescaped is "b/中文.txt", strip the "b/" prefix
-            let file_path = if unescaped.starts_with("b/") {
+            // Strip the prefix (b/ or w/) after unescaping
+            let file_path = if unescaped.starts_with("b/") || unescaped.starts_with("w/") {
                 unescaped[2..].to_string()
             } else {
                 unescaped
@@ -2282,7 +2285,7 @@ fn parse_diff_added_lines_with_insertions(
     for line in diff_output.lines() {
         // Track current file being diffed
         // Git outputs paths in two formats:
-        // 1. Unquoted: +++ b/path/to/file.txt
+        // 1. Unquoted: +++ b/path/to/file.txt (or w/ for workdir diffs)
         // 2. Quoted (for non-ASCII): +++ "b/path/to/file.txt" (with octal escapes inside)
         if line.starts_with("+++ b/") {
             // Unquoted path (ASCII only)
@@ -2290,14 +2293,17 @@ fn parse_diff_added_lines_with_insertions(
             let raw_path = &line[6..].trim_end();
             let file_path = crate::utils::unescape_git_path(raw_path);
             current_file = Some(file_path);
-        } else if line.starts_with("+++ \"b/") {
+        } else if line.starts_with("+++ w/") {
+            // Workdir diff uses w/ prefix instead of b/
+            let raw_path = &line[6..].trim_end();
+            let file_path = crate::utils::unescape_git_path(raw_path);
+            current_file = Some(file_path);
+        } else if line.starts_with("+++ \"b/") || line.starts_with("+++ \"w/") {
             // Quoted path (non-ASCII chars) - extract the quoted portion and unescape
-            // Format: +++ "b/\344\270\255\346\226\207.txt"
-            // We need to extract "b/\344\270\255\346\226\207.txt" and then strip the "b/" after unescaping
-            let quoted_path = &line[4..]; // Gets "b/\344\270\255\346\226\207.txt"
+            let quoted_path = &line[4..];
             let unescaped = crate::utils::unescape_git_path(quoted_path);
-            // Now unescaped is "b/中文.txt", strip the "b/" prefix
-            let file_path = if unescaped.starts_with("b/") {
+            // Strip the prefix (b/ or w/) after unescaping
+            let file_path = if unescaped.starts_with("b/") || unescaped.starts_with("w/") {
                 unescaped[2..].to_string()
             } else {
                 unescaped
@@ -2486,5 +2492,70 @@ mod tests {
             chinese_filename,
             files
         );
+    }
+
+    #[test]
+    fn test_parse_diff_added_lines_with_insertions_standard_prefix() {
+        // Test diff with standard b/ prefix (commit-to-commit diff)
+        let diff = r#"diff --git a/test.txt b/test.txt
+index 0000000..abc1234 100644
+--- a/test.txt
++++ b/test.txt
+@@ -0,0 +1,2 @@
++line 1
++line 2"#;
+
+        let (added_lines, insertion_lines) = parse_diff_added_lines_with_insertions(diff).unwrap();
+        assert_eq!(added_lines.get("test.txt"), Some(&vec![1, 2]));
+        assert_eq!(insertion_lines.get("test.txt"), Some(&vec![1, 2]));
+    }
+
+    #[test]
+    fn test_parse_diff_added_lines_with_insertions_workdir_prefix() {
+        // Test diff with w/ prefix (commit-to-workdir diff)
+        let diff = r#"diff --git c/test.txt w/test.txt
+index a751413..8adaa6c 100644
+--- c/test.txt
++++ w/test.txt
+@@ -0,0 +1,2 @@
++// AI added line 1
++// AI added line 2"#;
+
+        let (added_lines, insertion_lines) = parse_diff_added_lines_with_insertions(diff).unwrap();
+        assert_eq!(added_lines.get("test.txt"), Some(&vec![1, 2]));
+        assert_eq!(insertion_lines.get("test.txt"), Some(&vec![1, 2]));
+    }
+
+    #[test]
+    fn test_parse_diff_added_lines_with_insertions_quoted_paths() {
+        // Test diff with quoted paths containing spaces
+        let diff = r#"diff --git "a/my file.txt" "b/my file.txt"
+index 0000000..abc1234 100644
+--- "a/my file.txt"
++++ "b/my file.txt"
+@@ -0,0 +1,3 @@
++line 1
++line 2
++line 3"#;
+
+        let (added_lines, insertion_lines) = parse_diff_added_lines_with_insertions(diff).unwrap();
+        assert_eq!(added_lines.get("my file.txt"), Some(&vec![1, 2, 3]));
+        assert_eq!(insertion_lines.get("my file.txt"), Some(&vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_diff_added_lines_with_insertions_quoted_workdir_paths() {
+        // Test diff with quoted w/ paths
+        let diff = r#"diff --git "c/my file.txt" "w/my file.txt"
+index 0000000..abc1234 100644
+--- "c/my file.txt"
++++ "w/my file.txt"
+@@ -0,0 +1,2 @@
++line 1
++line 2"#;
+
+        let (added_lines, insertion_lines) = parse_diff_added_lines_with_insertions(diff).unwrap();
+        assert_eq!(added_lines.get("my file.txt"), Some(&vec![1, 2]));
+        assert_eq!(insertion_lines.get("my file.txt"), Some(&vec![1, 2]));
     }
 }
