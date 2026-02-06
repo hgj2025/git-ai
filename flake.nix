@@ -186,6 +186,10 @@
 
           # Environment variables for development
           shellHook = ''
+            # Unset DEVELOPER_DIR to avoid conflict between the default stdenv
+            # SDK (14.4) and apple-sdk_15 (15.5) baked into the clang wrapper.
+            unset DEVELOPER_DIR
+
             echo "🦀 git-ai development environment"
             echo "Rust version: $(rustc --version)"
             echo "Cargo version: $(cargo --version)"
