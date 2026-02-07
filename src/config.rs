@@ -298,12 +298,6 @@ impl Config {
         &self.prompt_storage
     }
 
-    /// Returns the default prompt storage mode for repos not in the include list.
-    /// Returns None if not configured (defaults to "local" behavior).
-    pub fn default_prompt_storage(&self) -> Option<&str> {
-        self.default_prompt_storage.as_deref()
-    }
-
     /// Returns the effective prompt storage mode for a given repository.
     ///
     /// The resolution order is:
