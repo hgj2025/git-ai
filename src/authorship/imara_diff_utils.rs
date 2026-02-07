@@ -284,7 +284,7 @@ fn hunks_to_diff_ops(diff: &Diff, old_len: usize, _new_len: usize) -> Vec<DiffOp
                 new_index: new_idx,
                 len: equal_len,
             });
-            let _ = new_idx + equal_len;
+            new_idx += equal_len;
         }
 
         // Determine the type of change in this hunk
