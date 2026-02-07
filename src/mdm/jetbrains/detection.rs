@@ -290,15 +290,13 @@ fn detect_windows_ide(ide: &'static JetBrainsIde, install_path: &Path) -> Option
 #[cfg(windows)]
 fn get_windows_build_number(install_path: &Path) -> (Option<String>, Option<u32>) {
     let product_info_path = install_path.join("product-info.json");
-    if product_info_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&product_info_path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(build) = json.get("buildNumber").and_then(|v| v.as_str()) {
-                    let major = parse_major_build(build);
-                    return (Some(build.to_string()), major);
-                }
-            }
-        }
+    if product_info_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&product_info_path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(build) = json.get("buildNumber").and_then(|v| v.as_str())
+    {
+        let major = parse_major_build(build);
+        return (Some(build.to_string()), major);
     }
 
     (None, None)
@@ -330,20 +328,19 @@ fn find_linux_installations() -> Vec<DetectedIde> {
     ];
 
     for scan_dir in scan_dirs {
-        if scan_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&scan_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        for ide in JETBRAINS_IDES {
-                            if let Some(detected_ide) = detect_linux_ide(ide, &path) {
-                                if !detected
-                                    .iter()
-                                    .any(|d| d.install_path == detected_ide.install_path)
-                                {
-                                    detected.push(detected_ide);
-                                }
-                            }
+        if scan_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(&scan_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    for ide in JETBRAINS_IDES {
+                        if let Some(detected_ide) = detect_linux_ide(ide, &path)
+                            && !detected
+                                .iter()
+                                .any(|d| d.install_path == detected_ide.install_path)
+                        {
+                            detected.push(detected_ide);
                         }
                     }
                 }
@@ -378,12 +375,11 @@ fn scan_linux_toolbox_dir(toolbox_apps: &Path) -> Vec<DetectedIde> {
                                 if let Ok(versions) = std::fs::read_dir(&channel_dir) {
                                     for version_entry in versions.flatten() {
                                         let version_dir = version_entry.path();
-                                        if version_dir.is_dir() {
-                                            if let Some(detected_ide) =
+                                        if version_dir.is_dir()
+                                            && let Some(detected_ide) =
                                                 detect_linux_ide(ide, &version_dir)
-                                            {
-                                                detected.push(detected_ide);
-                                            }
+                                        {
+                                            detected.push(detected_ide);
                                         }
                                     }
                                 }
@@ -422,15 +418,13 @@ fn detect_linux_ide(ide: &'static JetBrainsIde, install_path: &Path) -> Option<D
 #[cfg(all(unix, not(target_os = "macos")))]
 fn get_linux_build_number(install_path: &Path) -> (Option<String>, Option<u32>) {
     let product_info_path = install_path.join("product-info.json");
-    if product_info_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&product_info_path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(build) = json.get("buildNumber").and_then(|v| v.as_str()) {
-                    let major = parse_major_build(build);
-                    return (Some(build.to_string()), major);
-                }
-            }
-        }
+    if product_info_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&product_info_path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(build) = json.get("buildNumber").and_then(|v| v.as_str())
+    {
+        let major = parse_major_build(build);
+        return (Some(build.to_string()), major);
     }
 
     (None, None)
