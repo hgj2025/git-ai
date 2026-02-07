@@ -1110,7 +1110,9 @@ mod tests {
             prompt_storage: prompt_storage.to_string(),
             default_prompt_storage: default_prompt_storage.map(|s| s.to_string()),
             api_key: None,
+            quiet: false,
         }
+    }
     }
 
     #[test]
