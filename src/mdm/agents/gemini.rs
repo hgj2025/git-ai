@@ -108,7 +108,11 @@ impl HookInstaller for GeminiInstaller {
         };
 
         // Build commands with absolute path
-        let before_tool_cmd = format!("{} {}", params.binary_path.display(), GEMINI_BEFORE_TOOL_CMD);
+        let before_tool_cmd = format!(
+            "{} {}",
+            params.binary_path.display(),
+            GEMINI_BEFORE_TOOL_CMD
+        );
         let after_tool_cmd = format!("{} {}", params.binary_path.display(), GEMINI_AFTER_TOOL_CMD);
 
         let desired_hooks = json!({

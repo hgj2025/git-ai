@@ -23,7 +23,8 @@ impl OpenCodeInstaller {
 
     /// Generate plugin content with the absolute binary path substituted in
     fn generate_plugin_content(binary_path: &Path) -> String {
-        OPENCODE_PLUGIN_CONTENT.replace("__GIT_AI_BINARY_PATH__", &binary_path.display().to_string())
+        OPENCODE_PLUGIN_CONTENT
+            .replace("__GIT_AI_BINARY_PATH__", &binary_path.display().to_string())
     }
 }
 
