@@ -131,6 +131,9 @@ pub fn is_interactive_terminal() -> bool {
     *IS_TERMINAL.get_or_init(|| std::io::stdin().is_terminal())
 }
 
+/// Windows-specific flag to prevent console window creation
+#[cfg(windows)]
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// Unescape a git-quoted path that may contain octal escape sequences.
 ///
 /// Git quotes filenames containing non-ASCII characters (and some special characters)
