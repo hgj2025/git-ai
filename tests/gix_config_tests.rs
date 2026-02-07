@@ -18,7 +18,7 @@ fn git_config_cli_regexp(
     key: &str,
 ) -> Result<HashMap<String, String>, String> {
     let mut result = HashMap::new();
-    let output = get_git_config_cli(repo, "--get-regexp", key)?;
+    let output = repo.git_og(&["config", "--get-regexp", key])?;
     for line in output.lines() {
         // Format: "key value" (space-separated)
         if let Some((key, value)) = line.split_once(' ') {
