@@ -18,6 +18,8 @@ use crate::observability;
 
 use crate::observability::wrapper_performance_targets::log_performance_target_if_violated;
 use crate::utils::debug_log;
+#[cfg(windows)]
+use crate::utils::is_interactive_terminal;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(unix)]
