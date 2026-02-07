@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::commands::hooks::checkout_hooks;
 use crate::commands::hooks::cherry_pick_hooks;
