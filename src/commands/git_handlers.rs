@@ -17,12 +17,16 @@ use crate::git::repository::Repository;
 use crate::observability;
 
 use crate::observability::wrapper_performance_targets::log_performance_target_if_violated;
-use crate::utils::debug_log;
+use crate::utils::{debug_log, is_interactive_terminal};
 use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use crate::utils::CREATE_NO_WINDOW;
 use std::process::Command;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -101,10 +105,6 @@ pub fn handle_git(args: &[String]) {
     let mut repository_option = find_repository(&parsed_args.global_args).ok();
 
     let has_repo = repository_option.is_some();
-
-    if let Some(repo) = repository_option.as_ref() {
-        observability::set_repo_context(repo);
-    }
 
     let config = config::Config::get();
 
@@ -510,9 +510,17 @@ fn proxy_to_git(args: &[String], exit_on_completion: bool) -> std::process::Exit
         }
         #[cfg(not(unix))]
         {
-            Command::new(config::Config::get().git_cmd())
-                .args(args)
-                .spawn()
+            let mut cmd = Command::new(config::Config::get().git_cmd());
+            cmd.args(args);
+
+            #[cfg(windows)]
+            {
+                if !is_interactive_terminal() {
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+            }
+
+            cmd.spawn()
         }
     };
 

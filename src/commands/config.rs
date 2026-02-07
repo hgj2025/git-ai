@@ -1,5 +1,5 @@
-use serde_json::Value;
 use dirs;
+use serde_json::Value;
 
 use crate::git::repository::find_repository_in_path;
 
@@ -107,6 +107,9 @@ fn print_config_help() {
     eprintln!("  feature_flags                Feature flags (object)");
     eprintln!("  api_key                      API key for X-API-Key header");
     eprintln!("  prompt_storage               Prompt storage mode (default/notes/local)");
+    eprintln!("  include_prompts_in_repositories  Repos to include for prompt storage (array)");
+    eprintln!("  default_prompt_storage       Fallback storage mode for non-included repos");
+    eprintln!("  quiet                        Suppress chart output after commits (bool)");
     eprintln!("");
     eprintln!("Repository Patterns:");
     eprintln!("  For exclude/allow/exclude_prompts_in_repositories, you can provide:");
@@ -283,6 +286,27 @@ fn show_all_config() -> Result<(), String> {
         Value::String(runtime_config.prompt_storage().to_string()),
     );
 
+    // include_prompts_in_repositories
+    if let Some(ref repos) = file_config.include_prompts_in_repositories {
+        effective_config.insert(
+            "include_prompts_in_repositories".to_string(),
+            serde_json::to_value(repos).unwrap_or(Value::Array(vec![])),
+        );
+    }
+
+    // default_prompt_storage
+    if let Some(ref storage) = file_config.default_prompt_storage {
+        effective_config.insert(
+            "default_prompt_storage".to_string(),
+            Value::String(storage.clone()),
+        );
+    }
+
+    effective_config.insert(
+        "quiet".to_string(),
+        Value::Bool(runtime_config.is_quiet()),
+    );
+
     // Feature flags - show effective flags with defaults applied
     let flags_value = serde_json::to_value(runtime_config.get_feature_flags())
         .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
@@ -356,6 +380,21 @@ fn get_config_value(key: &str) -> Result<(), String> {
                 }
             }
             "prompt_storage" => Value::String(runtime_config.prompt_storage().to_string()),
+            "include_prompts_in_repositories" => {
+                if let Some(ref repos) = file_config.include_prompts_in_repositories {
+                    serde_json::to_value(repos).unwrap()
+                } else {
+                    Value::Array(vec![])
+                }
+            }
+            "default_prompt_storage" => {
+                if let Some(ref storage) = file_config.default_prompt_storage {
+                    Value::String(storage.clone())
+                } else {
+                    Value::Null
+                }
+            }
+            "quiet" => Value::Bool(runtime_config.is_quiet()),
             _ => return Err(format!("Unknown config key: {}", key)),
         };
 
@@ -484,6 +523,38 @@ fn set_config_value(key: &str, value: &str, add_mode: bool) -> Result<(), String
                 file_config.prompt_storage = Some(value.to_string());
                 crate::config::save_file_config(&file_config)?;
                 eprintln!("[prompt_storage]: {}", value);
+            }
+            "include_prompts_in_repositories" => {
+                let resolved = resolve_repository_value(value)?;
+                if add_mode {
+                    let mut list = file_config
+                        .include_prompts_in_repositories
+                        .unwrap_or_default();
+                    for pattern in &resolved {
+                        if !list.contains(pattern) {
+                            list.push(pattern.clone());
+                        }
+                    }
+                    file_config.include_prompts_in_repositories = Some(list);
+                } else {
+                    file_config.include_prompts_in_repositories = Some(resolved.clone());
+                }
+                crate::config::save_file_config(&file_config)?;
+                for pattern in resolved {
+                    eprintln!("[include_prompts_in_repositories]: {}", pattern);
+                }
+            }
+            "default_prompt_storage" => {
+                validate_prompt_storage_value(value)?;
+                file_config.default_prompt_storage = Some(value.to_string());
+                crate::config::save_file_config(&file_config)?;
+                eprintln!("[default_prompt_storage]: {}", value);
+            }
+            "quiet" => {
+                let bool_value = parse_bool(value)?;
+                file_config.quiet = Some(bool_value);
+                crate::config::save_file_config(&file_config)?;
+                eprintln!("[quiet]: {}", bool_value);
             }
             _ => return Err(format!("Unknown config key: {}", key)),
         }
@@ -633,6 +704,27 @@ fn unset_config_value(key: &str) -> Result<(), String> {
                 crate::config::save_file_config(&file_config)?;
                 if let Some(v) = old_value {
                     eprintln!("- [prompt_storage]: {}", v);
+                }
+            }
+            "include_prompts_in_repositories" => {
+                let old_value = file_config.include_prompts_in_repositories.take();
+                crate::config::save_file_config(&file_config)?;
+                if let Some(v) = old_value {
+                    eprintln!("- [include_prompts_in_repositories]: {:?}", v);
+                }
+            }
+            "default_prompt_storage" => {
+                let old_value = file_config.default_prompt_storage.take();
+                crate::config::save_file_config(&file_config)?;
+                if let Some(v) = old_value {
+                    eprintln!("- [default_prompt_storage]: {}", v);
+                }
+            }
+            "quiet" => {
+                let old_value = file_config.quiet.take();
+                crate::config::save_file_config(&file_config)?;
+                if let Some(v) = old_value {
+                    eprintln!("- [quiet]: {}", v);
                 }
             }
             _ => return Err(format!("Unknown config key: {}", key)),
@@ -860,5 +952,32 @@ mod tests {
         assert!(err.contains("default"));
         assert!(err.contains("notes"));
         assert!(err.contains("local"));
+    }
+
+    #[test]
+    fn test_parse_bool_valid_true_values() {
+        for value in ["true", "1", "yes", "on", "TRUE", "True", "YES", "ON"] {
+            let result = parse_bool(value);
+            assert!(result.is_ok(), "Expected '{}' to parse as bool", value);
+            assert!(result.unwrap(), "Expected '{}' to be true", value);
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_valid_false_values() {
+        for value in ["false", "0", "no", "off", "FALSE", "False", "NO", "OFF"] {
+            let result = parse_bool(value);
+            assert!(result.is_ok(), "Expected '{}' to parse as bool", value);
+            assert!(!result.unwrap(), "Expected '{}' to be false", value);
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_invalid_value() {
+        let result = parse_bool("invalid");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid boolean value"));
+        assert!(err.contains("invalid"));
     }
 }

@@ -1,11 +1,11 @@
 use crate::api::{ApiClient, ApiContext};
 use crate::authorship::authorship_log_serialization::AuthorshipLog;
-use crate::authorship::prompt_utils::{update_prompt_from_tool, PromptUpdateResult};
+use crate::authorship::prompt_utils::{PromptUpdateResult, update_prompt_from_tool};
 use crate::authorship::secrets::{redact_secrets_from_prompts, strip_prompt_messages};
 use crate::authorship::stats::{stats_for_commit_stats, write_stats_to_terminal};
 use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::authorship::working_log::{Checkpoint, CheckpointKind};
-use crate::config::Config;
+use crate::config::{Config, PromptStorageMode};
 use crate::error::GitAiError;
 use crate::git::refs::notes_add;
 use crate::git::repository::Repository;
@@ -58,10 +58,6 @@ pub fn post_commit(
 
     working_log.write_all_checkpoints(&parent_working_log)?;
 
-    // Filter out untracked files from the working log
-    let filtered_working_log =
-        filter_untracked_files(repo, &parent_working_log, &commit_sha, None)?;
-
     // Create VirtualAttributions from working log (fast path - no blame)
     // We don't need to run blame because we only care about the working log data
     // that was accumulated since the parent commit
@@ -71,11 +67,21 @@ pub fn post_commit(
         Some(human_author.clone()),
     )?;
 
-    // Get pathspecs for files in the working log
-    let pathspecs: HashSet<String> = filtered_working_log
+    // Get pathspecs for files in the working log - include ALL files from checkpoints,
+    // not just committed files. This ensures uncommitted files get proper INITIAL attributions.
+    // See issue #356: batch commits lose attribution for files committed later.
+    let mut pathspecs: HashSet<String> = parent_working_log
         .iter()
         .flat_map(|cp| cp.entries.iter().map(|e| e.file.clone()))
         .collect();
+
+    // Also include files from INITIAL attributions (uncommitted files from previous commits)
+    // These files may not have checkpoints but still need their attribution preserved
+    // when they are finally committed. See issue #356.
+    let initial_attributions_for_pathspecs = working_log.read_initial_attributions();
+    for file_path in initial_attributions_for_pathspecs.files.keys() {
+        pathspecs.insert(file_path.clone());
+    }
 
     // Split VirtualAttributions into committed (authorship log) and uncommitted (INITIAL)
     let (mut authorship_log, initial_attributions) = working_va
@@ -88,38 +94,31 @@ pub fn post_commit(
 
     authorship_log.metadata.base_commit_sha = commit_sha.clone();
 
-    // Handle prompts based on prompt_storage setting and exclusion rules
-    let should_exclude = Config::get().should_exclude_prompts(&Some(repo.clone()));
-    let prompt_storage = Config::get().prompt_storage();
+    // Handle prompts based on effective prompt storage mode for this repository
+    // The effective mode considers include/exclude lists and fallback settings
+    let effective_storage = Config::get().effective_prompt_storage(&Some(repo.clone()));
 
-    match prompt_storage {
-        "local" => {
+    match effective_storage {
+        PromptStorageMode::Local => {
             // Local only: strip all messages from notes (they stay in sqlite only)
             strip_prompt_messages(&mut authorship_log.metadata.prompts);
         }
-        "notes" => {
+        PromptStorageMode::Notes => {
             // Store in notes: redact secrets but keep messages in notes
-            if should_exclude {
-                strip_prompt_messages(&mut authorship_log.metadata.prompts);
-            } else {
-                let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
-                if count > 0 {
-                    debug_log(&format!("Redacted {} secrets from prompts", count));
-                }
+            let count = redact_secrets_from_prompts(&mut authorship_log.metadata.prompts);
+            if count > 0 {
+                debug_log(&format!("Redacted {} secrets from prompts", count));
             }
         }
-        _ => {
+        PromptStorageMode::Default => {
             // "default" - attempt CAS upload, NEVER keep messages in notes
             // Check conditions for CAS upload:
-            // - prompt_storage == "default" (implied here)
-            // - repo not in exclusion list
             // - user is logged in OR using custom API URL
             let context = ApiContext::new(None);
             let client = ApiClient::new(context);
             let using_custom_api =
                 Config::get().api_base_url() != crate::config::DEFAULT_API_BASE_URL;
-            let should_enqueue_cas =
-                !should_exclude && (client.is_logged_in() || using_custom_api);
+            let should_enqueue_cas = client.is_logged_in() || using_custom_api;
 
             if should_enqueue_cas {
                 // Redact secrets before uploading to CAS
@@ -161,7 +160,7 @@ pub fn post_commit(
     let stats = stats_for_commit_stats(repo, &commit_sha, &[])?;
 
     // Record metrics for this commit
-    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats);
+    record_commit_metrics(repo, &commit_sha, &parent_sha, &human_author, &authorship_log, &stats, &parent_working_log);
 
     // Write INITIAL file for uncommitted AI attributions (if any)
     if !initial_attributions.files.is_empty() {
@@ -173,47 +172,12 @@ pub fn post_commit(
     // // Clean up old working log
     repo_storage.delete_working_log_for_base_commit(&parent_sha)?;
 
-    if !supress_output {
-        // Only print stats if we're in an interactive terminal
+    if !supress_output && !Config::get().is_quiet() {
+        // Only print stats if we're in an interactive terminal and quiet mode is disabled
         let is_interactive = std::io::stdout().is_terminal();
         write_stats_to_terminal(&stats, is_interactive);
     }
     Ok((commit_sha.to_string(), authorship_log))
-}
-
-/// Filter out working log entries for untracked files
-pub fn filter_untracked_files(
-    repo: &Repository,
-    working_log: &[Checkpoint],
-    commit_sha: &str,
-    pathspecs: Option<&HashSet<String>>,
-) -> Result<Vec<Checkpoint>, GitAiError> {
-    // Get all files changed in current commit in ONE git command (scoped to pathspecs)
-    // If a file from the working log is in this set, it was committed. Otherwise, it was untracked.
-    let committed_files = repo.list_commit_files(commit_sha, pathspecs)?;
-
-    // Filter the working log to only include files that were actually committed
-    let mut filtered_checkpoints = Vec::new();
-
-    for checkpoint in working_log {
-        let mut filtered_entries = Vec::new();
-
-        for entry in &checkpoint.entries {
-            // Keep entry only if this file was in the commit
-            if committed_files.contains(&entry.file) {
-                filtered_entries.push(entry.clone());
-            }
-        }
-
-        // Only include checkpoints that have at least one committed file entry
-        if !filtered_entries.is_empty() {
-            let mut filtered_checkpoint = checkpoint.clone();
-            filtered_checkpoint.entries = filtered_entries;
-            filtered_checkpoints.push(filtered_checkpoint);
-        }
-    }
-
-    Ok(filtered_checkpoints)
 }
 
 /// Update prompts/transcripts in working log checkpoints to their latest versions.
@@ -340,7 +304,10 @@ fn batch_upsert_prompts_to_db(
 /// - Set messages_url (format: {api_base_url}/cas/{hash}) and clear messages
 fn enqueue_prompt_messages_to_cas(
     repo: &Repository,
-    prompts: &mut std::collections::BTreeMap<String, crate::authorship::authorship_log::PromptRecord>,
+    prompts: &mut std::collections::BTreeMap<
+        String,
+        crate::authorship::authorship_log::PromptRecord,
+    >,
 ) -> Result<(), GitAiError> {
     use crate::authorship::internal_db::InternalDatabase;
 
@@ -360,14 +327,12 @@ fn enqueue_prompt_messages_to_cas(
         .ok()
         .flatten()
         .and_then(|remote_name| {
-            repo.remotes_with_urls()
-                .ok()
-                .and_then(|remotes| {
-                    remotes
-                        .into_iter()
-                        .find(|(name, _)| name == &remote_name)
-                        .map(|(_, url)| url)
-                })
+            repo.remotes_with_urls().ok().and_then(|remotes| {
+                remotes
+                    .into_iter()
+                    .find(|(name, _)| name == &remote_name)
+                    .map(|(_, url)| url)
+            })
         });
 
     if let Some(url) = repo_url {
@@ -409,6 +374,7 @@ fn record_commit_metrics(
     human_author: &str,
     authorship_log: &AuthorshipLog,
     stats: &crate::authorship::stats::CommitStats,
+    checkpoints: &[Checkpoint],
 ) {
     use crate::metrics::{record, CommittedValues, EventAttributes};
 
@@ -444,6 +410,27 @@ fn record_commit_metrics(
         .total_ai_additions(total_ai_additions)
         .total_ai_deletions(total_ai_deletions)
         .time_waiting_for_ai(time_waiting_for_ai);
+
+    // Add first checkpoint timestamp (null if no checkpoints)
+    let values = if let Some(first) = checkpoints.first() {
+        values.first_checkpoint_ts(first.timestamp)
+    } else {
+        values.first_checkpoint_ts_null()
+    };
+
+    // Add commit subject and body
+    let values = if let Ok(commit) = repo.find_commit(commit_sha.to_string()) {
+        let subject = commit.summary().unwrap_or_default();
+        let values = values.commit_subject(subject);
+        let body = commit.body().unwrap_or_default();
+        if body.is_empty() {
+            values.commit_body_null()
+        } else {
+            values.commit_body(body)
+        }
+    } else {
+        values.commit_subject_null().commit_body_null()
+    };
 
     // Build attributes - start with version
     let mut attrs = EventAttributes::with_version(env!("CARGO_PKG_VERSION"));
@@ -537,6 +524,42 @@ mod tests {
         assert!(
             authorship_log.attestations.is_empty(),
             "Should have empty attestations when no checkpoints exist"
+        );
+    }
+
+    #[test]
+    fn test_post_commit_utf8_filename_with_ai_attribution() {
+        // Create a repo with an initial commit
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        // Create initial file and commit
+        tmp_repo.write_file("README.md", "# Test\n", true).unwrap();
+        tmp_repo.trigger_checkpoint_with_author("test_user").unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        // Create a file with Chinese characters in the filename
+        let chinese_filename = "中文文件.txt";
+        tmp_repo.write_file(chinese_filename, "Hello, 世界!\n", true).unwrap();
+
+        // Trigger AI checkpoint
+        tmp_repo.trigger_checkpoint_with_ai("mock_ai", None, None).unwrap();
+
+        // Commit
+        let authorship_log = tmp_repo.commit_with_message("Add Chinese file").unwrap();
+
+        // Debug output
+        println!("Authorship log attestations: {:?}", authorship_log.attestations);
+
+        // The attestation should include the Chinese filename
+        assert_eq!(
+            authorship_log.attestations.len(),
+            1,
+            "Should have 1 attestation for the Chinese-named file"
+        );
+        assert_eq!(
+            authorship_log.attestations[0].file_path,
+            chinese_filename,
+            "File path should be the UTF-8 filename"
         );
     }
 }
