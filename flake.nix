@@ -455,7 +455,9 @@
                     user=$(basename "$user_home")
 
                     # Create config directory
+                    # Create config directory
                     mkdir -p "$user_home/.git-ai"
+                    chown "$user" "$user_home/.git-ai" 2>/dev/null || true
 
                     # Copy config.json from store (allows user to override later if needed)
                     # Only copy if the file doesn't exist or is a symlink (from previous Nix activation)
