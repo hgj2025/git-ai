@@ -123,10 +123,10 @@ pub fn home_dir() -> PathBuf {
             }
         }
 
-        if let Ok(home) = std::env::var("HOME") {
-            if !home.is_empty() {
-                return PathBuf::from(home);
-            }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            return PathBuf::from(home);
         }
 
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -134,10 +134,10 @@ pub fn home_dir() -> PathBuf {
 
     #[cfg(not(windows))]
     {
-        if let Ok(home) = std::env::var("HOME") {
-            if !home.is_empty() {
-                return PathBuf::from(home);
-            }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            return PathBuf::from(home);
         }
 
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
