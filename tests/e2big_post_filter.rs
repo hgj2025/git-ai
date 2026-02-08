@@ -68,7 +68,11 @@ fn test_status_post_filter_equivalence() {
     let mut sorted_large = result_large.clone();
     sorted_large.sort_by(|a, b| a.path.cmp(&b.path));
 
-    assert_eq!(sorted_small.len(), sorted_large.len(), "entry count mismatch");
+    assert_eq!(
+        sorted_small.len(),
+        sorted_large.len(),
+        "entry count mismatch"
+    );
     for (s, l) in sorted_small.iter().zip(sorted_large.iter()) {
         assert_eq!(s, l, "entries differ: {:?} vs {:?}", s, l);
     }
@@ -149,7 +153,9 @@ fn test_status_post_filter_rename_matched_by_orig_path() {
     let result = gitai_repo.status(Some(&pathspecs), true).unwrap();
 
     // The rename entry should still appear because orig_path matches
-    let rename_entry = result.iter().find(|e| e.orig_path.as_deref() == Some("old.txt"));
+    let rename_entry = result
+        .iter()
+        .find(|e| e.orig_path.as_deref() == Some("old.txt"));
     assert!(
         rename_entry.is_some(),
         "rename entry should appear when matching by orig_path"
@@ -184,10 +190,7 @@ fn test_status_post_filter_rename_excluded_when_neither_matches() {
     let result = gitai_repo.status(Some(&pathspecs), true).unwrap();
 
     let paths: Vec<&str> = result.iter().map(|e| e.path.as_str()).collect();
-    assert!(
-        paths.contains(&"file_a.txt"),
-        "file_a.txt should appear"
-    );
+    assert!(paths.contains(&"file_a.txt"), "file_a.txt should appear");
     assert!(
         !paths.contains(&"file_b.txt"),
         "file_b.txt should NOT appear"
@@ -217,14 +220,21 @@ fn test_list_commit_files_post_filter_equivalence() {
 
     // Small pathspec (CLI-arg path)
     let small: HashSet<String> = filenames.iter().cloned().collect();
-    let result_small = gitai_repo.list_commit_files(&head_sha, Some(&small)).unwrap();
+    let result_small = gitai_repo
+        .list_commit_files(&head_sha, Some(&small))
+        .unwrap();
 
     // Padded pathspec (post-filter path)
     let refs: Vec<&str> = filenames.iter().map(|s| s.as_str()).collect();
     let large = padded_pathspecs(&refs);
-    let result_large = gitai_repo.list_commit_files(&head_sha, Some(&large)).unwrap();
+    let result_large = gitai_repo
+        .list_commit_files(&head_sha, Some(&large))
+        .unwrap();
 
-    assert_eq!(result_small, result_large, "list_commit_files results should be identical");
+    assert_eq!(
+        result_small, result_large,
+        "list_commit_files results should be identical"
+    );
 }
 
 #[test]
@@ -241,7 +251,9 @@ fn test_list_commit_files_post_filter_exclusion() {
 
     // Padded pathspec containing only 2 of the 5 files
     let subset = padded_pathspecs(&[&filenames[0], &filenames[1]]);
-    let result = gitai_repo.list_commit_files(&head_sha, Some(&subset)).unwrap();
+    let result = gitai_repo
+        .list_commit_files(&head_sha, Some(&subset))
+        .unwrap();
 
     let expected: HashSet<String> = [filenames[0].clone(), filenames[1].clone()]
         .into_iter()
@@ -268,8 +280,13 @@ fn test_list_commit_files_post_filter_no_matches() {
     }
     assert!(all_fake.len() > MAX_PATHSPEC_ARGS);
 
-    let result = gitai_repo.list_commit_files(&head_sha, Some(&all_fake)).unwrap();
-    assert!(result.is_empty(), "should return empty when no pathspecs match");
+    let result = gitai_repo
+        .list_commit_files(&head_sha, Some(&all_fake))
+        .unwrap();
+    assert!(
+        result.is_empty(),
+        "should return empty when no pathspecs match"
+    );
 }
 
 // ============================================================
@@ -298,14 +315,21 @@ fn test_diff_added_lines_post_filter_equivalence() {
 
     // Small pathspec (all 5 files)
     let small: HashSet<String> = filenames.iter().cloned().collect();
-    let result_small = gitai_repo.diff_added_lines(&sha1, &sha2, Some(&small)).unwrap();
+    let result_small = gitai_repo
+        .diff_added_lines(&sha1, &sha2, Some(&small))
+        .unwrap();
 
     // Padded pathspec
     let refs: Vec<&str> = filenames.iter().map(|s| s.as_str()).collect();
     let large = padded_pathspecs(&refs);
-    let result_large = gitai_repo.diff_added_lines(&sha1, &sha2, Some(&large)).unwrap();
+    let result_large = gitai_repo
+        .diff_added_lines(&sha1, &sha2, Some(&large))
+        .unwrap();
 
-    assert_eq!(result_small, result_large, "diff_added_lines results should be identical");
+    assert_eq!(
+        result_small, result_large,
+        "diff_added_lines results should be identical"
+    );
 }
 
 #[test]
@@ -330,12 +354,20 @@ fn test_diff_added_lines_post_filter_exclusion() {
 
     // Padded pathspec containing only 1 of the 3 modified files
     let subset = padded_pathspecs(&[&filenames[0]]);
-    let result = gitai_repo.diff_added_lines(&sha1, &sha2, Some(&subset)).unwrap();
+    let result = gitai_repo
+        .diff_added_lines(&sha1, &sha2, Some(&subset))
+        .unwrap();
 
     assert_eq!(result.len(), 1, "should have exactly 1 file");
     assert!(result.contains_key(&filenames[0]), "should contain file_0");
-    assert!(!result.contains_key(&filenames[1]), "should NOT contain file_1");
-    assert!(!result.contains_key(&filenames[2]), "should NOT contain file_2");
+    assert!(
+        !result.contains_key(&filenames[1]),
+        "should NOT contain file_1"
+    );
+    assert!(
+        !result.contains_key(&filenames[2]),
+        "should NOT contain file_2"
+    );
 }
 
 #[test]
@@ -358,7 +390,9 @@ fn test_diff_added_lines_post_filter_correct_line_numbers() {
 
     // Padded pathspec
     let pathspecs = padded_pathspecs(&["a.txt"]);
-    let result = gitai_repo.diff_added_lines(&sha1, &sha2, Some(&pathspecs)).unwrap();
+    let result = gitai_repo
+        .diff_added_lines(&sha1, &sha2, Some(&pathspecs))
+        .unwrap();
 
     assert!(result.contains_key("a.txt"), "should contain a.txt");
     assert_eq!(
@@ -436,8 +470,14 @@ fn test_diff_workdir_insertions_both_maps_filtered() {
         .diff_workdir_added_lines_with_insertions(&head_sha, Some(&pathspecs))
         .unwrap();
 
-    assert!(all_added.contains_key("a.txt"), "all_added should have a.txt");
-    assert!(!all_added.contains_key("b.txt"), "all_added should NOT have b.txt");
+    assert!(
+        all_added.contains_key("a.txt"),
+        "all_added should have a.txt"
+    );
+    assert!(
+        !all_added.contains_key("b.txt"),
+        "all_added should NOT have b.txt"
+    );
     assert!(
         !pure_insertions.contains_key("b.txt"),
         "pure_insertions should NOT have b.txt"
@@ -492,11 +532,21 @@ fn test_diff_tree_to_tree_post_filter_equivalence() {
 
     let paths_small: HashSet<String> = diff_small
         .deltas()
-        .filter_map(|d| d.new_file().path().and_then(|p| p.to_str()).map(|s| s.to_string()))
+        .filter_map(|d| {
+            d.new_file()
+                .path()
+                .and_then(|p| p.to_str())
+                .map(|s| s.to_string())
+        })
         .collect();
     let paths_large: HashSet<String> = diff_large
         .deltas()
-        .filter_map(|d| d.new_file().path().and_then(|p| p.to_str()).map(|s| s.to_string()))
+        .filter_map(|d| {
+            d.new_file()
+                .path()
+                .and_then(|p| p.to_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     assert_eq!(paths_small, paths_large, "delta paths should be identical");
@@ -614,5 +664,8 @@ fn test_empty_pathspec_early_return() {
     let result = gitai_repo
         .diff_added_lines(&head_sha, &sha2, Some(&empty))
         .unwrap();
-    assert!(result.is_empty(), "empty pathspec should return empty result");
+    assert!(
+        result.is_empty(),
+        "empty pathspec should return empty result"
+    );
 }

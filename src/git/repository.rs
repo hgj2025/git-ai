@@ -6,8 +6,8 @@ use crate::config;
 use crate::error::GitAiError;
 use crate::git::refs::get_authorship;
 use crate::git::repo_storage::RepoStorage;
-use crate::git::status::MAX_PATHSPEC_ARGS;
 use crate::git::rewrite_log::RewriteLogEvent;
+use crate::git::status::MAX_PATHSPEC_ARGS;
 use crate::git::sync_authorship::{fetch_authorship_notes, push_authorship_notes};
 #[cfg(windows)]
 use crate::utils::is_interactive_terminal;
