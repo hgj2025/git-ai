@@ -627,6 +627,7 @@ fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
 #[cfg(windows)]
 fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
     // Windows STATUS_CONTROL_C_EXIT represents the process being interrupted by Ctrl+C.
+    // ExitStatus::code() returns i32, so cast from the unsigned NTSTATUS value.
     const STATUS_CONTROL_C_EXIT: i32 = 0xC000013A_u32 as i32;
     matches!(status.code(), Some(code) if code == STATUS_CONTROL_C_EXIT)
 }
@@ -767,5 +768,15 @@ mod tests {
             .status()
             .expect("failed to run success test");
         assert!(!super::exit_status_was_interrupted(&status));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exit_status_was_interrupted_on_windows_ctrl_c_code() {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "exit", "/B", "3221225786"])
+            .status()
+            .expect("failed to run ctrl+c status test");
+        assert!(super::exit_status_was_interrupted(&status));
     }
 }
