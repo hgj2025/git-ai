@@ -54,7 +54,7 @@ def ensure_git_build(clone_dir: Path, jobs: int) -> None:
     if build_options.exists():
         return
     subprocess.run(
-        ["make", "-C", str(clone_dir), f"-j{jobs}"],
+        ["make", "-C", str(clone_dir), f"-j{jobs}", "NO_CURL=YesPlease"],
         check=True,
     )
 
