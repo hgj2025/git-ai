@@ -4,9 +4,8 @@ use crate::mdm::hook_installer::{
 };
 use crate::mdm::utils::{
     MIN_CODE_VERSION, get_editor_version, home_dir, install_vsc_editor_extension,
-    is_github_codespaces, is_vsc_editor_extension_installed, parse_version,
-    resolve_editor_cli, settings_paths_for_products, should_process_settings_target,
-    version_meets_requirement,
+    is_github_codespaces, is_vsc_editor_extension_installed, parse_version, resolve_editor_cli,
+    settings_paths_for_products, should_process_settings_target, version_meets_requirement,
 };
 use crate::utils::debug_log;
 use std::path::PathBuf;

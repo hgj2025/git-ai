@@ -3,10 +3,10 @@ use crate::mdm::hook_installer::{
     HookCheckResult, HookInstaller, HookInstallerParams, InstallResult,
 };
 use crate::mdm::utils::{
-    MIN_CURSOR_VERSION, generate_diff, get_editor_version, home_dir,
-    install_vsc_editor_extension, is_vsc_editor_extension_installed, parse_version,
-    resolve_editor_cli, settings_paths_for_products, should_process_settings_target,
-    version_meets_requirement, write_atomic,
+    MIN_CURSOR_VERSION, generate_diff, get_editor_version, home_dir, install_vsc_editor_extension,
+    is_vsc_editor_extension_installed, parse_version, resolve_editor_cli,
+    settings_paths_for_products, should_process_settings_target, version_meets_requirement,
+    write_atomic,
 };
 use crate::utils::debug_log;
 use serde_json::{Value, json};

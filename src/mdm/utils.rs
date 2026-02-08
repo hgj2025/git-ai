@@ -1,5 +1,6 @@
 use crate::authorship::imara_diff_utils::{LineChangeTag, compute_line_changes};
 use crate::error::GitAiError;
+use crate::utils::debug_log;
 use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::CstRootNode;
 use std::fs;
@@ -32,15 +33,9 @@ pub fn get_binary_version(binary: &str) -> Result<String, GitAiError> {
 
 /// Get version from an editor CLI command's --version output
 pub fn get_editor_version(cli: &EditorCliCommand) -> Result<String, GitAiError> {
-    let output = cli
-        .command(&["--version"])
-        .output()
-        .map_err(|e| {
-            GitAiError::Generic(format!(
-                "Failed to run {} --version: {}",
-                cli.program, e
-            ))
-        })?;
+    let output = cli.command(&["--version"]).output().map_err(|e| {
+        GitAiError::Generic(format!("Failed to run {} --version: {}", cli.program, e))
+    })?;
 
     if !output.status.success() {
         return Err(GitAiError::Generic(format!(
@@ -198,6 +193,11 @@ fn find_editor_cli_js(cli_name: &str) -> Option<EditorCliCommand> {
 
     for (electron_path, cli_js_path) in candidates {
         if electron_path.is_file() && cli_js_path.is_file() {
+            debug_log(&format!(
+                "{}: CLI not in PATH, using cli.js fallback at {}",
+                cli_name,
+                cli_js_path.display()
+            ));
             return Some(EditorCliCommand::from_cli_js(&electron_path, &cli_js_path));
         }
     }
@@ -249,8 +249,7 @@ fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
             #[cfg(windows)]
             {
                 if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-                    let base =
-                        PathBuf::from(&localappdata).join("Programs").join("Cursor");
+                    let base = PathBuf::from(&localappdata).join("Programs").join("Cursor");
                     candidates.push((
                         base.join("Cursor.exe"),
                         base.join("resources")
@@ -265,8 +264,10 @@ fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
             #[cfg(target_os = "macos")]
             {
                 for apps_dir in [PathBuf::from("/Applications"), home.join("Applications")] {
-                    for app_name in ["Visual Studio Code.app", "Visual Studio Code - Insiders.app"]
-                    {
+                    for app_name in [
+                        "Visual Studio Code.app",
+                        "Visual Studio Code - Insiders.app",
+                    ] {
                         let app = apps_dir.join(app_name);
                         candidates.push((
                             app.join("Contents").join("MacOS").join("Electron"),
@@ -287,6 +288,7 @@ fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
                     PathBuf::from("/usr/lib/code"),
                     PathBuf::from("/opt/visual-studio-code"),
                     PathBuf::from("/usr/share/code-insiders"),
+                    PathBuf::from("/snap/code/current/usr/share/code"),
                 ] {
                     candidates.push((
                         base.join("code"),
@@ -302,8 +304,7 @@ fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
             {
                 if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
                     for dir_name in ["Microsoft VS Code", "Microsoft VS Code Insiders"] {
-                        let base =
-                            PathBuf::from(&localappdata).join("Programs").join(dir_name);
+                        let base = PathBuf::from(&localappdata).join("Programs").join(dir_name);
                         candidates.push((
                             base.join("Code.exe"),
                             base.join("resources")
@@ -490,11 +491,16 @@ pub fn is_vsc_editor_extension_installed(
 }
 
 /// Install a VS Code extension
-pub fn install_vsc_editor_extension(cli: &EditorCliCommand, id_or_vsix: &str) -> Result<(), GitAiError> {
+pub fn install_vsc_editor_extension(
+    cli: &EditorCliCommand,
+    id_or_vsix: &str,
+) -> Result<(), GitAiError> {
     // NOTE: We try up to 3 times, because the editor CLI can be flaky (throws intermittent JS errors)
     let mut last_error_message: Option<String> = None;
     for attempt in 1..=3 {
-        let cmd_status = cli.command(&["--install-extension", id_or_vsix, "--force"]).status();
+        let cmd_status = cli
+            .command(&["--install-extension", id_or_vsix, "--force"])
+            .status();
 
         match cmd_status {
             Ok(status) => {
@@ -1004,7 +1010,11 @@ mod tests {
             let cmd = EditorCliCommand::from_cli_js(&electron, &cli_js);
             assert_eq!(cmd.program, electron.to_string_lossy());
             assert!(!cmd.args_prefix.is_empty());
-            assert!(cmd.env_vars.iter().any(|(k, _)| k == "ELECTRON_RUN_AS_NODE"));
+            assert!(
+                cmd.env_vars
+                    .iter()
+                    .any(|(k, _)| k == "ELECTRON_RUN_AS_NODE")
+            );
         }
 
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1022,7 +1032,11 @@ mod tests {
             let cmd = EditorCliCommand::from_cli_js(&electron, &cli_js);
             assert_eq!(cmd.program, electron.to_string_lossy());
             assert!(!cmd.args_prefix.is_empty());
-            assert!(cmd.env_vars.iter().any(|(k, _)| k == "ELECTRON_RUN_AS_NODE"));
+            assert!(
+                cmd.env_vars
+                    .iter()
+                    .any(|(k, _)| k == "ELECTRON_RUN_AS_NODE")
+            );
         }
     }
 
@@ -1030,7 +1044,10 @@ mod tests {
     fn test_get_editor_cli_candidates_returns_expected_paths() {
         // Test that candidates are returned for known editors
         let cursor_candidates = get_editor_cli_candidates("cursor");
-        assert!(!cursor_candidates.is_empty(), "cursor should have candidates");
+        assert!(
+            !cursor_candidates.is_empty(),
+            "cursor should have candidates"
+        );
 
         let code_candidates = get_editor_cli_candidates("code");
         assert!(!code_candidates.is_empty(), "code should have candidates");
@@ -1042,11 +1059,7 @@ mod tests {
                 "cli.js path should end with cli.js, got: {:?}",
                 cli_js
             );
-            let electron_name = electron
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
+            let electron_name = electron.file_name().unwrap().to_string_lossy().to_string();
             assert!(
                 electron_name.contains("Cursor") || electron_name.contains("cursor"),
                 "Electron binary for cursor should contain 'cursor' or 'Cursor', got: {}",
@@ -1060,11 +1073,7 @@ mod tests {
                 "cli.js path should end with cli.js, got: {:?}",
                 cli_js
             );
-            let electron_name = electron
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
+            let electron_name = electron.file_name().unwrap().to_string_lossy().to_string();
             assert!(
                 electron_name.contains("Electron")
                     || electron_name.contains("code")
