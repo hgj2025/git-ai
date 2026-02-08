@@ -38,7 +38,7 @@ use std::time::Instant;
 #[cfg(unix)]
 static CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
-// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT) from winerror.h.
+// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT) from Windows API docs.
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
 // ExitStatus::code uses i32, so cast to the signed value (0xC000013A as i32 = -1073741510).
@@ -777,7 +777,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn exit_status_was_interrupted_on_windows_ctrl_c_code() {
-        // simulate a Ctrl+C NTSTATUS exit code via cmd's exit value.
+        // Simulate a Ctrl+C NTSTATUS exit code via cmd's exit value.
         let status = std::process::Command::new("cmd")
             .arg("/C")
             .arg("exit")
