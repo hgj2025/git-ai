@@ -3,7 +3,9 @@ use crate::{
         transcript::{AiTranscript, Message},
         working_log::{AgentId, CheckpointKind},
     },
-    commands::checkpoint_agent::agent_presets::{AgentCheckpointFlags, AgentCheckpointPreset, AgentRunResult},
+    commands::checkpoint_agent::agent_presets::{
+        AgentCheckpointFlags, AgentCheckpointPreset, AgentRunResult,
+    },
     error::GitAiError,
     observability::log_error,
 };
@@ -69,6 +71,7 @@ struct ToolState {
 /// Part content from part/{msg_id}/{prt_id}.json
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)]
 enum OpenCodePart {
     Text {
         #[serde(rename = "messageID")]
@@ -221,7 +224,11 @@ impl OpenCodePreset {
             let home = dirs::home_dir().ok_or_else(|| {
                 GitAiError::Generic("Could not determine home directory".to_string())
             })?;
-            Ok(home.join(".local").join("share").join("opencode").join("storage"))
+            Ok(home
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("storage"))
         }
 
         #[cfg(target_os = "linux")]
@@ -233,16 +240,21 @@ impl OpenCodePreset {
                 let home = dirs::home_dir().ok_or_else(|| {
                     GitAiError::Generic("Could not determine home directory".to_string())
                 })?;
-                Ok(home.join(".local").join("share").join("opencode").join("storage"))
+                Ok(home
+                    .join(".local")
+                    .join("share")
+                    .join("opencode")
+                    .join("storage"))
             }
         }
 
         #[cfg(target_os = "windows")]
         {
-            let local_app_data = std::env::var("LOCALAPPDATA").map_err(|e| {
-                GitAiError::Generic(format!("LOCALAPPDATA not set: {}", e))
-            })?;
-            Ok(PathBuf::from(local_app_data).join("opencode").join("storage"))
+            let local_app_data = std::env::var("LOCALAPPDATA")
+                .map_err(|e| GitAiError::Generic(format!("LOCALAPPDATA not set: {}", e)))?;
+            Ok(PathBuf::from(local_app_data)
+                .join("opencode")
+                .join("storage"))
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -302,8 +314,8 @@ impl OpenCodePreset {
             let parts = Self::read_message_parts(storage_path, &message.id)?;
 
             // Convert Unix ms to RFC3339 timestamp
-            let timestamp = DateTime::from_timestamp_millis(message.time.created)
-                .map(|dt| dt.to_rfc3339());
+            let timestamp =
+                DateTime::from_timestamp_millis(message.time.created).map(|dt| dt.to_rfc3339());
 
             for part in parts {
                 match part {
@@ -324,10 +336,7 @@ impl OpenCodePreset {
                         }
                     }
                     OpenCodePart::Tool {
-                        tool,
-                        input,
-                        state,
-                        ..
+                        tool, input, state, ..
                     } => {
                         // Only include tool calls from assistant messages
                         if message.role == "assistant" {
@@ -367,27 +376,23 @@ impl OpenCodePreset {
 
         let mut messages = Vec::new();
 
-        let entries = std::fs::read_dir(&message_dir).map_err(|e| {
-            GitAiError::IoError(e)
-        })?;
+        let entries = std::fs::read_dir(&message_dir).map_err(GitAiError::IoError)?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| GitAiError::IoError(e))?;
+            let entry = entry.map_err(GitAiError::IoError)?;
             let path = entry.path();
 
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        match serde_json::from_str::<OpenCodeMessage>(&content) {
-                            Ok(message) => messages.push(message),
-                            Err(e) => {
-                                eprintln!(
-                                    "[Warning] Failed to parse OpenCode message file {:?}: {}",
-                                    path, e
-                                );
-                            }
+                    Ok(content) => match serde_json::from_str::<OpenCodeMessage>(&content) {
+                        Ok(message) => messages.push(message),
+                        Err(e) => {
+                            eprintln!(
+                                "[Warning] Failed to parse OpenCode message file {:?}: {}",
+                                path, e
+                            );
                         }
-                    }
+                    },
                     Err(e) => {
                         eprintln!(
                             "[Warning] Failed to read OpenCode message file {:?}: {}",
@@ -413,15 +418,13 @@ impl OpenCodePreset {
 
         let mut parts: Vec<(i64, OpenCodePart)> = Vec::new();
 
-        let entries = std::fs::read_dir(&part_dir).map_err(|e| {
-            GitAiError::IoError(e)
-        })?;
+        let entries = std::fs::read_dir(&part_dir).map_err(GitAiError::IoError)?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| GitAiError::IoError(e))?;
+            let entry = entry.map_err(GitAiError::IoError)?;
             let path = entry.path();
 
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 match std::fs::read_to_string(&path) {
                     Ok(content) => {
                         match serde_json::from_str::<OpenCodePart>(&content) {

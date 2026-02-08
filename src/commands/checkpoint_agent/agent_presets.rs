@@ -147,7 +147,7 @@ impl ClaudePreset {
         transcript_path: &str,
     ) -> Result<(AiTranscript, Option<String>), GitAiError> {
         let jsonl_content =
-            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+            std::fs::read_to_string(transcript_path).map_err(GitAiError::IoError)?;
         let mut transcript = AiTranscript::new();
         let mut model = None;
 
@@ -158,10 +158,11 @@ impl ClaudePreset {
                 let timestamp = raw_entry["timestamp"].as_str().map(|s| s.to_string());
 
                 // Extract model from assistant messages if we haven't found it yet
-                if model.is_none() && raw_entry["type"].as_str() == Some("assistant") {
-                    if let Some(model_str) = raw_entry["message"]["model"].as_str() {
-                        model = Some(model_str.to_string());
-                    }
+                if model.is_none()
+                    && raw_entry["type"].as_str() == Some("assistant")
+                    && let Some(model_str) = raw_entry["message"]["model"].as_str()
+                {
+                    model = Some(model_str.to_string());
                 }
 
                 // Extract messages based on the type
@@ -185,15 +186,14 @@ impl ClaudePreset {
                                     continue;
                                 }
                                 // Handle text content blocks from actual user input
-                                if item["type"].as_str() == Some("text") {
-                                    if let Some(text) = item["text"].as_str() {
-                                        if !text.trim().is_empty() {
-                                            transcript.add_message(Message::User {
-                                                text: text.to_string(),
-                                                timestamp: timestamp.clone(),
-                                            });
-                                        }
-                                    }
+                                if item["type"].as_str() == Some("text")
+                                    && let Some(text) = item["text"].as_str()
+                                    && !text.trim().is_empty()
+                                {
+                                    transcript.add_message(Message::User {
+                                        text: text.to_string(),
+                                        timestamp: timestamp.clone(),
+                                    });
                                 }
                             }
                         }
@@ -204,23 +204,23 @@ impl ClaudePreset {
                             for item in content_array {
                                 match item["type"].as_str() {
                                     Some("text") => {
-                                        if let Some(text) = item["text"].as_str() {
-                                            if !text.trim().is_empty() {
-                                                transcript.add_message(Message::Assistant {
-                                                    text: text.to_string(),
-                                                    timestamp: timestamp.clone(),
-                                                });
-                                            }
+                                        if let Some(text) = item["text"].as_str()
+                                            && !text.trim().is_empty()
+                                        {
+                                            transcript.add_message(Message::Assistant {
+                                                text: text.to_string(),
+                                                timestamp: timestamp.clone(),
+                                            });
                                         }
                                     }
                                     Some("thinking") => {
-                                        if let Some(thinking) = item["thinking"].as_str() {
-                                            if !thinking.trim().is_empty() {
-                                                transcript.add_message(Message::Assistant {
-                                                    text: thinking.to_string(),
-                                                    timestamp: timestamp.clone(),
-                                                });
-                                            }
+                                        if let Some(thinking) = item["thinking"].as_str()
+                                            && !thinking.trim().is_empty()
+                                        {
+                                            transcript.add_message(Message::Assistant {
+                                                text: thinking.to_string(),
+                                                timestamp: timestamp.clone(),
+                                            });
                                         }
                                     }
                                     Some("tool_use") => {
@@ -281,7 +281,7 @@ impl AgentCheckpointPreset for GeminiPreset {
 
         // Parse into transcript and extract model
         let (transcript, model) =
-            match GeminiPreset::transcript_and_model_from_gemini_json(&transcript_path) {
+            match GeminiPreset::transcript_and_model_from_gemini_json(transcript_path) {
                 Ok((transcript, model)) => (transcript, model),
                 Err(e) => {
                     eprintln!("[Warning] Failed to parse Gemini JSON: {e}");
@@ -353,10 +353,9 @@ impl GeminiPreset {
     pub fn transcript_and_model_from_gemini_json(
         transcript_path: &str,
     ) -> Result<(AiTranscript, Option<String>), GitAiError> {
-        let json_content =
-            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+        let json_content = std::fs::read_to_string(transcript_path).map_err(GitAiError::IoError)?;
         let conversation: serde_json::Value =
-            serde_json::from_str(&json_content).map_err(|e| GitAiError::JsonError(e))?;
+            serde_json::from_str(&json_content).map_err(GitAiError::JsonError)?;
 
         let messages = conversation
             .get("messages")
@@ -397,10 +396,10 @@ impl GeminiPreset {
                 }
                 "gemini" => {
                     // Extract model from gemini messages if we haven't found it yet
-                    if model.is_none() {
-                        if let Some(model_str) = message.get("model").and_then(|v| v.as_str()) {
-                            model = Some(model_str.to_string());
-                        }
+                    if model.is_none()
+                        && let Some(model_str) = message.get("model").and_then(|v| v.as_str())
+                    {
+                        model = Some(model_str.to_string());
                     }
 
                     // Handle assistant text content - content can be a string
@@ -493,7 +492,7 @@ impl AgentCheckpointPreset for ContinueCliPreset {
         eprintln!("[Debug] Continue CLI using model: {}", model);
 
         // Parse transcript from JSON file
-        let transcript = match ContinueCliPreset::transcript_from_continue_json(&transcript_path) {
+        let transcript = match ContinueCliPreset::transcript_from_continue_json(transcript_path) {
             Ok(transcript) => transcript,
             Err(e) => {
                 eprintln!("[Warning] Failed to parse Continue CLI JSON: {e}");
@@ -562,10 +561,9 @@ impl ContinueCliPreset {
     pub fn transcript_from_continue_json(
         transcript_path: &str,
     ) -> Result<AiTranscript, GitAiError> {
-        let json_content =
-            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+        let json_content = std::fs::read_to_string(transcript_path).map_err(GitAiError::IoError)?;
         let conversation: serde_json::Value =
-            serde_json::from_str(&json_content).map_err(|e| GitAiError::JsonError(e))?;
+            serde_json::from_str(&json_content).map_err(GitAiError::JsonError)?;
 
         let history = conversation
             .get("history")
@@ -694,7 +692,7 @@ impl AgentCheckpointPreset for CursorPreset {
                 GitAiError::PresetError("workspace_roots not found in hook_input".to_string())
             })?
             .iter()
-            .filter_map(|v| v.as_str().map(|s| Self::normalize_cursor_path(s)))
+            .filter_map(|v| v.as_str().map(Self::normalize_cursor_path))
             .collect::<Vec<String>>();
 
         let hook_event_name = hook_data
@@ -942,9 +940,7 @@ impl CursorPreset {
             let config_dir = dirs::config_dir().ok_or_else(|| {
                 GitAiError::Generic("Could not determine user config directory".to_string())
             })?;
-            Ok(config_dir
-                .join("Cursor")
-                .join("User"))
+            Ok(config_dir.join("Cursor").join("User"))
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -1012,92 +1008,87 @@ impl CursorPreset {
         let mut model = None;
 
         for header in conv.iter() {
-            if let Some(bubble_id) = header.get("bubbleId").and_then(|v| v.as_str()) {
-                if let Ok(Some(bubble_content)) =
+            if let Some(bubble_id) = header.get("bubbleId").and_then(|v| v.as_str())
+                && let Ok(Some(bubble_content)) =
                     Self::fetch_bubble_content_from_db(global_db_path, composer_id, bubble_id)
+            {
+                // Get bubble created at (ISO 8601 UTC string)
+                let bubble_created_at = bubble_content
+                    .get("createdAt")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Extract model from bubble (first value wins)
+                if model.is_none()
+                    && let Some(model_info) = bubble_content.get("modelInfo")
+                    && let Some(model_name) = model_info.get("modelName").and_then(|v| v.as_str())
                 {
-                    // Get bubble created at (ISO 8601 UTC string)
-                    let bubble_created_at = bubble_content
-                        .get("createdAt")
+                    model = Some(model_name.to_string());
+                }
+
+                // Extract text from bubble
+                if let Some(text) = bubble_content.get("text").and_then(|v| v.as_str()) {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        let role = header.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
+                        if role == 1 {
+                            transcript.add_message(Message::user(
+                                trimmed.to_string(),
+                                bubble_created_at.clone(),
+                            ));
+                        } else {
+                            transcript.add_message(Message::assistant(
+                                trimmed.to_string(),
+                                bubble_created_at.clone(),
+                            ));
+                        }
+                    }
+                }
+
+                // Handle tool calls and edits
+                if let Some(tool_former_data) = bubble_content.get("toolFormerData") {
+                    let tool_name = tool_former_data
+                        .get("name")
                         .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-
-                    // Extract model from bubble (first value wins)
-                    if model.is_none() {
-                        if let Some(model_info) = bubble_content.get("modelInfo") {
-                            if let Some(model_name) =
-                                model_info.get("modelName").and_then(|v| v.as_str())
-                            {
-                                model = Some(model_name.to_string());
-                            }
+                        .unwrap_or("unknown");
+                    let raw_args_str = tool_former_data
+                        .get("rawArgs")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("{}");
+                    let raw_args_json = serde_json::from_str::<serde_json::Value>(raw_args_str)
+                        .unwrap_or(serde_json::Value::Null);
+                    match tool_name {
+                        "edit_file" => {
+                            let target_file =
+                                raw_args_json.get("target_file").and_then(|v| v.as_str());
+                            transcript.add_message(Message::tool_use(
+                                tool_name.to_string(),
+                                // Explicitly clear out everything other than target_file (renamed to file_path for consistency in git-ai) (too much data in rawArgs)
+                                serde_json::json!({ "file_path": target_file.unwrap_or("") }),
+                            ));
                         }
-                    }
-
-                    // Extract text from bubble
-                    if let Some(text) = bubble_content.get("text").and_then(|v| v.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            let role = header.get("type").and_then(|v| v.as_i64()).unwrap_or(0);
-                            if role == 1 {
-                                transcript.add_message(Message::user(
-                                    trimmed.to_string(),
-                                    bubble_created_at.clone(),
-                                ));
-                            } else {
-                                transcript.add_message(Message::assistant(
-                                    trimmed.to_string(),
-                                    bubble_created_at.clone(),
-                                ));
-                            }
+                        "apply_patch"
+                        | "edit_file_v2_apply_patch"
+                        | "search_replace"
+                        | "edit_file_v2_search_replace"
+                        | "write"
+                        | "MultiEdit" => {
+                            let file_path = raw_args_json.get("file_path").and_then(|v| v.as_str());
+                            transcript.add_message(Message::tool_use(
+                                tool_name.to_string(),
+                                // Explicitly clear out everything other than file_path (too much data in rawArgs)
+                                serde_json::json!({ "file_path": file_path.unwrap_or("") }),
+                            ));
                         }
-                    }
-
-                    // Handle tool calls and edits
-                    if let Some(tool_former_data) = bubble_content.get("toolFormerData") {
-                        let tool_name = tool_former_data
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let raw_args_str = tool_former_data
-                            .get("rawArgs")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("{}");
-                        let raw_args_json = serde_json::from_str::<serde_json::Value>(raw_args_str)
-                            .unwrap_or(serde_json::Value::Null);
-                        match tool_name {
-                            "edit_file" => {
-                                let target_file =
-                                    raw_args_json.get("target_file").and_then(|v| v.as_str());
-                                transcript.add_message(Message::tool_use(
-                                    tool_name.to_string(),
-                                    // Explicitly clear out everything other than target_file (renamed to file_path for consistency in git-ai) (too much data in rawArgs)
-                                    serde_json::json!({ "file_path": target_file.unwrap_or("") }),
-                                ));
-                            }
-                            "apply_patch"
-                            | "edit_file_v2_apply_patch"
-                            | "search_replace"
-                            | "edit_file_v2_search_replace"
-                            | "write"
-                            | "MultiEdit" => {
-                                let file_path =
-                                    raw_args_json.get("file_path").and_then(|v| v.as_str());
-                                transcript.add_message(Message::tool_use(
-                                    tool_name.to_string(),
-                                    // Explicitly clear out everything other than file_path (too much data in rawArgs)
-                                    serde_json::json!({ "file_path": file_path.unwrap_or("") }),
-                                ));
-                            }
-                            "codebase_search" | "grep" | "read_file" | "web_search"
-                            | "run_terminal_cmd" | "glob_file_search" | "todo_write"
-                            | "file_search" | "grep_search" | "list_dir" | "ripgrep" => {
-                                transcript.add_message(Message::tool_use(
-                                    tool_name.to_string(),
-                                    raw_args_json,
-                                ));
-                            }
-                            _ => {}
+                        "codebase_search" | "grep" | "read_file" | "web_search"
+                        | "run_terminal_cmd" | "glob_file_search" | "todo_write"
+                        | "file_search" | "grep_search" | "list_dir" | "ripgrep" => {
+                            transcript.add_message(Message::tool_use(
+                                tool_name.to_string(),
+                                raw_args_json,
+                            ));
                         }
+                        _ => {}
                     }
                 }
             }
@@ -1312,7 +1303,7 @@ impl AgentCheckpointPreset for GithubCopilotPreset {
             transcript,
             repo_working_dir: Some(repo_working_dir),
             // TODO Remove detected_edited_filepaths once edited_filepaths is required in future versions (after old extensions are updated)
-            edited_filepaths: edited_filepaths.or_else(|| detected_edited_filepaths),
+            edited_filepaths: edited_filepaths.or(detected_edited_filepaths),
             will_edit_filepaths: None,
             dirty_files,
         })
@@ -1378,13 +1369,12 @@ impl AgentCheckpointPreset for DroidPreset {
             .get("tool_input")
             .or_else(|| hook_data.get("toolInput"));
 
-        let mut file_path_as_vec = tool_input
-            .and_then(|ti| {
-                ti.get("file_path")
-                    .or_else(|| ti.get("filePath"))
-                    .and_then(|v| v.as_str())
-                    .map(|path| vec![path.to_string()])
-            });
+        let mut file_path_as_vec = tool_input.and_then(|ti| {
+            ti.get("file_path")
+                .or_else(|| ti.get("filePath"))
+                .and_then(|v| v.as_str())
+                .map(|path| vec![path.to_string()])
+        });
 
         // For ApplyPatch, extract file paths from the patch text
         // Patch format contains lines like: *** Update File: <path>
@@ -1392,33 +1382,42 @@ impl AgentCheckpointPreset for DroidPreset {
             let mut paths = Vec::new();
 
             // Try extracting from tool_input patch text
-            if let Some(ti) = tool_input {
-                if let Some(patch_text) = ti.as_str().or_else(|| ti.get("patch").and_then(|v| v.as_str())) {
-                    for line in patch_text.lines() {
-                        let trimmed = line.trim();
-                        if let Some(path) = trimmed.strip_prefix("*** Update File: ")
-                            .or_else(|| trimmed.strip_prefix("*** Add File: "))
-                        {
-                            paths.push(path.trim().to_string());
-                        }
+            if let Some(ti) = tool_input
+                && let Some(patch_text) = ti
+                    .as_str()
+                    .or_else(|| ti.get("patch").and_then(|v| v.as_str()))
+            {
+                for line in patch_text.lines() {
+                    let trimmed = line.trim();
+                    if let Some(path) = trimmed
+                        .strip_prefix("*** Update File: ")
+                        .or_else(|| trimmed.strip_prefix("*** Add File: "))
+                    {
+                        paths.push(path.trim().to_string());
                     }
                 }
             }
 
             // For PostToolUse, also try parsing tool_response for file_path
-            if paths.is_empty() && hook_event_name == "PostToolUse" {
-                if let Some(tool_response) = hook_data.get("tool_response").or_else(|| hook_data.get("toolResponse")) {
-                    // tool_response might be a JSON string or an object
-                    let response_obj = if let Some(s) = tool_response.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(tool_response.clone())
-                    };
-                    if let Some(obj) = response_obj {
-                        if let Some(path) = obj.get("file_path").or_else(|| obj.get("filePath")).and_then(|v| v.as_str()) {
-                            paths.push(path.to_string());
-                        }
-                    }
+            if paths.is_empty()
+                && hook_event_name == "PostToolUse"
+                && let Some(tool_response) = hook_data
+                    .get("tool_response")
+                    .or_else(|| hook_data.get("toolResponse"))
+            {
+                // tool_response might be a JSON string or an object
+                let response_obj = if let Some(s) = tool_response.as_str() {
+                    serde_json::from_str::<serde_json::Value>(s).ok()
+                } else {
+                    Some(tool_response.clone())
+                };
+                if let Some(obj) = response_obj
+                    && let Some(path) = obj
+                        .get("file_path")
+                        .or_else(|| obj.get("filePath"))
+                        .and_then(|v| v.as_str())
+                {
+                    paths.push(path.to_string());
                 }
             }
 
@@ -1430,14 +1429,12 @@ impl AgentCheckpointPreset for DroidPreset {
         // Resolve transcript and settings paths:
         // 1. Use transcript_path from hook input if provided
         // 2. Otherwise derive from session_id + cwd
-        let (resolved_transcript_path, resolved_settings_path) = if let Some(tp) = transcript_path
-        {
+        let (resolved_transcript_path, resolved_settings_path) = if let Some(tp) = transcript_path {
             // Derive settings path as sibling of transcript_path
             let settings = tp.replace(".jsonl", ".settings.json");
             (tp.to_string(), settings)
         } else {
-            let (jsonl_p, settings_p) =
-                DroidPreset::droid_session_paths(&session_id, cwd);
+            let (jsonl_p, settings_p) = DroidPreset::droid_session_paths(&session_id, cwd);
             (
                 jsonl_p.to_string_lossy().to_string(),
                 settings_p.to_string_lossy().to_string(),
@@ -1479,10 +1476,7 @@ impl AgentCheckpointPreset for DroidPreset {
             "transcript_path".to_string(),
             resolved_transcript_path.clone(),
         );
-        agent_metadata.insert(
-            "settings_path".to_string(),
-            resolved_settings_path.clone(),
-        );
+        agent_metadata.insert("settings_path".to_string(), resolved_settings_path.clone());
         if let Some(name) = tool_name {
             agent_metadata.insert("tool_name".to_string(), name.to_string());
         }
@@ -1524,7 +1518,7 @@ impl DroidPreset {
         transcript_path: &str,
     ) -> Result<(AiTranscript, Option<String>), GitAiError> {
         let jsonl_content =
-            std::fs::read_to_string(transcript_path).map_err(|e| GitAiError::IoError(e))?;
+            std::fs::read_to_string(transcript_path).map_err(GitAiError::IoError)?;
         let mut transcript = AiTranscript::new();
 
         for line in jsonl_content.lines() {
@@ -1555,24 +1549,23 @@ impl DroidPreset {
                             if item["type"].as_str() == Some("tool_result") {
                                 continue;
                             }
-                            if item["type"].as_str() == Some("text") {
-                                if let Some(text) = item["text"].as_str() {
-                                    if !text.trim().is_empty() {
-                                        transcript.add_message(Message::User {
-                                            text: text.to_string(),
-                                            timestamp: timestamp.clone(),
-                                        });
-                                    }
-                                }
+                            if item["type"].as_str() == Some("text")
+                                && let Some(text) = item["text"].as_str()
+                                && !text.trim().is_empty()
+                            {
+                                transcript.add_message(Message::User {
+                                    text: text.to_string(),
+                                    timestamp: timestamp.clone(),
+                                });
                             }
                         }
-                    } else if let Some(content) = message["content"].as_str() {
-                        if !content.trim().is_empty() {
-                            transcript.add_message(Message::User {
-                                text: content.to_string(),
-                                timestamp: timestamp.clone(),
-                            });
-                        }
+                    } else if let Some(content) = message["content"].as_str()
+                        && !content.trim().is_empty()
+                    {
+                        transcript.add_message(Message::User {
+                            text: content.to_string(),
+                            timestamp: timestamp.clone(),
+                        });
                     }
                 }
                 "assistant" => {
@@ -1580,23 +1573,23 @@ impl DroidPreset {
                         for item in content_array {
                             match item["type"].as_str() {
                                 Some("text") => {
-                                    if let Some(text) = item["text"].as_str() {
-                                        if !text.trim().is_empty() {
-                                            transcript.add_message(Message::Assistant {
-                                                text: text.to_string(),
-                                                timestamp: timestamp.clone(),
-                                            });
-                                        }
+                                    if let Some(text) = item["text"].as_str()
+                                        && !text.trim().is_empty()
+                                    {
+                                        transcript.add_message(Message::Assistant {
+                                            text: text.to_string(),
+                                            timestamp: timestamp.clone(),
+                                        });
                                     }
                                 }
                                 Some("thinking") => {
-                                    if let Some(thinking) = item["thinking"].as_str() {
-                                        if !thinking.trim().is_empty() {
-                                            transcript.add_message(Message::Assistant {
-                                                text: thinking.to_string(),
-                                                timestamp: timestamp.clone(),
-                                            });
-                                        }
+                                    if let Some(thinking) = item["thinking"].as_str()
+                                        && !thinking.trim().is_empty()
+                                    {
+                                        transcript.add_message(Message::Assistant {
+                                            text: thinking.to_string(),
+                                            timestamp: timestamp.clone(),
+                                        });
                                     }
                                 }
                                 Some("tool_use") => {
@@ -1627,10 +1620,9 @@ impl DroidPreset {
     pub fn model_from_droid_settings_json(
         settings_path: &str,
     ) -> Result<Option<String>, GitAiError> {
-        let content =
-            std::fs::read_to_string(settings_path).map_err(|e| GitAiError::IoError(e))?;
+        let content = std::fs::read_to_string(settings_path).map_err(GitAiError::IoError)?;
         let settings: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| GitAiError::JsonError(e))?;
+            serde_json::from_str(&content).map_err(GitAiError::JsonError)?;
         Ok(settings["model"].as_str().map(|s| s.to_string()))
     }
 
@@ -1653,6 +1645,7 @@ impl DroidPreset {
 impl GithubCopilotPreset {
     /// Translate a GitHub Copilot chat session JSON file into an AiTranscript, optional model, and edited filepaths.
     /// Returns an empty transcript if running in Codespaces or Remote Containers.
+    #[allow(clippy::type_complexity)]
     pub fn transcript_and_model_from_copilot_session_json(
         session_json_path: &str,
     ) -> Result<(AiTranscript, Option<String>, Option<Vec<String>>), GitAiError> {
@@ -1666,10 +1659,10 @@ impl GithubCopilotPreset {
 
         // Read the session JSON file
         let session_json_str =
-            std::fs::read_to_string(session_json_path).map_err(|e| GitAiError::IoError(e))?;
+            std::fs::read_to_string(session_json_path).map_err(GitAiError::IoError)?;
 
         let session_json: serde_json::Value =
-            serde_json::from_str(&session_json_str).map_err(|e| GitAiError::JsonError(e))?;
+            serde_json::from_str(&session_json_str).map_err(GitAiError::JsonError)?;
 
         // Extract the requests array which represents the conversation from start to finish
         let requests = session_json
@@ -1758,10 +1751,10 @@ impl GithubCopilotPreset {
                                                 .and_then(|v| v.as_str())
                                                 .map(|s| s.to_string())
                                         });
-                                    if let Some(p) = path_opt {
-                                        if !edited_filepaths.contains(&p) {
-                                            edited_filepaths.push(p);
-                                        }
+                                    if let Some(p) = path_opt
+                                        && !edited_filepaths.contains(&p)
+                                    {
+                                        edited_filepaths.push(p);
                                     }
                                 }
                                 transcript
@@ -1875,10 +1868,10 @@ impl GithubCopilotPreset {
             }
 
             // Detect model from request metadata if not yet set (uses first modelId seen)
-            if detected_model.is_none() {
-                if let Some(model_id) = request.get("modelId").and_then(|v| v.as_str()) {
-                    detected_model = Some(model_id.to_string());
-                }
+            if detected_model.is_none()
+                && let Some(model_id) = request.get("modelId").and_then(|v| v.as_str())
+            {
+                detected_model = Some(model_id.to_string());
             }
         }
 

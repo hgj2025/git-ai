@@ -41,11 +41,14 @@ pub fn diff_ai_accepted_stats(
         }
 
         let mut options = GitAiBlameOptions::default();
-        options.oldest_commit = oldest_commit.map(|value| value.to_string());
-        options.newest_commit = Some(to_ref.to_string());
-        options.line_ranges = line_ranges;
-        options.no_output = true;
-        options.use_prompt_hashes_as_names = true;
+        #[allow(clippy::field_reassign_with_default)]
+        {
+            options.oldest_commit = oldest_commit.map(|value| value.to_string());
+            options.newest_commit = Some(to_ref.to_string());
+            options.line_ranges = line_ranges;
+            options.no_output = true;
+            options.use_prompt_hashes_as_names = true;
+        }
 
         let blame_result = repo.blame(&file_path, &options);
         let (line_authors, prompt_records) = match blame_result {
@@ -60,16 +63,13 @@ pub fn diff_ai_accepted_stats(
         }
 
         for line in &lines {
-            if let Some(prompt_hash) = line_authors.get(line) {
-                if prompt_records.contains_key(prompt_hash) {
-                    stats.total_ai_accepted += 1;
-                    *stats
-                        .per_prompt
-                        .entry(prompt_hash.clone())
-                        .or_insert(0) += 1;
-                    if let Some(tool_model) = prompt_tool_map.get(prompt_hash) {
-                        *stats.per_tool_model.entry(tool_model.clone()).or_insert(0) += 1;
-                    }
+            if let Some(prompt_hash) = line_authors.get(line)
+                && prompt_records.contains_key(prompt_hash)
+            {
+                stats.total_ai_accepted += 1;
+                *stats.per_prompt.entry(prompt_hash.clone()).or_insert(0) += 1;
+                if let Some(tool_model) = prompt_tool_map.get(prompt_hash) {
+                    *stats.per_tool_model.entry(tool_model.clone()).or_insert(0) += 1;
                 }
             }
         }

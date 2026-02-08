@@ -1,12 +1,15 @@
 use crate::error::GitAiError;
-use crate::mdm::hook_installer::{HookCheckResult, HookInstaller, HookInstallerParams, InstallResult};
+use crate::mdm::hook_installer::{
+    HookCheckResult, HookInstaller, HookInstallerParams, InstallResult,
+};
 use crate::mdm::utils::{
-    binary_exists, generate_diff, get_binary_version, home_dir, install_vsc_editor_extension,
-    is_vsc_editor_extension_installed, parse_version, settings_paths_for_products,
-    should_process_settings_target, version_meets_requirement, write_atomic, MIN_CURSOR_VERSION,
+    MIN_CURSOR_VERSION, binary_exists, generate_diff, get_binary_version, home_dir,
+    install_vsc_editor_extension, is_vsc_editor_extension_installed, parse_version,
+    settings_paths_for_products, should_process_settings_target, version_meets_requirement,
+    write_atomic,
 };
 use crate::utils::debug_log;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 
@@ -56,17 +59,15 @@ impl HookInstaller for CursorInstaller {
         }
 
         // If we have the binary, check version
-        if has_binary {
-            if let Ok(version_str) = get_binary_version("cursor") {
-                if let Some(version) = parse_version(&version_str) {
-                    if !version_meets_requirement(version, MIN_CURSOR_VERSION) {
-                        return Err(GitAiError::Generic(format!(
-                            "Cursor version {}.{} detected, but minimum version {}.{} is required",
-                            version.0, version.1, MIN_CURSOR_VERSION.0, MIN_CURSOR_VERSION.1
-                        )));
-                    }
-                }
-            }
+        if has_binary
+            && let Ok(version_str) = get_binary_version("cursor")
+            && let Some(version) = parse_version(&version_str)
+            && !version_meets_requirement(version, MIN_CURSOR_VERSION)
+        {
+            return Err(GitAiError::Generic(format!(
+                "Cursor version {}.{} detected, but minimum version {}.{} is required",
+                version.0, version.1, MIN_CURSOR_VERSION.0, MIN_CURSOR_VERSION.1
+            )));
         }
 
         // Check if hooks are installed
@@ -130,7 +131,11 @@ impl HookInstaller for CursorInstaller {
         };
 
         // Build commands with absolute path
-        let before_submit_cmd = format!("{} {}", params.binary_path.display(), CURSOR_BEFORE_SUBMIT_CMD);
+        let before_submit_cmd = format!(
+            "{} {}",
+            params.binary_path.display(),
+            CURSOR_BEFORE_SUBMIT_CMD
+        );
         let after_edit_cmd = format!("{} {}", params.binary_path.display(), CURSOR_AFTER_EDIT_CMD);
 
         // Desired hooks payload for Cursor
@@ -154,10 +159,10 @@ impl HookInstaller for CursorInstaller {
         let mut merged = existing.clone();
 
         // Ensure version is set
-        if merged.get("version").is_none() {
-            if let Some(obj) = merged.as_object_mut() {
-                obj.insert("version".to_string(), json!(1));
-            }
+        if merged.get("version").is_none()
+            && let Some(obj) = merged.as_object_mut()
+        {
+            obj.insert("version".to_string(), json!(1));
         }
 
         // Merge hooks object
@@ -192,14 +197,15 @@ impl HookInstaller for CursorInstaller {
                 let mut needs_update = false;
 
                 for (idx, existing_hook) in existing_hooks.iter().enumerate() {
-                    if let Some(existing_cmd) = existing_hook.get("command").and_then(|c| c.as_str()) {
-                        if Self::is_cursor_checkpoint_command(existing_cmd) {
-                            found_idx = Some(idx);
-                            if existing_cmd != desired_cmd {
-                                needs_update = true;
-                            }
-                            break;
+                    if let Some(existing_cmd) =
+                        existing_hook.get("command").and_then(|c| c.as_str())
+                        && Self::is_cursor_checkpoint_command(existing_cmd)
+                    {
+                        found_idx = Some(idx);
+                        if existing_cmd != desired_cmd {
+                            needs_update = true;
                         }
+                        break;
                     }
                 }
 
@@ -270,7 +276,8 @@ impl HookInstaller for CursorInstaller {
 
         // Remove git-ai checkpoint cursor commands from both hook types
         for hook_name in &["beforeSubmitPrompt", "afterFileEdit"] {
-            if let Some(hooks_array) = hooks_obj.get_mut(*hook_name).and_then(|v| v.as_array_mut()) {
+            if let Some(hooks_array) = hooks_obj.get_mut(*hook_name).and_then(|v| v.as_array_mut())
+            {
                 let original_len = hooks_array.len();
                 hooks_array.retain(|hook| {
                     if let Some(cmd) = hook.get("command").and_then(|c| c.as_str()) {
@@ -385,14 +392,20 @@ impl HookInstaller for CursorInstaller {
                         results.push(InstallResult {
                             changed: true,
                             diff: Some(diff),
-                            message: format!("Cursor: git.path updated in {}", settings_path.display()),
+                            message: format!(
+                                "Cursor: git.path updated in {}",
+                                settings_path.display()
+                            ),
                         });
                     }
                     Ok(None) => {
                         results.push(InstallResult {
                             changed: false,
                             diff: None,
-                            message: format!("Cursor: git.path already configured in {}", settings_path.display()),
+                            message: format!(
+                                "Cursor: git.path already configured in {}",
+                                settings_path.display()
+                            ),
                         });
                     }
                     Err(e) => {
@@ -458,7 +471,8 @@ mod tests {
 
         assert!(hooks_path.exists());
 
-        let content: Value = serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        let content: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
         assert_eq!(content.get("version").unwrap(), &json!(1));
 
         let hooks = content.get("hooks").unwrap();
@@ -467,12 +481,14 @@ mod tests {
 
         assert_eq!(before_submit.len(), 1);
         assert_eq!(after_edit.len(), 1);
-        assert!(before_submit[0]
-            .get("command")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .contains("git-ai checkpoint cursor"));
+        assert!(
+            before_submit[0]
+                .get("command")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("git-ai checkpoint cursor")
+        );
     }
 
     #[test]
@@ -499,11 +515,16 @@ mod tests {
                 ]
             }
         });
-        fs::write(&hooks_path, serde_json::to_string_pretty(&existing).unwrap()).unwrap();
+        fs::write(
+            &hooks_path,
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
 
         let git_ai_cmd = format!("{} {}", binary_path.display(), CURSOR_BEFORE_SUBMIT_CMD);
 
-        let mut content: Value = serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        let mut content: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
 
         for hook_name in &["beforeSubmitPrompt", "afterFileEdit"] {
             let hooks_obj = content.get_mut("hooks").unwrap();
@@ -522,7 +543,8 @@ mod tests {
 
         fs::write(&hooks_path, serde_json::to_string_pretty(&content).unwrap()).unwrap();
 
-        let result: Value = serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        let result: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
         let hooks = result.get("hooks").unwrap();
 
         let before_submit = hooks.get("beforeSubmitPrompt").unwrap().as_array().unwrap();
@@ -531,8 +553,14 @@ mod tests {
         assert_eq!(before_submit.len(), 2);
         assert_eq!(after_edit.len(), 2);
 
-        assert_eq!(before_submit[0].get("command").unwrap().as_str().unwrap(), "echo 'before'");
-        assert_eq!(after_edit[0].get("command").unwrap().as_str().unwrap(), "echo 'after'");
+        assert_eq!(
+            before_submit[0].get("command").unwrap().as_str().unwrap(),
+            "echo 'before'"
+        );
+        assert_eq!(
+            after_edit[0].get("command").unwrap().as_str().unwrap(),
+            "echo 'after'"
+        );
     }
 
     #[test]
@@ -559,11 +587,16 @@ mod tests {
                 ]
             }
         });
-        fs::write(&hooks_path, serde_json::to_string_pretty(&existing).unwrap()).unwrap();
+        fs::write(
+            &hooks_path,
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
 
         let git_ai_cmd = format!("{} {}", binary_path.display(), CURSOR_BEFORE_SUBMIT_CMD);
 
-        let mut content: Value = serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        let mut content: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
 
         for hook_name in &["beforeSubmitPrompt", "afterFileEdit"] {
             let hooks_obj = content.get_mut("hooks").unwrap();
@@ -575,10 +608,10 @@ mod tests {
                 .clone();
 
             for hook in hooks_array.iter_mut() {
-                if let Some(cmd) = hook.get("command").and_then(|c| c.as_str()) {
-                    if CursorInstaller::is_cursor_checkpoint_command(cmd) {
-                        *hook = json!({"command": git_ai_cmd.clone()});
-                    }
+                if let Some(cmd) = hook.get("command").and_then(|c| c.as_str())
+                    && CursorInstaller::is_cursor_checkpoint_command(cmd)
+                {
+                    *hook = json!({"command": git_ai_cmd.clone()});
                 }
             }
 
@@ -590,7 +623,8 @@ mod tests {
 
         fs::write(&hooks_path, serde_json::to_string_pretty(&content).unwrap()).unwrap();
 
-        let result: Value = serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        let result: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
         let hooks = result.get("hooks").unwrap();
 
         let before_submit = hooks.get("beforeSubmitPrompt").unwrap().as_array().unwrap();
@@ -599,7 +633,13 @@ mod tests {
         assert_eq!(before_submit.len(), 1);
         assert_eq!(after_edit.len(), 1);
 
-        assert_eq!(before_submit[0].get("command").unwrap().as_str().unwrap(), git_ai_cmd);
-        assert_eq!(after_edit[0].get("command").unwrap().as_str().unwrap(), git_ai_cmd);
+        assert_eq!(
+            before_submit[0].get("command").unwrap().as_str().unwrap(),
+            git_ai_cmd
+        );
+        assert_eq!(
+            after_edit[0].get("command").unwrap().as_str().unwrap(),
+            git_ai_cmd
+        );
     }
 }

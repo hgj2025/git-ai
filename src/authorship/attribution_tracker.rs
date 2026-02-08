@@ -225,6 +225,7 @@ struct Token {
     lexeme: String,
     start: usize,
     end: usize,
+    #[allow(dead_code)]
     line: usize,
 }
 
@@ -388,7 +389,7 @@ impl AttributionTracker {
             if start < end {
                 diffs.push(ByteDiff::new(
                     ByteDiffOp::Equal,
-                    old_content[start..end].as_bytes(),
+                    &old_content.as_bytes()[start..end],
                 ));
             }
 
@@ -433,7 +434,7 @@ impl AttributionTracker {
         computation.diffs.append(&mut hunk_diffs);
         computation
             .substantive_new_ranges
-            .extend(substantive_ranges.into_iter());
+            .extend(substantive_ranges);
 
         Ok(())
     }
@@ -455,25 +456,25 @@ impl AttributionTracker {
             let covered = attributions.iter().any(|a| a.overlaps(idx, end));
 
             if covered {
-                if let Some(start) = range_start.take() {
-                    if start < idx {
-                        attributions.push(Attribution::new(start, idx, author.to_string(), ts));
-                    }
+                if let Some(start) = range_start.take()
+                    && start < idx
+                {
+                    attributions.push(Attribution::new(start, idx, author.to_string(), ts));
                 }
             } else if range_start.is_none() {
                 range_start = Some(idx);
             }
         }
 
-        if let Some(start) = range_start.take() {
-            if start < content.len() {
-                attributions.push(Attribution::new(
-                    start,
-                    content.len(),
-                    author.to_string(),
-                    ts,
-                ));
-            }
+        if let Some(start) = range_start.take()
+            && start < content.len()
+        {
+            attributions.push(Attribution::new(
+                start,
+                content.len(),
+                author.to_string(),
+                ts,
+            ));
         }
 
         attributions
@@ -726,6 +727,7 @@ impl AttributionTracker {
     }
 
     /// Transform attributions through the diff
+    #[allow(clippy::too_many_arguments)]
     fn transform_attributions(
         &self,
         diffs: &[ByteDiff],
@@ -788,7 +790,7 @@ impl AttributionTracker {
                                 new_range.0 + offset_in_range,
                                 new_range.0 + offset_in_range + overlap_len,
                                 attr.author_id.clone(),
-                                attr.ts.clone(),
+                                attr.ts,
                             ));
                         }
                     }
@@ -906,8 +908,9 @@ impl AttributionTracker {
                     let is_substantive_insert =
                         ranges_intersect(substantive_new_ranges, insertion_range);
                     let is_whitespace_only = data_is_whitespace(diff.data());
-                    let contains_newline = diff.data().iter().any(|b| *b == b'\n');
+                    let contains_newline = diff.data().contains(&b'\n');
                     let is_formatting_pair = prev_whitespace_delete && is_whitespace_only;
+                    #[allow(clippy::if_same_then_else)]
                     let (author_id, attribution_ts) = if contains_newline {
                         (current_author.to_string(), ts)
                     } else if is_substantive_insert {
@@ -1046,8 +1049,30 @@ fn line_range_to_byte_range(
 fn is_operator_or_delimiter(ch: char) -> bool {
     matches!(
         ch,
-        '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^' | '~' | '?' | '@'
-            | ';' | ',' | '.' | ':' | '(' | ')' | '{' | '}' | '[' | ']'
+        '+' | '-'
+            | '*'
+            | '/'
+            | '%'
+            | '='
+            | '<'
+            | '>'
+            | '!'
+            | '&'
+            | '|'
+            | '^'
+            | '~'
+            | '?'
+            | '@'
+            | ';'
+            | ','
+            | '.'
+            | ':'
+            | '('
+            | ')'
+            | '{'
+            | '}'
+            | '['
+            | ']'
     )
 }
 
@@ -1168,14 +1193,27 @@ fn tokenize_non_whitespace(
         }
 
         // Numbers (including hex, octal, binary, floats, scientific notation)
-        if ch.is_ascii_digit() || (ch == '.' && i + ch_len < end && content[i + ch_len..].chars().next().map_or(false, |c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit()
+            || (ch == '.'
+                && i + ch_len < end
+                && content[i + ch_len..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit()))
+        {
             let mut lexeme = String::new();
             let token_start = i;
 
             // Handle hex (0x), octal (0o), binary (0b) prefixes
             if ch == '0' && i + 1 < end {
                 let next_ch = content[i + 1..].chars().next().unwrap();
-                if next_ch == 'x' || next_ch == 'X' || next_ch == 'o' || next_ch == 'O' || next_ch == 'b' || next_ch == 'B' {
+                if next_ch == 'x'
+                    || next_ch == 'X'
+                    || next_ch == 'o'
+                    || next_ch == 'O'
+                    || next_ch == 'b'
+                    || next_ch == 'B'
+                {
                     lexeme.push(ch);
                     lexeme.push(next_ch);
                     i += 1 + next_ch.len_utf8();
@@ -1382,7 +1420,7 @@ fn build_token_aligned_diffs(
 
                     diffs.push(ByteDiff::new(
                         ByteDiffOp::Equal,
-                        new_content[new_token.start..new_token.end].as_bytes(),
+                        &new_content.as_bytes()[new_token.start..new_token.end],
                     ));
 
                     old_cursor = old_token.end;
@@ -1411,7 +1449,7 @@ fn build_token_aligned_diffs(
 
                 diffs.push(ByteDiff::new(
                     ByteDiffOp::Delete,
-                    old_content[start..end].as_bytes(),
+                    &old_content.as_bytes()[start..end],
                 ));
 
                 old_cursor = end;
@@ -1438,7 +1476,7 @@ fn build_token_aligned_diffs(
 
                 diffs.push(ByteDiff::new(
                     ByteDiffOp::Insert,
-                    new_content[start..end].as_bytes(),
+                    &new_content.as_bytes()[start..end],
                 ));
 
                 substantive_ranges.push((start, end));
@@ -1473,7 +1511,7 @@ fn build_token_aligned_diffs(
                     let old_end_pos = old_tokens[old_index + old_len - 1].end;
                     diffs.push(ByteDiff::new(
                         ByteDiffOp::Delete,
-                        old_content[old_start_pos..old_end_pos].as_bytes(),
+                        &old_content.as_bytes()[old_start_pos..old_end_pos],
                     ));
                     old_cursor = old_end_pos;
                 } else {
@@ -1484,7 +1522,7 @@ fn build_token_aligned_diffs(
                     let new_end_pos = new_tokens[new_index + new_len - 1].end;
                     diffs.push(ByteDiff::new(
                         ByteDiffOp::Insert,
-                        new_content[new_start_pos..new_end_pos].as_bytes(),
+                        &new_content.as_bytes()[new_start_pos..new_end_pos],
                     ));
                     substantive_ranges.push((new_start_pos, new_end_pos));
                     new_cursor = new_end_pos;
@@ -1554,10 +1592,10 @@ fn ranges_intersect(ranges: &[(usize, usize)], target: (usize, usize)) -> bool {
     false
 }
 
-fn find_attribution_for_insertion<'a>(
-    old_attributions: &'a [Attribution],
+fn find_attribution_for_insertion(
+    old_attributions: &[Attribution],
     position: usize,
-) -> Option<&'a Attribution> {
+) -> Option<&Attribution> {
     if let Some(overlapping) = old_attributions
         .iter()
         .filter(|a| a.overlaps(position, position.saturating_add(1)))
@@ -1802,12 +1840,10 @@ fn find_dominant_author_for_line(
         .collect::<Vec<String>>();
     let last_ai_edit = candidate_attrs
         .iter()
-        .filter(|a| a.author_id != CheckpointKind::Human.to_str())
-        .last();
+        .rfind(|a| a.author_id != CheckpointKind::Human.to_str());
     let last_human_edit = candidate_attrs
         .iter()
-        .filter(|a| a.author_id == CheckpointKind::Human.to_str())
-        .last();
+        .rfind(|a| a.author_id == CheckpointKind::Human.to_str());
     let overrode = match (last_ai_edit, last_human_edit) {
         (Some(ai), Some(h)) => {
             if h.ts > ai.ts {
@@ -1818,7 +1854,7 @@ fn find_dominant_author_for_line(
         }
         _ => None,
     };
-    return (latest_author[0].clone(), overrode);
+    (latest_author[0].clone(), overrode)
 }
 
 /// Merge consecutive lines with the same author into LineAttribution ranges

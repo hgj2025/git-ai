@@ -1,9 +1,9 @@
 //! Event-specific value structs for metrics.
 
 use super::pos_encoded::{
-    sparse_get_string, sparse_get_u32, sparse_get_u64, sparse_get_vec_string, sparse_get_vec_u32,
-    sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, u64_to_json, vec_string_to_json,
-    vec_u32_to_json, vec_u64_to_json, PosEncoded, PosField,
+    PosEncoded, PosField, sparse_get_string, sparse_get_u32, sparse_get_u64, sparse_get_vec_string,
+    sparse_get_vec_u32, sparse_get_vec_u64, sparse_set, string_to_json, u32_to_json, u64_to_json,
+    vec_string_to_json, vec_u32_to_json, vec_u64_to_json,
 };
 use super::types::{EventValues, MetricEventId, SparseArray};
 
@@ -43,13 +43,13 @@ pub mod committed_pos {
 /// **Array fields (parallel arrays, index 0 = "all" for aggregate, index 1+ = per tool/model):**
 /// | Position | Name | Type |
 /// |----------|------|------|
-/// | 3 | tool_model_pairs | Vec<String> |
-/// | 4 | mixed_additions | Vec<u32> |
-/// | 5 | ai_additions | Vec<u32> |
-/// | 6 | ai_accepted | Vec<u32> |
-/// | 7 | total_ai_additions | Vec<u32> |
-/// | 8 | total_ai_deletions | Vec<u32> |
-/// | 9 | time_waiting_for_ai | Vec<u64> |
+/// | 3 | tool_model_pairs | `Vec<String>` |
+/// | 4 | mixed_additions | `Vec<u32>` |
+/// | 5 | ai_additions | `Vec<u32>` |
+/// | 6 | ai_accepted | `Vec<u32>` |
+/// | 7 | total_ai_additions | `Vec<u32>` |
+/// | 8 | total_ai_deletions | `Vec<u32>` |
+/// | 9 | time_waiting_for_ai | `Vec<u64>` |
 /// | 10 | first_checkpoint_ts | u64 |
 /// | 11 | commit_subject | String |
 /// | 12 | commit_body | String |
@@ -87,6 +87,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn human_additions_null(mut self) -> Self {
         self.human_additions = Some(None);
         self
@@ -97,6 +98,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn git_diff_deleted_lines_null(mut self) -> Self {
         self.git_diff_deleted_lines = Some(None);
         self
@@ -107,6 +109,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn git_diff_added_lines_null(mut self) -> Self {
         self.git_diff_added_lines = Some(None);
         self
@@ -119,6 +122,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn tool_model_pairs_null(mut self) -> Self {
         self.tool_model_pairs = Some(None);
         self
@@ -129,6 +133,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn mixed_additions_null(mut self) -> Self {
         self.mixed_additions = Some(None);
         self
@@ -139,6 +144,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn ai_additions_null(mut self) -> Self {
         self.ai_additions = Some(None);
         self
@@ -149,6 +155,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn ai_accepted_null(mut self) -> Self {
         self.ai_accepted = Some(None);
         self
@@ -159,6 +166,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn total_ai_additions_null(mut self) -> Self {
         self.total_ai_additions = Some(None);
         self
@@ -169,6 +177,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn total_ai_deletions_null(mut self) -> Self {
         self.total_ai_deletions = Some(None);
         self
@@ -179,6 +188,7 @@ impl CommittedValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn time_waiting_for_ai_null(mut self) -> Self {
         self.time_waiting_for_ai = Some(None);
         self
@@ -373,9 +383,9 @@ impl EventValues for AgentUsageValues {
 /// Value positions for "install_hooks" event.
 /// One event per tool attempted during install-hooks.
 pub mod install_hooks_pos {
-    pub const TOOL_ID: usize = 0;   // String - tool id (e.g., "cursor", "fork")
-    pub const STATUS: usize = 1;    // String - "not_found", "installed", "already_installed", "failed"
-    pub const MESSAGE: usize = 2;   // Option<String> - error message or warnings
+    pub const TOOL_ID: usize = 0; // String - tool id (e.g., "cursor", "fork")
+    pub const STATUS: usize = 1; // String - "not_found", "installed", "already_installed", "failed"
+    pub const MESSAGE: usize = 2; // Option<String> - error message or warnings
 }
 
 /// Values for Event ID 3: install_hooks
@@ -388,7 +398,7 @@ pub mod install_hooks_pos {
 /// |----------|------|------|
 /// | 0 | tool_id | String |
 /// | 1 | status | String |
-/// | 2 | message | Option<String> |
+/// | 2 | message | `Option<String>` |
 #[derive(Debug, Clone, Default)]
 pub struct InstallHooksValues {
     pub tool_id: PosField<String>,
@@ -516,6 +526,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn checkpoint_ts_null(mut self) -> Self {
         self.checkpoint_ts = Some(None);
         self
@@ -526,6 +537,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn kind_null(mut self) -> Self {
         self.kind = Some(None);
         self
@@ -536,6 +548,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn file_path_null(mut self) -> Self {
         self.file_path = Some(None);
         self
@@ -546,6 +559,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn lines_added_null(mut self) -> Self {
         self.lines_added = Some(None);
         self
@@ -556,6 +570,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn lines_deleted_null(mut self) -> Self {
         self.lines_deleted = Some(None);
         self
@@ -566,6 +581,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn lines_added_sloc_null(mut self) -> Self {
         self.lines_added_sloc = Some(None);
         self
@@ -576,6 +592,7 @@ impl CheckpointValues {
         self
     }
 
+    #[allow(dead_code)]
     pub fn lines_deleted_sloc_null(mut self) -> Self {
         self.lines_deleted_sloc = Some(None);
         self
@@ -591,11 +608,7 @@ impl PosEncoded for CheckpointValues {
             checkpoint_pos::CHECKPOINT_TS,
             u64_to_json(&self.checkpoint_ts),
         );
-        sparse_set(
-            &mut map,
-            checkpoint_pos::KIND,
-            string_to_json(&self.kind),
-        );
+        sparse_set(&mut map, checkpoint_pos::KIND, string_to_json(&self.kind));
         sparse_set(
             &mut map,
             checkpoint_pos::FILE_PATH,
@@ -674,7 +687,10 @@ mod tests {
         assert_eq!(values.human_additions, Some(Some(50)));
         assert_eq!(
             values.tool_model_pairs,
-            Some(Some(vec!["all".to_string(), "claude-code:claude-3".to_string()]))
+            Some(Some(vec![
+                "all".to_string(),
+                "claude-code:claude-3".to_string()
+            ]))
         );
         assert_eq!(values.ai_additions, Some(Some(vec![100, 70])));
     }

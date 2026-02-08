@@ -5,7 +5,7 @@ use crate::mdm::git_client_installer::GitClientInstallerParams;
 use crate::mdm::git_clients::get_all_git_client_installers;
 use crate::mdm::hook_installer::HookInstallerParams;
 use crate::mdm::skills_installer;
-use crate::mdm::spinner::{print_diff, Spinner};
+use crate::mdm::spinner::{Spinner, print_diff};
 use crate::mdm::utils::{get_current_binary_path, git_shim_path};
 use std::collections::HashMap;
 
@@ -165,10 +165,10 @@ async fn async_run_install(
 
     // Install skills first (these are global, not per-agent)
     // Skills are always nuked and reinstalled fresh (silently)
-    if let Ok(result) = skills_installer::install_skills(dry_run, verbose) {
-        if result.changed {
-            has_changes = true;
-        }
+    if let Ok(result) = skills_installer::install_skills(dry_run, verbose)
+        && result.changed
+    {
+        has_changes = true;
     }
 
     // Ensure git symlinks for Fork compatibility
@@ -219,14 +219,16 @@ async fn async_run_install(
                         Ok(None) => {
                             spinner.success(&format!("{}: Hooks already up to date", name));
                             statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
-                            detailed_results.push((id.to_string(), InstallResult::already_installed()));
+                            detailed_results
+                                .push((id.to_string(), InstallResult::already_installed()));
                         }
                         Err(e) => {
                             let error_msg = e.to_string();
                             spinner.error(&format!("{}: Failed to update hooks", name));
                             eprintln!("  Error: {}", error_msg);
                             statuses.insert(id.to_string(), InstallStatus::NotFound);
-                            detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
+                            detailed_results
+                                .push((id.to_string(), InstallResult::failed(error_msg)));
                         }
                     }
                 }
@@ -250,29 +252,27 @@ async fn async_run_install(
                                 let extra_spinner = Spinner::new(&result.message);
                                 extra_spinner.start();
                                 extra_spinner.success(&result.message);
-                            } else if result.message.contains("Unable") || result.message.contains("manually") {
+                            } else if result.message.contains("Unable")
+                                || result.message.contains("manually")
+                            {
                                 let extra_spinner = Spinner::new(&result.message);
                                 extra_spinner.start();
                                 extra_spinner.pending(&result.message);
                             }
-                            if verbose {
-                                if let Some(diff) = result.diff {
-                                    println!();
-                                    print_diff(&diff);
-                                }
+                            if verbose && let Some(diff) = result.diff {
+                                println!();
+                                print_diff(&diff);
                             }
 
                             // Capture warning-like messages for metrics
-                            if result.message.contains("Unable")
+                            if (result.message.contains("Unable")
                                 || result.message.contains("manually")
-                                || result.message.contains("Failed")
-                            {
-                                if let Some((_, detail)) = detailed_results
+                                || result.message.contains("Failed"))
+                                && let Some((_, detail)) = detailed_results
                                     .iter_mut()
                                     .find(|(tool_id, _)| tool_id == id)
-                                {
-                                    detail.warnings.push(result.message.clone());
-                                }
+                            {
+                                detail.warnings.push(result.message.clone());
                             }
                         }
                     }
@@ -350,14 +350,16 @@ async fn async_run_install(
                         Ok(None) => {
                             spinner.success(&format!("{}: Preferences already up to date", name));
                             statuses.insert(id.to_string(), InstallStatus::AlreadyInstalled);
-                            detailed_results.push((id.to_string(), InstallResult::already_installed()));
+                            detailed_results
+                                .push((id.to_string(), InstallResult::already_installed()));
                         }
                         Err(e) => {
                             let error_msg = e.to_string();
                             spinner.error(&format!("{}: Failed to update preferences", name));
                             eprintln!("  Error: {}", error_msg);
                             statuses.insert(id.to_string(), InstallStatus::NotFound);
-                            detailed_results.push((id.to_string(), InstallResult::failed(error_msg)));
+                            detailed_results
+                                .push((id.to_string(), InstallResult::failed(error_msg)));
                         }
                     }
                 }
@@ -500,11 +502,9 @@ async fn async_run_uninstall(
                                     extra_spinner.pending(&result.message);
                                 }
                             }
-                            if verbose {
-                                if let Some(diff) = result.diff {
-                                    println!();
-                                    print_diff(&diff);
-                                }
+                            if verbose && let Some(diff) = result.diff {
+                                println!();
+                                print_diff(&diff);
                             }
                         }
                     }
