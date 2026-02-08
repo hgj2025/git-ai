@@ -124,6 +124,9 @@ pub fn handle_git(args: &[String]) {
     // alias resolution requires a Repository object, which doesn't exist yet for clone.
     if parsed_args.command.as_deref() == Some("clone") && !parsed_args.is_help && !skip_hooks {
         let exit_status = proxy_to_git(&parsed_args.to_invocation_vec(), false);
+        if exit_status_was_interrupted(&exit_status) {
+            exit_with_status(exit_status);
+        }
         clone_hooks::post_clone_hook(&parsed_args, exit_status);
         exit_with_status(exit_status);
     }
@@ -152,6 +155,9 @@ pub fn handle_git(args: &[String]) {
 
         let git_start = Instant::now();
         let exit_status = proxy_to_git(&parsed_args.to_invocation_vec(), false);
+        if exit_status_was_interrupted(&exit_status) {
+            exit_with_status(exit_status);
+        }
         let git_duration = git_start.elapsed();
 
         let post_command_start = Instant::now();
@@ -613,6 +619,19 @@ fn exit_with_status(status: std::process::ExitStatus) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
+#[cfg(unix)]
+fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
+    matches!(
+        status.signal(),
+        Some(libc::SIGINT | libc::SIGTERM | libc::SIGQUIT | libc::SIGHUP)
+    )
+}
+
+#[cfg(not(unix))]
+fn exit_status_was_interrupted(_status: &std::process::ExitStatus) -> bool {
+    false
+}
+
 // Detect if current process invocation is coming from shell completion machinery
 // (bash, zsh via bashcompinit). If so, we should proxy directly to the real git
 // without any extra behavior that could interfere with completion scripts.
@@ -722,5 +741,27 @@ mod tests {
                 "-5".to_string()
             ])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_status_was_interrupted_on_sigint() {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("kill -s INT $$")
+            .status()
+            .expect("failed to run signal test");
+        assert!(super::exit_status_was_interrupted(&status));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_status_was_interrupted_false_on_success() {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .status()
+            .expect("failed to run success test");
+        assert!(!super::exit_status_was_interrupted(&status));
     }
 }
