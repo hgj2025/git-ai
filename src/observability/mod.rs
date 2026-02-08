@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::metrics::{METRICS_API_VERSION, MetricEvent};
 
@@ -185,6 +185,10 @@ pub fn spawn_background_flush() {
         return;
     }
 
+    if !should_spawn_background_flush() {
+        return;
+    }
+
     use std::process::Command;
 
     if let Ok(exe) = crate::utils::current_git_ai_exe() {
@@ -194,6 +198,34 @@ pub fn spawn_background_flush() {
             .stderr(std::process::Stdio::null())
             .spawn();
     }
+}
+
+/// Debounce background flushes to avoid process/request storms when checkpoints
+/// run in quick succession.
+fn should_spawn_background_flush() -> bool {
+    const MIN_FLUSH_INTERVAL_SECS: u64 = 60;
+
+    let Some(home) = dirs::home_dir() else {
+        return true;
+    };
+    let internal_dir = home.join(".git-ai").join("internal");
+    let _ = std::fs::create_dir_all(&internal_dir);
+
+    let marker = internal_dir.join("last_flush_trigger_ts");
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    if let Ok(previous) = std::fs::read_to_string(&marker)
+        && let Ok(previous_secs) = previous.trim().parse::<u64>()
+        && now_secs.saturating_sub(previous_secs) < MIN_FLUSH_INTERVAL_SECS
+    {
+        return false;
+    }
+
+    let _ = std::fs::write(&marker, now_secs.to_string());
+    true
 }
 
 /// Log a batch of metric events to the observability log file.

@@ -31,6 +31,10 @@ struct FileLineStats {
 
 use crate::authorship::working_log::AgentId;
 
+/// Emit at most one `agent_usage` metric per prompt every 2.5 minutes.
+/// This is half of the server-side bucketing window.
+const AGENT_USAGE_MIN_INTERVAL_SECS: u64 = 150;
+
 /// Build EventAttributes with repo metadata.
 /// Reused for both AgentUsage and Checkpoint events.
 fn build_checkpoint_attrs(
@@ -68,6 +72,26 @@ fn build_checkpoint_attrs(
     }
 
     attrs
+}
+
+/// Persistent local rate limit keyed by prompt ID hash.
+fn should_emit_agent_usage(agent_id: &AgentId) -> bool {
+    let prompt_id = generate_short_hash(&agent_id.id, &agent_id.tool);
+    let now_ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let Ok(db) = crate::metrics::db::MetricsDatabase::global() else {
+        return true;
+    };
+    let Ok(mut db_lock) = db.lock() else {
+        return true;
+    };
+
+    db_lock
+        .should_emit_agent_usage(&prompt_id, now_ts, AGENT_USAGE_MIN_INTERVAL_SECS)
+        .unwrap_or(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -404,7 +428,10 @@ pub fn run(
         let attrs = build_checkpoint_attrs(repo, &base_commit, checkpoint.agent_id.as_ref());
 
         // Record agent usage metric for AI checkpoints
-        if kind != CheckpointKind::Human && checkpoint.agent_id.is_some() {
+        if kind != CheckpointKind::Human
+            && let Some(agent_id) = checkpoint.agent_id.as_ref()
+            && should_emit_agent_usage(agent_id)
+        {
             let values = crate::metrics::AgentUsageValues::new();
             crate::metrics::record(values, attrs.clone());
         }
