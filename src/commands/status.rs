@@ -6,6 +6,7 @@ use crate::error::GitAiError;
 use crate::git::find_repository;
 use crate::git::repo_storage::InitialAttributions;
 use crate::git::repository::Repository;
+use crate::git::status::MAX_PATHSPEC_ARGS;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -227,14 +228,27 @@ fn get_working_dir_diff_stats(
     args.push("HEAD".to_string());
 
     // Add pathspecs if provided to scope the diff to specific files
-    if let Some(paths) = pathspecs
+    // Only pass as CLI args when under threshold to avoid E2BIG
+    let needs_post_filter = if let Some(paths) = pathspecs
         && !paths.is_empty()
     {
-        args.push("--".to_string());
-        for path in paths {
-            args.push(path.clone());
+        if paths.len() > MAX_PATHSPEC_ARGS {
+            // Disable rename detection so git reports renames as separate
+            // delete + add entries with clean filenames. Without this,
+            // numstat outputs "old => new" arrow notation in the filename
+            // field, which won't match pathspec entries.
+            args.push("--no-renames".to_string());
+            true
+        } else {
+            args.push("--".to_string());
+            for path in paths {
+                args.push(path.clone());
+            }
+            false
         }
-    }
+    } else {
+        false
+    };
 
     let output = crate::git::repository::exec_git(&args)?;
     let stdout = String::from_utf8(output.stdout)?;
@@ -251,6 +265,14 @@ fn get_working_dir_diff_stats(
         // Parse numstat format: "added\tdeleted\tfilename"
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 3 {
+            // Post-filter by pathspec when we couldn't pass them as CLI args
+            if needs_post_filter
+                && let Some(paths) = pathspecs
+                && !paths.contains(parts[2])
+            {
+                continue;
+            }
+
             // Parse added lines
             if let Ok(added) = parts[0].parse::<u32>() {
                 added_lines += added;
@@ -377,4 +399,125 @@ fn calculate_waiting_time(transcript: &crate::authorship::transcript::AiTranscri
     }
 
     total_waiting_time
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::status::MAX_PATHSPEC_ARGS;
+    use crate::git::test_utils::TmpRepo;
+
+    /// Pad a set of real paths with non-existent paths to exceed MAX_PATHSPEC_ARGS.
+    fn padded_pathspecs(real_paths: &[&str]) -> HashSet<String> {
+        let mut set: HashSet<String> = real_paths.iter().map(|s| s.to_string()).collect();
+        let needed = MAX_PATHSPEC_ARGS + 1 - set.len();
+        for i in 0..needed {
+            set.insert(format!("nonexistent/padding_{:04}.txt", i));
+        }
+        set
+    }
+
+    #[test]
+    fn test_get_working_dir_diff_stats_post_filter_equivalence() {
+        let repo = TmpRepo::new().unwrap();
+        repo.write_file("a.txt", "L1\nL2\nL3\n", true).unwrap();
+        repo.write_file("b.txt", "hello\n", true).unwrap();
+        repo.commit_with_message("initial").unwrap();
+
+        // Modify both in working dir
+        std::fs::write(repo.path().join("a.txt"), "L1\nL2\nL3\nL4\nL5\n").unwrap();
+        std::fs::write(repo.path().join("b.txt"), "hello\nworld\n").unwrap();
+
+        let gitai_repo = repo.gitai_repo();
+
+        // Small pathspec (CLI-arg path) - only a.txt
+        let small: HashSet<String> = ["a.txt".to_string()].into_iter().collect();
+        let (added_small, _deleted_small) =
+            get_working_dir_diff_stats(gitai_repo, Some(&small)).unwrap();
+
+        // Padded pathspec (post-filter path) - only a.txt + padding
+        let large = padded_pathspecs(&["a.txt"]);
+        let (added_large, _deleted_large) =
+            get_working_dir_diff_stats(gitai_repo, Some(&large)).unwrap();
+
+        assert_eq!(added_small, 2, "small pathspec: a.txt adds 2 lines");
+        assert_eq!(
+            added_small, added_large,
+            "post-filter should produce same result as CLI-arg path"
+        );
+    }
+
+    #[test]
+    fn test_get_working_dir_diff_stats_post_filter_exclusion() {
+        let repo = TmpRepo::new().unwrap();
+        repo.write_file("a.txt", "L1\nL2\nL3\n", true).unwrap();
+        repo.write_file("b.txt", "hello\n", true).unwrap();
+        repo.commit_with_message("initial").unwrap();
+
+        // Modify both in working dir
+        std::fs::write(repo.path().join("a.txt"), "L1\nL2\nL3\nL4\nL5\n").unwrap();
+        std::fs::write(repo.path().join("b.txt"), "hello\nworld\n").unwrap();
+
+        let gitai_repo = repo.gitai_repo();
+
+        // Padded pathspec containing only "a.txt"
+        let large = padded_pathspecs(&["a.txt"]);
+        let (added, _deleted) = get_working_dir_diff_stats(gitai_repo, Some(&large)).unwrap();
+
+        // a.txt adds 2 lines; b.txt adds 1 line but should be excluded
+        assert_eq!(added, 2, "should only count a.txt additions, not b.txt");
+    }
+
+    #[test]
+    fn test_get_working_dir_diff_stats_none_pathspecs() {
+        let repo = TmpRepo::new().unwrap();
+        repo.write_file("a.txt", "L1\nL2\nL3\n", true).unwrap();
+        repo.write_file("b.txt", "hello\n", true).unwrap();
+        repo.commit_with_message("initial").unwrap();
+
+        // Modify both in working dir
+        std::fs::write(repo.path().join("a.txt"), "L1\nL2\nL3\nL4\nL5\n").unwrap();
+        std::fs::write(repo.path().join("b.txt"), "hello\nworld\n").unwrap();
+
+        let gitai_repo = repo.gitai_repo();
+
+        // None pathspecs = all lines counted
+        let (added, _deleted) = get_working_dir_diff_stats(gitai_repo, None).unwrap();
+
+        // a.txt adds 2 lines + b.txt adds 1 line = 3 total
+        assert_eq!(added, 3, "None pathspecs should count all additions");
+    }
+
+    #[test]
+    fn test_get_working_dir_diff_stats_post_filter_with_rename() {
+        let repo = TmpRepo::new().unwrap();
+        repo.write_file("old_name.txt", "L1\nL2\nL3\n", true)
+            .unwrap();
+        repo.write_file("other.txt", "hello\n", true).unwrap();
+        repo.commit_with_message("initial").unwrap();
+
+        // Rename old_name.txt -> new_name.txt and add a line.
+        // Stage the rename so git diff HEAD sees it.
+        std::fs::remove_file(repo.path().join("old_name.txt")).unwrap();
+        std::fs::write(repo.path().join("new_name.txt"), "L1\nL2\nL3\nL4\n").unwrap();
+        // Also modify other.txt
+        std::fs::write(repo.path().join("other.txt"), "hello\nworld\n").unwrap();
+        // Stage everything so git diff HEAD picks up the rename + other changes
+        repo.git_command(&["add", "-A"]).unwrap();
+
+        let gitai_repo = repo.gitai_repo();
+
+        // Padded pathspec referencing the NEW name — with --no-renames,
+        // git reports this as a delete of old_name.txt + add of new_name.txt,
+        // so "new_name.txt" matches cleanly against parts[2].
+        let large = padded_pathspecs(&["new_name.txt"]);
+        let (added, _deleted) = get_working_dir_diff_stats(gitai_repo, Some(&large)).unwrap();
+
+        // new_name.txt has 4 lines (all added since it's a new file after --no-renames)
+        // other.txt should be excluded
+        assert_eq!(
+            added, 4,
+            "should count new_name.txt additions only, not other.txt"
+        );
+    }
 }
