@@ -49,3 +49,8 @@ tasks:
     deps: [build]
     cmds:
       - bats tests/e2e/user-scenarios.bats
+
+  install:
+    desc: Install dependencies using Cargo
+    cmds:
+      - cargo install --path .
