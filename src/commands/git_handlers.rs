@@ -38,6 +38,14 @@ use std::time::Instant;
 #[cfg(unix)]
 static CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
+#[cfg(windows)]
+// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT).
+const STATUS_CONTROL_C_EXIT_U32: u32 = 0xC000013A;
+
+#[cfg(windows)]
+// ExitStatus::code returns i32, so cast the unsigned NTSTATUS value.
+const STATUS_CONTROL_C_EXIT: i32 = STATUS_CONTROL_C_EXIT_U32 as i32;
+
 /// Error type for hook panics
 #[derive(Debug)]
 struct HookPanicError(String);
@@ -626,9 +634,6 @@ fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
 
 #[cfg(windows)]
 fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
-    // Windows STATUS_CONTROL_C_EXIT represents the process being interrupted by Ctrl+C.
-    // ExitStatus::code() returns i32, so cast from the unsigned NTSTATUS value.
-    const STATUS_CONTROL_C_EXIT: i32 = 0xC000013A_u32 as i32;
     matches!(status.code(), Some(code) if code == STATUS_CONTROL_C_EXIT)
 }
 
@@ -774,7 +779,10 @@ mod tests {
     #[test]
     fn exit_status_was_interrupted_on_windows_ctrl_c_code() {
         let status = std::process::Command::new("cmd")
-            .args(["/C", "exit", "/B", "3221225786"])
+            .arg("/C")
+            .arg("exit")
+            .arg("/B")
+            .arg(super::STATUS_CONTROL_C_EXIT_U32.to_string())
             .status()
             .expect("failed to run ctrl+c status test");
         assert!(super::exit_status_was_interrupted(&status));
