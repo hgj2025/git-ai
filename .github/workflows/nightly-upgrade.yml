@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python - <<'PY'
+          $script = @'
           import json
           import os
           import random
@@ -145,7 +145,8 @@ jobs:
               "Minimum upgrade version: v"
               + ".".join(str(part) for part in min_upgrade_tuple)
           )
-          PY
+          '@
+          python -c $script
 
       - name: Install older versions and upgrade (non-Windows)
         if: runner.os != 'Windows'
@@ -154,12 +155,14 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.git-ai/bin:$PATH"
           latest="${{ steps.versions.outputs.latest }}"
+          latest="${latest#v}"
           for version in ${{ steps.versions.outputs.versions }}; do
             echo "Installing ${version}"
             GIT_AI_RELEASE_TAG="$version" ./install.sh
             git-ai --version
             git-ai upgrade
             installed=$(git-ai --version | awk '{print $NF}')
+            installed="${installed#v}"
             if [ "$installed" != "$latest" ]; then
               echo "Expected ${latest}, got ${installed}"
               exit 1
@@ -172,6 +175,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $latest = "${{ steps.versions-windows.outputs.latest }}"
+          $latest = $latest.TrimStart('v')
           $versions = "${{ steps.versions-windows.outputs.versions }}".Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
           $env:PATH = "$HOME\.git-ai\bin;$env:PATH"
           foreach ($version in $versions) {
@@ -180,7 +184,7 @@ jobs:
             pwsh -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
             & "$HOME\.git-ai\bin\git-ai" --version | Out-Host
             & "$HOME\.git-ai\bin\git-ai" upgrade
-            $installed = (& "$HOME\.git-ai\bin\git-ai" --version).Trim().Split()[-1]
+            $installed = (& "$HOME\.git-ai\bin\git-ai" --version).Trim().Split()[-1].TrimStart('v')
             if ($installed -ne $latest) {
               throw "Expected $latest, got $installed"
             }
