@@ -1702,7 +1702,12 @@ impl GithubCopilotPreset {
                     // Walk the key path on session_json, setting the value at the leaf
                     let keys: Vec<String> = key_path
                         .iter()
-                        .filter_map(|k| k.as_str().map(|s| s.to_string()))
+                        .filter_map(|k| {
+                            k.as_str()
+                                .map(|s| s.to_string())
+                                .or_else(|| k.as_u64().map(|n| n.to_string()))
+                                .or_else(|| k.as_i64().map(|n| n.to_string()))
+                        })
                         .collect();
                     if !keys.is_empty() {
                         // Use pointer-based indexing to find the parent, then insert at leaf
