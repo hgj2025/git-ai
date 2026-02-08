@@ -1715,10 +1715,8 @@ impl Repository {
             .filter_map(|bytes| String::from_utf8(bytes.to_vec()).ok())
             .collect();
 
-        if needs_post_filter {
-            if let Some(paths) = pathspecs {
-                files.retain(|path| paths.contains(path));
-            }
+        if needs_post_filter && let Some(paths) = pathspecs {
+            files.retain(|path| paths.contains(path));
         }
 
         Ok(files)
@@ -1768,10 +1766,8 @@ impl Repository {
 
         let mut result = parse_diff_added_lines(&diff_output)?;
 
-        if needs_post_filter {
-            if let Some(paths) = pathspecs {
-                result.retain(|path, _| paths.contains(path));
-            }
+        if needs_post_filter && let Some(paths) = pathspecs {
+            result.retain(|path, _| paths.contains(path));
         }
 
         Ok(result)
@@ -1845,10 +1841,8 @@ impl Repository {
 
         let mut result = parse_diff_added_lines(&diff_output)?;
 
-        if needs_post_filter {
-            if let Some(paths) = pathspecs {
-                result.retain(|path, _| paths.contains(path));
-            }
+        if needs_post_filter && let Some(paths) = pathspecs {
+            result.retain(|path, _| paths.contains(path));
         }
 
         Ok(result)
@@ -1897,11 +1891,9 @@ impl Repository {
         let (mut all_added, mut pure_insertions) =
             parse_diff_added_lines_with_insertions(&diff_output)?;
 
-        if needs_post_filter {
-            if let Some(paths) = pathspecs {
-                all_added.retain(|path, _| paths.contains(path));
-                pure_insertions.retain(|path, _| paths.contains(path));
-            }
+        if needs_post_filter && let Some(paths) = pathspecs {
+            all_added.retain(|path, _| paths.contains(path));
+            pure_insertions.retain(|path, _| paths.contains(path));
         }
 
         Ok((all_added, pure_insertions))

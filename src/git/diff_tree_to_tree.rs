@@ -177,16 +177,14 @@ impl Repository {
         let output = exec_git(&args)?;
         let mut deltas = parse_diff_raw(&output.stdout)?;
 
-        if needs_post_filter {
-            if let Some(paths) = pathspecs {
-                deltas.retain(|delta| {
-                    delta
-                        .new_file
-                        .path()
-                        .and_then(|p| p.to_str())
-                        .is_some_and(|p| paths.contains(p))
-                });
-            }
+        if needs_post_filter && let Some(paths) = pathspecs {
+            deltas.retain(|delta| {
+                delta
+                    .new_file
+                    .path()
+                    .and_then(|p| p.to_str())
+                    .is_some_and(|p| paths.contains(p))
+            });
         }
 
         Ok(Diff { deltas })

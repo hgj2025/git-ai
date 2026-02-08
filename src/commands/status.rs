@@ -266,12 +266,11 @@ fn get_working_dir_diff_stats(
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 3 {
             // Post-filter by pathspec when we couldn't pass them as CLI args
-            if needs_post_filter {
-                if let Some(paths) = pathspecs {
-                    if !paths.contains(parts[2]) {
-                        continue;
-                    }
-                }
+            if needs_post_filter
+                && let Some(paths) = pathspecs
+                && !paths.contains(parts[2])
+            {
+                continue;
             }
 
             // Parse added lines
