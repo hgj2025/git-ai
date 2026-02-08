@@ -626,7 +626,7 @@ fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
 
 #[cfg(windows)]
 fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
-    // Windows STATUS_CONTROL_C_EXIT when the process is interrupted by Ctrl+C.
+    // Windows STATUS_CONTROL_C_EXIT represents the process being interrupted by Ctrl+C.
     const STATUS_CONTROL_C_EXIT: i32 = 0xC000013A_u32 as i32;
     matches!(status.code(), Some(code) if code == STATUS_CONTROL_C_EXIT)
 }
