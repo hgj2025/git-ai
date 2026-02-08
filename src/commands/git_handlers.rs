@@ -38,13 +38,13 @@ use std::time::Instant;
 #[cfg(unix)]
 static CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
-// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT) from Windows API docs.
+// Windows NTSTATUS for Ctrl+C interruption (STATUS_CONTROL_C_EXIT) from Windows API docs.
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
-// ExitStatus::code uses i32, so cast to the signed value (0xC000013A as i32 = -1073741510).
+// ExitStatus::code returns Option<i32> on Windows, so cast the unsigned NTSTATUS value.
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT_CODE: i32 = NTSTATUS_CONTROL_C_EXIT as i32;
-// Decimal string used to feed cmd /B exit for NTSTATUS_CONTROL_C_EXIT in tests.
+// Decimal string used to feed cmd /C exit /B for NTSTATUS_CONTROL_C_EXIT in tests.
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT_STR: &str = "3221225786";
 
