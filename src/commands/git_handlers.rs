@@ -38,12 +38,10 @@ use std::time::Instant;
 #[cfg(unix)]
 static CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
+// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT) cast to i32 for ExitStatus::code.
 #[cfg(windows)]
-// Windows NTSTATUS for Ctrl+C termination (STATUS_CONTROL_C_EXIT).
 const STATUS_CONTROL_C_EXIT_U32: u32 = 0xC000013A;
-
 #[cfg(windows)]
-// ExitStatus::code returns i32, so cast the unsigned NTSTATUS value.
 const STATUS_CONTROL_C_EXIT: i32 = STATUS_CONTROL_C_EXIT_U32 as i32;
 
 /// Error type for hook panics
@@ -634,7 +632,7 @@ fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
 
 #[cfg(windows)]
 fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
-    matches!(status.code(), Some(code) if code == STATUS_CONTROL_C_EXIT)
+    status.code() == Some(STATUS_CONTROL_C_EXIT)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -778,6 +776,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn exit_status_was_interrupted_on_windows_ctrl_c_code() {
+        // Simulate a Ctrl+C NTSTATUS exit code via cmd's exit value.
         let status = std::process::Command::new("cmd")
             .arg("/C")
             .arg("exit")
