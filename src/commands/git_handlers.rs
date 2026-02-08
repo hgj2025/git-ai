@@ -44,6 +44,9 @@ const NTSTATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
 // ExitStatus::code uses i32, so cast to the signed value (0xC000013A as i32 = -1073741510).
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT_CODE: i32 = NTSTATUS_CONTROL_C_EXIT as i32;
+// Decimal string used to feed cmd /B exit for NTSTATUS_CONTROL_C_EXIT in tests.
+#[cfg(windows)]
+const NTSTATUS_CONTROL_C_EXIT_STR: &str = "3221225786";
 
 /// Error type for hook panics
 #[derive(Debug)]
@@ -782,7 +785,7 @@ mod tests {
             .arg("/C")
             .arg("exit")
             .arg("/B")
-            .arg(super::NTSTATUS_CONTROL_C_EXIT.to_string())
+            .arg(super::NTSTATUS_CONTROL_C_EXIT_STR)
             .status()
             .expect("failed to run ctrl+c status test");
         assert!(super::exit_status_was_interrupted(&status));
