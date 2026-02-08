@@ -125,6 +125,63 @@ pub fn handle_flush_logs(args: &[String]) {
         log_files.len()
     );
 
+    // In debug mode (without --force), we only care about metrics.
+    // Coalesce all metrics across all log files and upload in large batches
+    // to avoid request storms from per-envelope uploads.
+    if skip_non_metrics {
+        let mut files_to_delete = Vec::new();
+        let mut all_metrics = Vec::new();
+
+        for log_file in &log_files {
+            let file_name = log_file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+
+            match collect_metrics_from_file(log_file) {
+                Ok((metrics_envelopes, metrics_events)) if !metrics_events.is_empty() => {
+                    eprintln!(
+                        "  ✓ {} - collected {} metrics event(s) from {} envelope(s)",
+                        file_name,
+                        metrics_events.len(),
+                        metrics_envelopes
+                    );
+                    files_to_delete.push(log_file.clone());
+                    all_metrics.extend(metrics_events);
+                }
+                Ok(_) => {
+                    eprintln!("  ○ {} - no metrics to send", file_name);
+                }
+                Err(e) => {
+                    eprintln!("  ✗ {} - error: {}", file_name, e);
+                }
+            }
+        }
+
+        let mut uploaded_batches = 0usize;
+        for chunk in all_metrics.chunks(crate::observability::MAX_METRICS_PER_ENVELOPE) {
+            if send_metrics_events(chunk, &metrics_uploader) {
+                uploaded_batches += 1;
+            }
+        }
+
+        eprintln!(
+            "\nSummary: {} metrics events sent in {} batch request(s) from {} files",
+            all_metrics.len(),
+            uploaded_batches,
+            files_to_delete.len()
+        );
+
+        if !files_to_delete.is_empty() {
+            eprintln!("Deleting {} processed log files", files_to_delete.len());
+            for file_path in files_to_delete {
+                let _ = fs::remove_file(&file_path);
+            }
+        }
+
+        std::process::exit(0);
+    }
+
     // Process log files in parallel (max 10 at a time)
     let results = smol::block_on(async {
         let oss_client = Arc::new(oss_client);
@@ -455,6 +512,31 @@ fn process_log_file(
     Ok(count)
 }
 
+fn collect_metrics_from_file(
+    path: &PathBuf,
+) -> Result<(usize, Vec<MetricEvent>), Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(path)?;
+    let mut metrics_events = Vec::new();
+    let mut metrics_envelopes = 0usize;
+
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if let Ok(envelope) = serde_json::from_str::<Value>(line)
+            && envelope.get("type").and_then(|t| t.as_str()) == Some("metrics")
+            && let Some(events_value) = envelope.get("events")
+            && let Ok(mut events) = serde_json::from_value::<Vec<MetricEvent>>(events_value.clone())
+        {
+            metrics_envelopes += 1;
+            metrics_events.append(&mut events);
+        }
+    }
+
+    Ok((metrics_envelopes, metrics_events))
+}
+
 fn send_envelope_to_sentry(
     envelope: &Value,
     client: &SentryClient,
@@ -673,29 +755,29 @@ fn send_metrics_envelope(envelope: &Value, uploader: &MetricsUploader) -> bool {
         Err(_) => return false,
     };
 
+    send_metrics_events(&events, uploader)
+}
+
+fn send_metrics_events(events: &[MetricEvent], uploader: &MetricsUploader) -> bool {
     if events.is_empty() {
         return true; // Nothing to upload, but not a failure
     }
 
-    // Build batch for upload
-    let batch = MetricsBatch::new(events.clone());
+    let batch = MetricsBatch::new(events.to_vec());
 
     if uploader.should_upload
         && let Some(client) = &uploader.client
     {
-        // Try to upload via API
         match upload_metrics_with_retry(client, &batch, "flush_logs") {
             Ok(()) => return true,
             Err(_) => {
-                // API upload failed - fall back to SQLite DB
-                store_metrics_in_db(&events);
-                return true; // Stored successfully
+                store_metrics_in_db(events);
+                return true;
             }
         }
     }
 
-    // Conditions not met - store in DB for later
-    store_metrics_in_db(&events);
+    store_metrics_in_db(events);
     true
 }
 
