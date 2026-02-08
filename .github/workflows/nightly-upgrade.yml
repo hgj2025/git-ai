@@ -32,7 +32,6 @@ jobs:
           import os
           import random
           import re
-          import subprocess
           import urllib.request
 
           url = "https://api.github.com/repos/git-ai-project/git-ai/releases?per_page=100"
@@ -56,22 +55,7 @@ jobs:
           if not versions:
               raise SystemExit("No semver releases found")
 
-          commit = subprocess.check_output(
-              ["git", "log", "-1", "--format=%H", "--", "src/commands/upgrade.rs"],
-              text=True,
-          ).strip()
-          tags_output = subprocess.check_output(
-              ["git", "tag", "--contains", commit], text=True
-          ).strip()
-          tag_candidates = []
-          for tag in tags_output.splitlines():
-              match = pattern.match(tag)
-              if not match:
-                  continue
-              tag_candidates.append(tuple(int(part) for part in match.groups()))
-          if not tag_candidates:
-              raise SystemExit("No semver tags found for upgrade command")
-          min_upgrade_tuple = min(tag_candidates)
+          min_upgrade_tuple = (1, 0, 26)
 
           latest_tuple = max(versions)
           latest_tag = versions[latest_tuple]
@@ -111,7 +95,6 @@ jobs:
           import os
           import random
           import re
-          import subprocess
           import urllib.request
 
           url = "https://api.github.com/repos/git-ai-project/git-ai/releases?per_page=100"
@@ -135,22 +118,7 @@ jobs:
           if not versions:
               raise SystemExit("No semver releases found")
 
-          commit = subprocess.check_output(
-              ["git", "log", "-1", "--format=%H", "--", "src/commands/upgrade.rs"],
-              text=True,
-          ).strip()
-          tags_output = subprocess.check_output(
-              ["git", "tag", "--contains", commit], text=True
-          ).strip()
-          tag_candidates = []
-          for tag in tags_output.splitlines():
-              match = pattern.match(tag)
-              if not match:
-                  continue
-              tag_candidates.append(tuple(int(part) for part in match.groups()))
-          if not tag_candidates:
-              raise SystemExit("No semver tags found for upgrade command")
-          min_upgrade_tuple = min(tag_candidates)
+          min_upgrade_tuple = (1, 0, 26)
 
           latest_tuple = max(versions)
           latest_tag = versions[latest_tuple]
