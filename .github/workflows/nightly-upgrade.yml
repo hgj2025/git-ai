@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Select random older versions (non-Windows)
         id: versions
@@ -31,6 +32,7 @@ jobs:
           import os
           import random
           import re
+          import subprocess
           import urllib.request
 
           url = "https://api.github.com/repos/git-ai-project/git-ai/releases?per_page=100"
@@ -54,9 +56,30 @@ jobs:
           if not versions:
               raise SystemExit("No semver releases found")
 
+          commit = subprocess.check_output(
+              ["git", "log", "-1", "--format=%H", "--", "src/commands/upgrade.rs"],
+              text=True,
+          ).strip()
+          tags_output = subprocess.check_output(
+              ["git", "tag", "--contains", commit], text=True
+          ).strip()
+          tag_candidates = []
+          for tag in tags_output.splitlines():
+              match = pattern.match(tag)
+              if not match:
+                  continue
+              tag_candidates.append(tuple(int(part) for part in match.groups()))
+          if not tag_candidates:
+              raise SystemExit("No semver tags found for upgrade command")
+          min_upgrade_tuple = min(tag_candidates)
+
           latest_tuple = max(versions)
           latest_tag = versions[latest_tuple]
-          older = [tag for ver, tag in versions.items() if (1, 0, 0) < ver < latest_tuple]
+          older = [
+              tag
+              for ver, tag in versions.items()
+              if min_upgrade_tuple < ver < latest_tuple
+          ]
           if not older:
               raise SystemExit("No older versions found")
 
@@ -65,9 +88,16 @@ jobs:
           output_path = os.environ["GITHUB_OUTPUT"]
           with open(output_path, "a", encoding="utf-8") as output:
               output.write(f"latest={latest_tag}\n")
+              output.write(
+                  f"min_upgrade=v{'.'.join(str(part) for part in min_upgrade_tuple)}\n"
+              )
               output.write(f"versions={' '.join(sample)}\n")
           print(f"Selected versions: {' '.join(sample)}")
           print(f"Latest: {latest_tag}")
+          print(
+              "Minimum upgrade version: v"
+              + ".".join(str(part) for part in min_upgrade_tuple)
+          )
           PY
 
       - name: Select random older versions (Windows)
@@ -81,6 +111,7 @@ jobs:
           import os
           import random
           import re
+          import subprocess
           import urllib.request
 
           url = "https://api.github.com/repos/git-ai-project/git-ai/releases?per_page=100"
@@ -104,9 +135,30 @@ jobs:
           if not versions:
               raise SystemExit("No semver releases found")
 
+          commit = subprocess.check_output(
+              ["git", "log", "-1", "--format=%H", "--", "src/commands/upgrade.rs"],
+              text=True,
+          ).strip()
+          tags_output = subprocess.check_output(
+              ["git", "tag", "--contains", commit], text=True
+          ).strip()
+          tag_candidates = []
+          for tag in tags_output.splitlines():
+              match = pattern.match(tag)
+              if not match:
+                  continue
+              tag_candidates.append(tuple(int(part) for part in match.groups()))
+          if not tag_candidates:
+              raise SystemExit("No semver tags found for upgrade command")
+          min_upgrade_tuple = min(tag_candidates)
+
           latest_tuple = max(versions)
           latest_tag = versions[latest_tuple]
-          older = [tag for ver, tag in versions.items() if (1, 0, 0) < ver < latest_tuple]
+          older = [
+              tag
+              for ver, tag in versions.items()
+              if min_upgrade_tuple < ver < latest_tuple
+          ]
           if not older:
               raise SystemExit("No older versions found")
 
@@ -115,9 +167,16 @@ jobs:
           output_path = os.environ["GITHUB_OUTPUT"]
           with open(output_path, "a", encoding="utf-8") as output:
               output.write(f"latest={latest_tag}\n")
+              output.write(
+                  f"min_upgrade=v{'.'.join(str(part) for part in min_upgrade_tuple)}\n"
+              )
               output.write(f"versions={' '.join(sample)}\n")
           print(f"Selected versions: {' '.join(sample)}")
           print(f"Latest: {latest_tag}")
+          print(
+              "Minimum upgrade version: v"
+              + ".".join(str(part) for part in min_upgrade_tuple)
+          )
           PY
 
       - name: Install older versions and upgrade (non-Windows)
