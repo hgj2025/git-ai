@@ -38,7 +38,7 @@ use std::time::Instant;
 #[cfg(unix)]
 static CHILD_PGID: AtomicI32 = AtomicI32::new(0);
 
-// Windows NTSTATUS for Ctrl+C interruption (STATUS_CONTROL_C_EXIT) from Windows API docs.
+// Windows NTSTATUS for Ctrl+C interruption (STATUS_CONTROL_C_EXIT, 0xC000013A) from Windows API docs.
 #[cfg(windows)]
 const NTSTATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
 
@@ -630,6 +630,7 @@ fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
 
 #[cfg(windows)]
 fn exit_status_was_interrupted(status: &std::process::ExitStatus) -> bool {
+    // Reinterpret the signed exit code as u32 to compare against the NTSTATUS value.
     status.code().map(|code| code as u32) == Some(NTSTATUS_CONTROL_C_EXIT)
 }
 
