@@ -54,13 +54,13 @@ impl VirtualAttributions {
         }
 
         // After running blame, discover and load any missing prompts from blamed commits
-        virtual_attrs.discover_and_load_foreign_prompts()?;
+        virtual_attrs.discover_and_load_foreign_prompts().await?;
 
         Ok(virtual_attrs)
     }
 
     /// Discover and load prompts from blamed commits that aren't in our prompts map
-    fn discover_and_load_foreign_prompts(&mut self) -> Result<(), GitAiError> {
+    async fn discover_and_load_foreign_prompts(&mut self) -> Result<(), GitAiError> {
         use std::collections::HashSet;
 
         // Collect all unique author_ids from attributions
@@ -83,7 +83,7 @@ impl VirtualAttributions {
         }
 
         // Load prompts in parallel using the established MAX_CONCURRENT pattern
-        let prompts = smol::block_on(async { self.load_prompts_concurrent(&missing_ids).await })?;
+        let prompts = self.load_prompts_concurrent(&missing_ids).await?;
 
         // Insert loaded prompts into our map
         // Each prompt is associated with the commit it was found in

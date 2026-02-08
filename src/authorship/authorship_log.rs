@@ -139,26 +139,28 @@ impl LineRange {
     /// - insertion_point: the line number where the change occurred
     #[allow(dead_code)]
     pub fn shift(&self, insertion_point: u32, offset: i32) -> Option<LineRange> {
+        // Helper: apply offset to a line number, returning None if result is negative
+        let apply_offset = |line: u32| -> Option<u32> {
+            if line >= insertion_point {
+                let shifted = (line as i64) + (offset as i64);
+                if shifted >= 0 {
+                    Some(shifted as u32)
+                } else {
+                    None
+                }
+            } else {
+                Some(line)
+            }
+        };
+
         match self {
             LineRange::Single(l) => {
-                if *l >= insertion_point {
-                    let new_line = (*l as i32 + offset) as u32;
-                    Some(LineRange::Single(new_line))
-                } else {
-                    Some(LineRange::Single(*l))
-                }
+                let new_line = apply_offset(*l)?;
+                Some(LineRange::Single(new_line))
             }
             LineRange::Range(start, end) => {
-                let new_start = if *start >= insertion_point {
-                    (*start as i32 + offset) as u32
-                } else {
-                    *start
-                };
-                let new_end = if *end >= insertion_point {
-                    (*end as i32 + offset) as u32
-                } else {
-                    *end
-                };
+                let new_start = apply_offset(*start)?;
+                let new_end = apply_offset(*end)?;
 
                 // Ensure the range is still valid
                 if new_start <= new_end {
@@ -213,20 +215,13 @@ impl PartialOrd for PromptRecord {
 
 impl Ord for PromptRecord {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Sort oldest to newest based on messages, additions, or deletions
-        if self.messages.len() > other.messages.len()
-            || self.total_additions > other.total_additions
-            || self.total_deletions > other.total_deletions
-        {
-            std::cmp::Ordering::Greater // self is newer
-        } else if other.messages.len() > self.messages.len()
-            || other.total_additions > self.total_additions
-            || other.total_deletions > self.total_deletions
-        {
-            std::cmp::Ordering::Less // other is newer
-        } else {
-            std::cmp::Ordering::Equal
-        }
+        // Sort oldest to newest based on messages, additions, or deletions.
+        // Uses lexicographic comparison to ensure a valid total ordering.
+        self.messages
+            .len()
+            .cmp(&other.messages.len())
+            .then_with(|| self.total_additions.cmp(&other.total_additions))
+            .then_with(|| self.total_deletions.cmp(&other.total_deletions))
     }
 }
 

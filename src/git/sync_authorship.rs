@@ -47,7 +47,14 @@ pub fn fetch_remote_from_args(
         .or_else(|| repository.upstream_remote().ok().flatten())
         .or_else(|| repository.get_default_remote().ok().flatten());
 
-    Ok(remote.unwrap().to_string())
+    remote.map(|r| r.to_string()).ok_or_else(|| {
+        GitAiError::Generic(
+            "Could not determine a remote for fetch/push operation. \
+                 No remote was specified in args, no upstream is configured, \
+                 and no default remote was found."
+                .to_string(),
+        )
+    })
 }
 
 // for use with post-fetch and post-pull and post-clone hooks
