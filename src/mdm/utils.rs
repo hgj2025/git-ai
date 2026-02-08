@@ -959,6 +959,10 @@ mod tests {
     fn test_editor_cli_command_builds_command_with_args() {
         let cmd = EditorCliCommand::from_path("cursor");
         let built = cmd.command(&["--list-extensions"]);
+        // On Windows, from_path uses cmd /C wrapper, so the program is "cmd"
+        #[cfg(windows)]
+        assert_eq!(built.get_program(), "cmd");
+        #[cfg(not(windows))]
         assert_eq!(built.get_program(), "cursor");
     }
 
