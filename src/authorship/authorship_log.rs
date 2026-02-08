@@ -139,26 +139,28 @@ impl LineRange {
     /// - insertion_point: the line number where the change occurred
     #[allow(dead_code)]
     pub fn shift(&self, insertion_point: u32, offset: i32) -> Option<LineRange> {
+        // Helper: apply offset to a line number, returning None if result is negative
+        let apply_offset = |line: u32| -> Option<u32> {
+            if line >= insertion_point {
+                let shifted = (line as i64) + (offset as i64);
+                if shifted >= 0 {
+                    Some(shifted as u32)
+                } else {
+                    None
+                }
+            } else {
+                Some(line)
+            }
+        };
+
         match self {
             LineRange::Single(l) => {
-                if *l >= insertion_point {
-                    let new_line = (*l as i32 + offset) as u32;
-                    Some(LineRange::Single(new_line))
-                } else {
-                    Some(LineRange::Single(*l))
-                }
+                let new_line = apply_offset(*l)?;
+                Some(LineRange::Single(new_line))
             }
             LineRange::Range(start, end) => {
-                let new_start = if *start >= insertion_point {
-                    (*start as i32 + offset) as u32
-                } else {
-                    *start
-                };
-                let new_end = if *end >= insertion_point {
-                    (*end as i32 + offset) as u32
-                } else {
-                    *end
-                };
+                let new_start = apply_offset(*start)?;
+                let new_end = apply_offset(*end)?;
 
                 // Ensure the range is still valid
                 if new_start <= new_end {
