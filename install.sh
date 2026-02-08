@@ -216,8 +216,11 @@ esac
 BINARY_NAME="git-ai-${OS}-${ARCH}"
 
 # Determine release tag
-# Priority: 1. Pinned version (for release builds), 2. Environment variable, 3. "latest"
-if [ "$PINNED_VERSION" != "__VERSION_PLACEHOLDER__" ]; then
+# Priority: 1. Local binary override, 2. Pinned version (for release builds), 3. Environment variable, 4. "latest"
+if [ -n "${GIT_AI_LOCAL_BINARY:-}" ]; then
+    RELEASE_TAG="local"
+    DOWNLOAD_URL=""
+elif [ "$PINNED_VERSION" != "__VERSION_PLACEHOLDER__" ]; then
     # Version-pinned install script from a release
     RELEASE_TAG="$PINNED_VERSION"
     DOWNLOAD_URL="https://usegitai.com/worker/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
@@ -238,11 +241,19 @@ INSTALL_DIR="$HOME/.git-ai/bin"
 mkdir -p "$INSTALL_DIR"
 
 # Download and install
-echo "Downloading git-ai (release: ${RELEASE_TAG})..."
 TMP_FILE="${INSTALL_DIR}/git-ai.tmp.$$"
-if ! curl --fail --location --silent --show-error -o "$TMP_FILE" "$DOWNLOAD_URL"; then
-    rm -f "$TMP_FILE" 2>/dev/null || true
-    error "Failed to download binary (HTTP error)"
+if [ -n "${GIT_AI_LOCAL_BINARY:-}" ]; then
+    echo "Using local git-ai binary (release: ${RELEASE_TAG})..."
+    if [ ! -f "$GIT_AI_LOCAL_BINARY" ]; then
+        error "Local binary not found at $GIT_AI_LOCAL_BINARY"
+    fi
+    cp "$GIT_AI_LOCAL_BINARY" "$TMP_FILE"
+else
+    echo "Downloading git-ai (release: ${RELEASE_TAG})..."
+    if ! curl --fail --location --silent --show-error -o "$TMP_FILE" "$DOWNLOAD_URL"; then
+        rm -f "$TMP_FILE" 2>/dev/null || true
+        error "Failed to download binary (HTTP error)"
+    fi
 fi
 
 # Basic validation: ensure file is not empty

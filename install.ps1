@@ -287,8 +287,10 @@ $os = 'windows'
 $binaryName = "git-ai-$os-$arch"
 
 # Determine release tag
-# Priority: 1. Pinned version (for release builds), 2. Environment variable, 3. "latest"
-if ($PinnedVersion -ne '__VERSION_PLACEHOLDER__') {
+# Priority: 1. Local binary override, 2. Pinned version (for release builds), 3. Environment variable, 4. "latest"
+if (-not [string]::IsNullOrWhiteSpace($env:GIT_AI_LOCAL_BINARY)) {
+    $releaseTag = 'local'
+} elseif ($PinnedVersion -ne '__VERSION_PLACEHOLDER__') {
     # Version-pinned install script from a release
     $releaseTag = $PinnedVersion
     $downloadUrlExe = "https://usegitai.com/worker/releases/download/$releaseTag/$binaryName.exe"
@@ -326,7 +328,14 @@ function Try-Download {
 
 # Track which download URL succeeded for checksum verification
 $downloadedBinaryName = $null
-if (Try-Download -Url $downloadUrlExe) {
+if (-not [string]::IsNullOrWhiteSpace($env:GIT_AI_LOCAL_BINARY)) {
+    if (-not (Test-Path -LiteralPath $env:GIT_AI_LOCAL_BINARY)) {
+        Remove-Item -Force -ErrorAction SilentlyContinue $tmpFile
+        Write-ErrorAndExit "Local binary not found at $($env:GIT_AI_LOCAL_BINARY)"
+    }
+    Copy-Item -Force -Path $env:GIT_AI_LOCAL_BINARY -Destination $tmpFile
+    $downloadedBinaryName = "$binaryName.exe"
+} elseif (Try-Download -Url $downloadUrlExe) {
     $downloadedBinaryName = "$binaryName.exe"
 } elseif (Try-Download -Url $downloadUrlNoExt) {
     $downloadedBinaryName = $binaryName
