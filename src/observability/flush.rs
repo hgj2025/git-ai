@@ -17,11 +17,17 @@ pub fn handle_flush_logs(args: &[String]) {
     let _lock = {
         let lock_path =
             dirs::home_dir().map(|h| h.join(".git-ai").join("internal").join("flush-logs.lock"));
+        if let Some(ref p) = lock_path {
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
         match lock_path.and_then(|p| crate::utils::LockFile::try_acquire(&p)) {
             Some(lock) => lock,
             None => std::process::exit(0),
         }
     };
+
 
     let force = args.contains(&"--force".to_string());
 
