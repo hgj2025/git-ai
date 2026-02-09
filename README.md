@@ -7,6 +7,9 @@
 <h1 align="left"><b>git-ai</b></h1>
 </div>
 <p align="left">Track the AI Code in your repositories</p>
+<p align="left">
+  <a href="https://discord.gg/XJStYvkb5U"><img alt="Discord" src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" /></a>
+</p>
 
 <video src="https://github.com/user-attachments/assets/68304ca6-b262-4638-9fb6-0a26f55c7986" muted loop controls autoplay></video>
 
@@ -102,4 +105,3 @@ Aggregate `git-ai` data at the PR, developer, Repository and Organization levels
 > [Get early access by chatting with the maintainers](https://calendly.com/acunniffe/meeting-with-git-ai-authors)
 
 ![alt](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
-
