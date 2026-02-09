@@ -166,6 +166,7 @@ fn try_lock_exclusive(path: &std::path::Path) -> Option<std::fs::File> {
 }
 
 #[cfg(windows)]
+#[allow(clippy::suspicious_open_options)]
 fn try_lock_exclusive(path: &std::path::Path) -> Option<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
