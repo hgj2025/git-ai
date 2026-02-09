@@ -208,6 +208,7 @@ fn find_editor_cli_js(cli_name: &str) -> Option<EditorCliCommand> {
 /// Return candidate (electron_binary, cli_js) paths for a given editor
 fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
     let mut candidates = Vec::new();
+    #[cfg(not(windows))]
     let home = home_dir();
 
     match cli_name {

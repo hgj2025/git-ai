@@ -7,7 +7,7 @@ use crate::mdm::git_client_installer::{
 use super::mac_prefs::{Preferences, find_app_by_bundle_id};
 
 #[cfg(windows)]
-use crate::mdm::utils::{generate_diff, home_dir, write_atomic};
+use crate::mdm::utils::{home_dir, write_atomic};
 #[cfg(windows)]
 use serde_json::{Value, json};
 #[cfg(windows)]
