@@ -245,7 +245,8 @@ fn estimate_stats_cost(
 ) -> Result<StatsCostEstimate, GitAiError> {
     let added_lines_by_file = repo.diff_added_lines(parent_sha, commit_sha, None)?;
 
-    let files_with_additions = added_lines_by_file.len();
+    let files_with_additions = added_lines_by_file.values().filter(|lines| !lines.is_empty()).count();
+
     let mut added_lines = 0usize;
     let mut hunk_ranges = 0usize;
 
