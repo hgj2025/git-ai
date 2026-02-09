@@ -251,8 +251,7 @@ fn scan_windows_toolbox_dir(toolbox_apps: &Path) -> Vec<DetectedIde> {
                     for version_entry in versions.flatten() {
                         let version_dir = version_entry.path();
                         if version_dir.is_dir()
-                            && let Some(detected_ide) =
-                                detect_windows_ide(ide, &version_dir)
+                            && let Some(detected_ide) = detect_windows_ide(ide, &version_dir)
                         {
                             detected.push(detected_ide);
                         }
