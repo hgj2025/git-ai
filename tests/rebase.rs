@@ -213,6 +213,89 @@ fn test_rebase_fast_forward() {
     feature_file.assert_lines_and_blame(lines!["// AI feature".ai()]);
 }
 
+/// Test `git rebase <upstream> <branch>` when invoked from another branch.
+/// We should capture original_head from `<branch>`, not from the currently checked-out branch.
+#[test]
+fn test_rebase_with_explicit_branch_argument_preserves_authorship() {
+    let repo = TestRepo::new();
+
+    // Base commit
+    let mut base = repo.filename("base.txt");
+    base.set_contents(lines!["base"]);
+    repo.stage_all_and_commit("initial").unwrap();
+    let main_branch = repo.current_branch();
+
+    // Feature branch with AI-authored content
+    repo.git(&["checkout", "-b", "feature"]).unwrap();
+    let mut feature_file = repo.filename("feature.txt");
+    feature_file.set_contents(lines!["// AI feature".ai(), "fn feature() {}".ai()]);
+    repo.stage_all_and_commit("add feature").unwrap();
+
+    // Advance main branch
+    repo.git(&["checkout", &main_branch]).unwrap();
+    let mut main_file = repo.filename("main.txt");
+    main_file.set_contents(lines!["main work"]);
+    repo.stage_all_and_commit("main advances").unwrap();
+
+    // Invoke rebase with explicit branch arg while currently on main.
+    let output = repo.git(&["rebase", &main_branch, "feature"]).unwrap();
+
+    assert!(
+        output.contains("Commit mapping: 1 original -> 1 new"),
+        "Expected explicit-branch rebase to map one original commit to one rebased commit. Output:\n{}",
+        output
+    );
+
+    // HEAD should now be on feature after the rebase operation; verify AI blame survived.
+    feature_file.assert_lines_and_blame(lines!["// AI feature".ai(), "fn feature() {}".ai()]);
+}
+
+/// Test `git rebase --root --onto <base> <branch>` when invoked from another branch.
+/// We should resolve original_head from `<branch>`, not from the currently checked-out branch.
+#[test]
+fn test_rebase_root_with_explicit_branch_argument_preserves_authorship() {
+    let repo = TestRepo::new();
+
+    // Base commit
+    let mut base = repo.filename("base.txt");
+    base.set_contents(lines!["base"]);
+    repo.stage_all_and_commit("initial").unwrap();
+    let main_branch = repo.current_branch();
+
+    // Feature branch with AI-authored content
+    repo.git(&["checkout", "-b", "feature"]).unwrap();
+    let mut feature_file = repo.filename("feature.txt");
+    feature_file.set_contents(lines!["// AI feature".ai(), "fn feature() {}".ai()]);
+    let original_feature_head = repo.stage_all_and_commit("add feature").unwrap().commit_sha;
+
+    // Advance main branch
+    repo.git(&["checkout", &main_branch]).unwrap();
+    let mut main_file = repo.filename("main.txt");
+    main_file.set_contents(lines!["main work"]);
+    repo.stage_all_and_commit("main advances").unwrap();
+
+    // Invoke root rebase with explicit branch arg while currently on main.
+    let output = repo
+        .git(&["rebase", "--root", "--onto", &main_branch, "feature"])
+        .unwrap();
+
+    assert!(
+        output.contains("Commit mapping: 1 original -> 1 new"),
+        "Expected root explicit-branch rebase to map one original commit to one rebased commit. Output:\n{}",
+        output
+    );
+
+    let rebased_feature_head = repo.git(&["rev-parse", "HEAD"]).unwrap();
+    assert_ne!(
+        rebased_feature_head.trim(),
+        original_feature_head,
+        "Feature head should be rewritten by root rebase"
+    );
+
+    // HEAD should now be on feature after the rebase operation; verify AI blame survived.
+    feature_file.assert_lines_and_blame(lines!["// AI feature".ai(), "fn feature() {}".ai()]);
+}
+
 /// Test interactive rebase with commit reordering - verifies interactive rebase works
 #[test]
 fn test_rebase_interactive_reorder() {
