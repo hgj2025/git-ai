@@ -993,7 +993,8 @@ fn format_context_block(ctx: &SessionContext) -> String {
             .collect();
 
         let (messages_to_show, omitted) =
-            if max_messages > 0 && non_tool_messages.len() > max_messages {
+        let (messages_to_show, omitted) =
+            if non_tool_messages.len() > max_messages {
                 let omitted = non_tool_messages.len() - max_messages;
                 let slice = &non_tool_messages[omitted..];
                 (slice.to_vec(), Some(omitted))
