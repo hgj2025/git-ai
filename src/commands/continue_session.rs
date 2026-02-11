@@ -152,9 +152,11 @@ fn get_commit_diff(repo: &Repository, sha: &str) -> Result<String, GitAiError> {
 
     const MAX_DIFF_BYTES: usize = 100 * 1024; // 100KB
     if stdout.len() > MAX_DIFF_BYTES {
-        let truncated = &stdout[..MAX_DIFF_BYTES];
+        // Use floor_char_boundary to avoid panicking on multi-byte UTF-8
+        let safe_limit = stdout.floor_char_boundary(MAX_DIFF_BYTES);
+        let truncated = &stdout[..safe_limit];
         // Find the last newline to avoid cutting mid-line
-        let cut_point = truncated.rfind('\n').unwrap_or(MAX_DIFF_BYTES);
+        let cut_point = truncated.rfind('\n').unwrap_or(safe_limit);
         Ok(format!(
             "{}\n\n[... diff truncated at 100KB ({} bytes total)]",
             &stdout[..cut_point],
@@ -176,9 +178,11 @@ fn read_project_context(repo: &Repository) -> Option<String> {
 
     const MAX_CONTEXT_BYTES: usize = 50 * 1024; // 50KB
     if contents.len() > MAX_CONTEXT_BYTES {
-        let cut_point = contents[..MAX_CONTEXT_BYTES]
+        // Use floor_char_boundary to avoid panicking on multi-byte UTF-8
+        let safe_limit = contents.floor_char_boundary(MAX_CONTEXT_BYTES);
+        let cut_point = contents[..safe_limit]
             .rfind('\n')
-            .unwrap_or(MAX_CONTEXT_BYTES);
+            .unwrap_or(safe_limit);
         Some(format!(
             "{}\n\n[... CLAUDE.md truncated at 50KB ({} bytes total)]",
             &contents[..cut_point],
