@@ -126,7 +126,7 @@ impl CommitInfo {
             sha: parts[0].to_string(),
             author: parts[1].to_string(),
             date: parts[2].to_string(),
-            message: parts[3].to_string(),
+            message: parts[3..].join("|||"),
             full_message,
         })
     }
