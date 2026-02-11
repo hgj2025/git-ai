@@ -895,7 +895,9 @@ fn parse_search_args(args: &[String]) -> Result<ParsedSearchArgs, String> {
                 if i >= args.len() {
                     return Err("--workdir requires a value".to_string());
                 }
-                eprintln!("Warning: --workdir filtering is not yet implemented and will be ignored");
+                eprintln!(
+                    "Warning: --workdir filtering is not yet implemented and will be ignored"
+                );
                 filters.workdir = Some(args[i].clone());
             }
             // Output formats (mutually exclusive)
