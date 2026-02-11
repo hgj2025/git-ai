@@ -1,13 +1,11 @@
-use crate::authorship::diff_ai_accepted::diff_ai_accepted_stats;
+use crate::authorship::authorship_log::LineRange;
 use crate::authorship::transcript::Message;
 use crate::error::GitAiError;
 use crate::git::refs::get_authorship;
 use crate::git::repository::Repository;
 use crate::utils::debug_log;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolModelHeadlineStats {
@@ -534,39 +532,112 @@ pub fn stats_for_commit_stats(
     commit_sha: &str,
     ignore_patterns: &[String],
 ) -> Result<CommitStats, GitAiError> {
+    let commit_obj = repo.revparse_single(commit_sha)?.peel_to_commit()?;
+
     // Step 1: get the diff between this commit and its parent ON refname (if more than one parent)
     // If initial than everything is additions
     // We want the count here git shows +111 -55
     let (git_diff_added_lines, git_diff_deleted_lines) =
         get_git_diff_stats(repo, commit_sha, ignore_patterns)?;
 
-    // Step 2: get parent SHA for diff-based accepted counts
-    let commit_obj = repo.revparse_single(commit_sha)?.peel_to_commit()?;
-    let parent_sha = if commit_obj.parent_count()? == 0 {
-        EMPTY_TREE_HASH.to_string()
-    } else {
-        commit_obj.parent(0)?.id()
-    };
-
-    let diff_ai_stats = diff_ai_accepted_stats(
-        repo,
-        &parent_sha,
-        commit_sha,
-        Some(&parent_sha),
-        ignore_patterns,
-    )?;
-
-    // Step 3: get the authorship log for this commit
+    // Step 2: get the authorship log for this commit
     let authorship_log = get_authorship(repo, commit_sha);
 
-    // Step 4: Calculate stats from authorship log with diff-based accepted counts
+    // Step 3: get line numbers added by this specific commit, then intersect with attestations.
+    // This keeps accepted stats scoped to the target commit while avoiding expensive blame traversal.
+    let parent_count = commit_obj.parent_count()?;
+    let is_merge_commit = parent_count > 1;
+    let mut added_lines_by_file: HashMap<String, Vec<u32>> = if is_merge_commit {
+        HashMap::new()
+    } else {
+        let from_ref = if parent_count == 0 {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string()
+        } else {
+            commit_obj.parent(0)?.id()
+        };
+        repo.diff_added_lines(&from_ref, commit_sha, None)?
+    };
+    added_lines_by_file.retain(|file_path, _| {
+        !crate::authorship::range_authorship::should_ignore_file(file_path, ignore_patterns)
+    });
+    for lines in added_lines_by_file.values_mut() {
+        lines.sort_unstable();
+        lines.dedup();
+    }
+
+    // Step 4: derive accepted lines directly from note attestations for lines added in this commit.
+    let (ai_accepted, ai_accepted_by_tool) = accepted_lines_from_attestations(
+        authorship_log.as_ref(),
+        &added_lines_by_file,
+        is_merge_commit,
+    );
+
+    // Step 5: Calculate stats from authorship log
     Ok(stats_from_authorship_log(
         authorship_log.as_ref(),
         git_diff_added_lines,
         git_diff_deleted_lines,
-        diff_ai_stats.total_ai_accepted,
-        &diff_ai_stats.per_tool_model,
+        ai_accepted,
+        &ai_accepted_by_tool,
     ))
+}
+
+fn accepted_lines_from_attestations(
+    authorship_log: Option<&crate::authorship::authorship_log_serialization::AuthorshipLog>,
+    added_lines_by_file: &HashMap<String, Vec<u32>>,
+    is_merge_commit: bool,
+) -> (u32, BTreeMap<String, u32>) {
+    if is_merge_commit {
+        return (0, BTreeMap::new());
+    }
+
+    let mut total_ai_accepted = 0u32;
+    let mut per_tool_model = BTreeMap::new();
+
+    let Some(log) = authorship_log else {
+        return (0, per_tool_model);
+    };
+
+    for file_attestation in &log.attestations {
+        let Some(added_lines) = added_lines_by_file.get(&file_attestation.file_path) else {
+            continue;
+        };
+
+        for entry in &file_attestation.entries {
+            let accepted = entry
+                .line_ranges
+                .iter()
+                .map(|line_range| line_range_overlap_len(line_range, added_lines))
+                .sum::<u32>();
+
+            if accepted == 0 {
+                continue;
+            }
+
+            total_ai_accepted += accepted;
+
+            if let Some(prompt_record) = log.metadata.prompts.get(&entry.hash) {
+                let tool_model = format!(
+                    "{}::{}",
+                    prompt_record.agent_id.tool, prompt_record.agent_id.model
+                );
+                *per_tool_model.entry(tool_model).or_insert(0) += accepted;
+            }
+        }
+    }
+
+    (total_ai_accepted, per_tool_model)
+}
+
+fn line_range_overlap_len(range: &LineRange, added_lines: &[u32]) -> u32 {
+    match range {
+        LineRange::Single(line) => u32::from(added_lines.binary_search(line).is_ok()),
+        LineRange::Range(start, end) => {
+            let start_idx = added_lines.partition_point(|line| *line < *start);
+            let end_idx = added_lines.partition_point(|line| *line <= *end);
+            end_idx.saturating_sub(start_idx) as u32
+        }
+    }
 }
 
 /// Get git diff statistics between commit and its parent
@@ -1204,5 +1275,42 @@ mod tests {
             stats_for_commit_stats(tmp_repo.gitai_repo(), &head_sha, &glob_patterns).unwrap();
         assert_eq!(stats_filtered.git_diff_added_lines, 1);
         assert_eq!(stats_filtered.ai_additions, 1);
+    }
+    #[test]
+    fn test_stats_for_merge_commit_skips_ai_acceptance() {
+        let tmp_repo = TmpRepo::new().unwrap();
+
+        tmp_repo.write_file("test.txt", "base\n", true).unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Initial commit").unwrap();
+
+        let default_branch = tmp_repo.current_branch().unwrap();
+        tmp_repo.create_branch("feature").unwrap();
+        tmp_repo
+            .write_file("test.txt", "base\nfeature line\n", true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_ai("Claude", Some("claude-3-sonnet"), Some("cursor"))
+            .unwrap();
+        tmp_repo.commit_with_message("Feature change").unwrap();
+
+        tmp_repo.switch_branch(&default_branch).unwrap();
+        tmp_repo
+            .write_file("main.txt", "main line\n", true)
+            .unwrap();
+        tmp_repo
+            .trigger_checkpoint_with_author("test_user")
+            .unwrap();
+        tmp_repo.commit_with_message("Main change").unwrap();
+
+        tmp_repo.merge_branch("feature", "Merge feature").unwrap();
+
+        let merge_sha = tmp_repo.get_head_commit_sha().unwrap();
+        let stats = stats_for_commit_stats(tmp_repo.gitai_repo(), &merge_sha, &[]).unwrap();
+
+        assert_eq!(stats.ai_accepted, 0);
+        assert_eq!(stats.ai_additions, stats.mixed_additions);
     }
 }

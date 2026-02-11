@@ -174,15 +174,23 @@ pub fn post_commit(
     // Compute stats once (needed for both metrics and terminal output), unless preflight
     // estimate predicts this would be too expensive for the commit hook path.
     let mut stats: Option<crate::authorship::stats::CommitStats> = None;
-    let skip_reason = estimate_stats_cost(repo, &parent_sha, &commit_sha)
-        .ok()
-        .and_then(|estimate| {
-            if should_skip_expensive_post_commit_stats(&estimate) {
-                Some(estimate)
-            } else {
-                None
-            }
-        });
+    let is_merge_commit = repo
+        .find_commit(commit_sha.clone())
+        .map(|commit| commit.parent_count().unwrap_or(0) > 1)
+        .unwrap_or(false);
+    let skip_reason = if is_merge_commit {
+        Some(StatsSkipReason::MergeCommit)
+    } else {
+        estimate_stats_cost(repo, &parent_sha, &commit_sha)
+            .ok()
+            .and_then(|estimate| {
+                if should_skip_expensive_post_commit_stats(&estimate) {
+                    Some(StatsSkipReason::Expensive(estimate))
+                } else {
+                    None
+                }
+            })
+    };
 
     if skip_reason.is_none() {
         let computed = stats_for_commit_stats(repo, &commit_sha, &[])?;
@@ -197,11 +205,25 @@ pub fn post_commit(
             &parent_working_log,
         );
         stats = Some(computed);
-    } else if let Some(estimate) = skip_reason {
-        debug_log(&format!(
-            "Skipping expensive post-commit stats for {} (files_with_additions={}, added_lines={}, hunks={})",
-            commit_sha, estimate.files_with_additions, estimate.added_lines, estimate.hunk_ranges
-        ));
+    } else {
+        match skip_reason.as_ref() {
+            Some(StatsSkipReason::MergeCommit) => {
+                debug_log(&format!(
+                    "Skipping post-commit stats for merge commit {}",
+                    commit_sha
+                ));
+            }
+            Some(StatsSkipReason::Expensive(estimate)) => {
+                debug_log(&format!(
+                    "Skipping expensive post-commit stats for {} (files_with_additions={}, added_lines={}, hunks={})",
+                    commit_sha,
+                    estimate.files_with_additions,
+                    estimate.added_lines,
+                    estimate.hunk_ranges
+                ));
+            }
+            None => {}
+        }
     }
 
     // Write INITIAL file for uncommitted AI attributions (if any)
@@ -219,17 +241,34 @@ pub fn post_commit(
         let is_interactive = std::io::stdout().is_terminal();
         if let Some(stats) = stats.as_ref() {
             write_stats_to_terminal(stats, is_interactive);
-        } else if let Some(estimate) = skip_reason {
-            eprintln!(
-                "[git-ai] Skipped git-ai stats for large commit (files_with_additions={}, added_lines={}, hunks={}). Run `git-ai stats {}` to compute stats on demand.",
-                estimate.files_with_additions,
-                estimate.added_lines,
-                estimate.hunk_ranges,
-                commit_sha
-            );
+        } else {
+            match skip_reason.as_ref() {
+                Some(StatsSkipReason::MergeCommit) => {
+                    eprintln!(
+                        "[git-ai] Skipped git-ai stats for merge commit {}.",
+                        commit_sha
+                    );
+                }
+                Some(StatsSkipReason::Expensive(estimate)) => {
+                    eprintln!(
+                        "[git-ai] Skipped git-ai stats for large commit (files_with_additions={}, added_lines={}, hunks={}). Run `git-ai stats {}` to compute stats on demand.",
+                        estimate.files_with_additions,
+                        estimate.added_lines,
+                        estimate.hunk_ranges,
+                        commit_sha
+                    );
+                }
+                None => {}
+            }
         }
     }
     Ok((commit_sha.to_string(), authorship_log))
+}
+
+#[derive(Debug, Clone)]
+enum StatsSkipReason {
+    MergeCommit,
+    Expensive(StatsCostEstimate),
 }
 
 fn should_skip_expensive_post_commit_stats(estimate: &StatsCostEstimate) -> bool {
