@@ -812,8 +812,6 @@ fn parse_search_args(args: &[String]) -> Result<ParsedSearchArgs, String> {
                 // Initialize with any pending line ranges collected before --file
                 let line_ranges = if !pending_lines.is_empty() {
                     std::mem::take(&mut pending_lines)
-                } else if let Some(SearchMode::File { line_ranges, .. }) = &mode {
-                    line_ranges.clone()
                 } else {
                     vec![]
                 };

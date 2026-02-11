@@ -818,17 +818,10 @@ fn parse_continue_args(args: &[String]) -> Result<ParsedContinueArgs, String> {
                     return Err("--file requires a value".to_string());
                 }
                 let file_path = args[i].clone();
-                if let Some(ContinueMode::ByFile { line_ranges, .. }) = &mode {
-                    mode = Some(ContinueMode::ByFile {
-                        file_path,
-                        line_ranges: line_ranges.clone(),
-                    });
-                } else {
-                    mode = Some(ContinueMode::ByFile {
-                        file_path,
-                        line_ranges: vec![],
-                    });
-                }
+                mode = Some(ContinueMode::ByFile {
+                    file_path,
+                    line_ranges: vec![],
+                });
             }
             "--lines" => {
                 i += 1;
