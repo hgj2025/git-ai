@@ -116,6 +116,7 @@ fn test_opencode_transcript_timestamps_are_rfc3339() {
 }
 
 #[test]
+#[serial_test::serial] // Run serially to avoid env var conflicts with other tests
 fn test_opencode_preset_pretooluse_returns_human_checkpoint() {
     let storage_path = opencode_storage_fixture_path();
 
@@ -171,6 +172,7 @@ fn test_opencode_preset_pretooluse_returns_human_checkpoint() {
 }
 
 #[test]
+#[serial_test::serial] // Run serially to avoid env var conflicts with other tests
 fn test_opencode_preset_posttooluse_returns_ai_checkpoint() {
     let storage_path = opencode_storage_fixture_path();
 
@@ -233,6 +235,7 @@ fn test_opencode_preset_posttooluse_returns_ai_checkpoint() {
 }
 
 #[test]
+#[serial_test::serial] // Run serially to avoid env var conflicts with other tests
 fn test_opencode_preset_stores_session_id_in_metadata() {
     let storage_path = opencode_storage_fixture_path();
 
@@ -275,6 +278,7 @@ fn test_opencode_preset_stores_session_id_in_metadata() {
 }
 
 #[test]
+#[serial_test::serial] // Run serially to avoid env var conflicts with other tests
 fn test_opencode_preset_sets_repo_working_dir() {
     let storage_path = opencode_storage_fixture_path();
 
@@ -380,6 +384,7 @@ fn test_opencode_tool_use_only_from_assistant() {
 }
 
 #[test]
+#[serial_test::serial] // Run serially to avoid env var conflicts with other tests
 fn test_opencode_e2e_checkpoint_and_commit() {
     use repos::test_repo::TestRepo;
 
