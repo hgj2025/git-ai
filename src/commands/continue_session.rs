@@ -353,7 +353,7 @@ fn prompt_agent_choice(prompt_snippet: &str) -> Result<AgentChoice, GitAiError> 
 }
 
 /// Handle interactive TUI mode for continue command
-fn handle_continue_tui(repo: &Repository) {
+fn handle_continue_tui(repo: &Repository, options: &ContinueOptions) {
     // Check if terminal is interactive
     if !std::io::stdout().is_terminal() {
         eprintln!("TUI mode requires an interactive terminal.");
@@ -392,15 +392,14 @@ fn handle_continue_tui(repo: &Repository) {
     result.prompts.insert(selected.id.clone(), prompt_record);
 
     // Gather all session context (TUI mode has no commit_info)
-    let options = ContinueOptions::new();
-    let ctx = gather_session_context(repo, result, None, &options);
+    let ctx = gather_session_context(repo, result, None, options);
 
     // Format context block
     let context = format_context_block(&ctx);
 
     // Execute the chosen action
     match choice {
-        AgentChoice::Launch(agent) => match launch_agent(&agent, &context, false) {
+        AgentChoice::Launch(agent) => match launch_agent(&agent, &context, options.summary) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("Error launching agent: {}", e);
@@ -460,7 +459,7 @@ pub fn handle_continue(args: &[String]) {
 
     // Check for interactive mode
     if parsed.mode == ContinueMode::Interactive {
-        handle_continue_tui(&repo);
+        handle_continue_tui(&repo, &parsed.options);
         return;
     }
 
