@@ -185,6 +185,89 @@ fn test_rebase_mixed_authorship() {
     ai_file.assert_lines_and_blame(lines!["// AI work".ai()]);
 }
 
+#[test]
+fn test_rebase_preserves_exact_mixed_line_attribution_in_single_file() {
+    let repo = TestRepo::new();
+
+    let mut base_file = repo.filename("base.txt");
+    base_file.set_contents(lines!["base"]);
+    repo.stage_all_and_commit("Initial").unwrap();
+    let default_branch = repo.current_branch();
+
+    repo.git(&["checkout", "-b", "feature"]).unwrap();
+    let mut app_file = repo.filename("app.js");
+    app_file.set_contents(lines![
+        "const version = 1;".human(),
+        "function compute() {".ai(),
+        "  return 1;".ai(),
+        "}".ai()
+    ]);
+    repo.stage_all_and_commit("Add mixed app").unwrap();
+
+    app_file.insert_at(2, lines!["  // AI docs".ai()]);
+    repo.stage_all_and_commit("Add docs").unwrap();
+
+    app_file.insert_at(5, lines!["// AI footer".ai()]);
+    repo.stage_all_and_commit("Add footer").unwrap();
+
+    repo.git(&["checkout", &default_branch]).unwrap();
+    let mut main_file = repo.filename("main.txt");
+    main_file.set_contents(lines!["main advance"]);
+    repo.stage_all_and_commit("Main advance").unwrap();
+
+    repo.git(&["checkout", "feature"]).unwrap();
+    repo.git(&["rebase", &default_branch]).unwrap();
+
+    app_file.assert_lines_and_blame(lines![
+        "const version = 1;".human(),
+        "function compute() {".ai(),
+        "  // AI docs".ai(),
+        "  return 1;".ai(),
+        "}".human(),
+        "// AI footer".ai()
+    ]);
+}
+
+#[test]
+fn test_rebase_with_human_only_commit_between_ai_commits_preserves_exact_lines() {
+    let repo = TestRepo::new();
+
+    let mut base_file = repo.filename("base.txt");
+    let mut app_file = repo.filename("app.js");
+    base_file.set_contents(lines!["base"]);
+    app_file.set_contents(lines!["const base = 0;".human()]);
+    repo.stage_all_and_commit("Initial").unwrap();
+    let default_branch = repo.current_branch();
+
+    repo.git(&["checkout", "-b", "feature"]).unwrap();
+
+    app_file.insert_at(1, lines!["// AI block 1".ai()]);
+    repo.stage_all_and_commit("AI block 1").unwrap();
+
+    let mut notes_file = repo.filename("notes.txt");
+    notes_file.set_contents(lines!["human notes line"]);
+    repo.stage_all_and_commit("Human-only notes").unwrap();
+
+    let mut generated_file = repo.filename("generated.js");
+    generated_file.set_contents(lines!["const generated = 42;".ai()]);
+    repo.stage_all_and_commit("AI block 2").unwrap();
+
+    repo.git(&["checkout", &default_branch]).unwrap();
+    let mut main_file = repo.filename("main.txt");
+    main_file.set_contents(lines!["main advance"]);
+    repo.stage_all_and_commit("Main advance").unwrap();
+
+    repo.git(&["checkout", "feature"]).unwrap();
+    repo.git(&["rebase", &default_branch]).unwrap();
+
+    app_file.assert_lines_and_blame(lines![
+        "const base = 0;".human(),
+        "// AI block 1".ai()
+    ]);
+    generated_file.assert_lines_and_blame(lines!["const generated = 42;".ai()]);
+    notes_file.assert_lines_and_blame(lines!["human notes line".human()]);
+}
+
 /// Test empty rebase (fast-forward)
 #[test]
 fn test_rebase_fast_forward() {
