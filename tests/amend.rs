@@ -458,15 +458,25 @@ fn test_amend_repeated_round_trips_preserve_exact_line_authorship() {
     file.insert_at(2, lines!["  // Added documentation".ai()]);
     file.insert_at(5, lines!["// Footer".ai()]);
     repo.git(&["add", "-A"]).unwrap();
-    repo.git(&["commit", "--amend", "-m", "Add example function (amended 1)"])
-        .unwrap();
+    repo.git(&[
+        "commit",
+        "--amend",
+        "-m",
+        "Add example function (amended 1)",
+    ])
+    .unwrap();
 
     // Re-amend the same commit with mixed authorship changes.
     file.insert_at(0, lines!["// Human TODO".human()]);
     file.insert_at(7, lines!["// AI trailing note".ai()]);
     repo.git(&["add", "-A"]).unwrap();
-    repo.git(&["commit", "--amend", "-m", "Add example function (amended 2)"])
-        .unwrap();
+    repo.git(&[
+        "commit",
+        "--amend",
+        "-m",
+        "Add example function (amended 2)",
+    ])
+    .unwrap();
 
     file.assert_lines_and_blame(lines![
         "// Human TODO".human(),

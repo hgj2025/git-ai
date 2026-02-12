@@ -272,12 +272,16 @@ pub fn rewrite_authorship_after_squash_or_rebase(
             debug_log(
                 "No AI-touched files in merge, but notes exist in source commits; writing empty authorship log",
             );
-            let mut authorship_log = AuthorshipLog::new();
-            authorship_log.metadata.base_commit_sha = merge_commit_sha.to_string();
-            let authorship_json = authorship_log.serialize_to_string().map_err(|_| {
-                GitAiError::Generic("Failed to serialize authorship log".to_string())
-            })?;
-            crate::git::refs::notes_add(repo, merge_commit_sha, &authorship_json)?;
+            if let Some(authorship_log) = build_metadata_only_authorship_log_from_source_notes(
+                repo,
+                &source_commits,
+                merge_commit_sha,
+            )? {
+                let authorship_json = authorship_log.serialize_to_string().map_err(|_| {
+                    GitAiError::Generic("Failed to serialize authorship log".to_string())
+                })?;
+                crate::git::refs::notes_add(repo, merge_commit_sha, &authorship_json)?;
+            }
         } else {
             // No files changed, nothing to do
             debug_log("No files changed in merge, skipping authorship rewrite");
@@ -382,24 +386,7 @@ pub fn rewrite_authorship_after_rebase_v2(
         return Ok(());
     }
 
-    // Step 1: Extract pathspecs from all original commits
-    let pathspecs = get_pathspecs_from_commits(repo, original_commits)?;
-    let pathspecs = filter_pathspecs_to_ai_touched_files(repo, original_commits, &pathspecs)?;
-
-    if pathspecs.is_empty() {
-        // No files were modified, nothing to do
-        return Ok(());
-    }
-    let pathspecs_lookup: HashSet<&str> = pathspecs.iter().map(String::as_str).collect();
-
-    debug_log(&format!(
-        "Processing rebase: {} files modified across {} original commits -> {} new commits",
-        pathspecs.len(),
-        original_commits.len(),
-        new_commits.len()
-    ));
-
-    // Filter out commits that already have authorship logs (these are commits from the target branch)
+    // Filter out commits that already have authorship logs (these are commits from the target branch).
     // Only process newly created rebased commits.
     let commits_with_logs = commits_with_authorship_notes(repo, new_commits)?;
     let commits_to_process: Vec<String> = new_commits
@@ -429,6 +416,48 @@ pub fn rewrite_authorship_after_rebase_v2(
     ));
     let commits_to_process_lookup: HashSet<&str> =
         commits_to_process.iter().map(String::as_str).collect();
+    let commit_pairs_to_process: Vec<(String, String)> = original_commits
+        .iter()
+        .zip(new_commits.iter())
+        .filter(|(_original_commit, new_commit)| {
+            commits_to_process_lookup.contains(new_commit.as_str())
+        })
+        .map(|(original_commit, new_commit)| (original_commit.clone(), new_commit.clone()))
+        .collect();
+    let original_commits_for_processing: Vec<String> = commit_pairs_to_process
+        .iter()
+        .map(|(original_commit, _new_commit)| original_commit.clone())
+        .collect();
+
+    // Step 1: Extract pathspecs from all original commits and narrow to AI-touched files.
+    let pathspecs = get_pathspecs_from_commits(repo, original_commits)?;
+    let pathspecs = filter_pathspecs_to_ai_touched_files(repo, original_commits, &pathspecs)?;
+
+    if pathspecs.is_empty() {
+        // No AI-touched files were rewritten. Preserve metadata-only / prompt-only notes by remapping
+        // existing source notes to their corresponding rebased commits.
+        let original_note_contents =
+            load_note_contents_for_commits(repo, &original_commits_for_processing)?;
+        let remapped_count =
+            remap_notes_for_commit_pairs(repo, &commit_pairs_to_process, &original_note_contents)?;
+        if remapped_count > 0 {
+            debug_log(&format!(
+                "Remapped {} metadata-only authorship notes for rebase commits",
+                remapped_count
+            ));
+        } else {
+            debug_log("No AI-touched files and no source notes to remap during rebase");
+        }
+        return Ok(());
+    }
+    let pathspecs_lookup: HashSet<&str> = pathspecs.iter().map(String::as_str).collect();
+
+    debug_log(&format!(
+        "Processing rebase: {} files modified across {} original commits -> {} new commits",
+        pathspecs.len(),
+        original_commits.len(),
+        new_commits.len()
+    ));
 
     if try_fast_path_rebase_note_remap(
         repo,
@@ -545,6 +574,8 @@ pub fn rewrite_authorship_after_rebase_v2(
     let mut pending_note_entries: Vec<(String, String)> =
         Vec::with_capacity(commits_to_process.len());
     let mut pending_note_debug: Vec<(String, usize)> = Vec::with_capacity(commits_to_process.len());
+    let mut original_note_content_by_new_commit: HashMap<String, String> = HashMap::new();
+    let mut original_note_content_loaded = false;
 
     // Step 3: Process each new commit in order (oldest to newest)
     for (idx, new_commit) in commits_to_process.iter().enumerate() {
@@ -627,12 +658,23 @@ pub fn rewrite_authorship_after_rebase_v2(
         current_authorship_log.metadata.base_commit_sha = new_commit.clone();
         current_authorship_log.metadata.prompts = flatten_prompts_for_metadata(&current_prompts);
 
-        let should_write_note = !current_authorship_log.attestations.is_empty()
+        let computed_note_has_payload = !current_authorship_log.attestations.is_empty()
             || !current_authorship_log.metadata.prompts.is_empty();
-        if should_write_note {
-            let authorship_json = current_authorship_log.serialize_to_string().map_err(|_| {
+        let authorship_json = if computed_note_has_payload {
+            Some(current_authorship_log.serialize_to_string().map_err(|_| {
                 GitAiError::Generic("Failed to serialize authorship log".to_string())
-            })?;
+            })?)
+        } else {
+            if !original_note_content_loaded {
+                original_note_content_by_new_commit =
+                    load_note_contents_for_commit_pairs(repo, &commit_pairs_to_process)?;
+                original_note_content_loaded = true;
+            }
+            original_note_content_by_new_commit
+                .get(new_commit)
+                .map(|raw_note| remap_note_content_for_target_commit(raw_note, new_commit))
+        };
+        if let Some(authorship_json) = authorship_json {
             pending_note_entries.push((new_commit.clone(), authorship_json));
             pending_note_debug.push((
                 new_commit.clone(),
@@ -689,16 +731,37 @@ pub fn rewrite_authorship_after_cherry_pick(
         new_commits.len()
     ));
 
+    let commit_pairs: Vec<(String, String)> = source_commits
+        .iter()
+        .zip(new_commits.iter())
+        .map(|(source_commit, new_commit)| (source_commit.clone(), new_commit.clone()))
+        .collect();
+    let source_commits_for_pairs: Vec<String> = commit_pairs
+        .iter()
+        .map(|(source_commit, _new_commit)| source_commit.clone())
+        .collect();
+
     // Step 1: Extract pathspecs from all source commits
     let pathspecs = get_pathspecs_from_commits(repo, source_commits)?;
     let pathspecs = filter_pathspecs_to_ai_touched_files(repo, source_commits, &pathspecs)?;
 
     if pathspecs.is_empty() {
-        // No files were modified, nothing to do
-        debug_log("No files modified in source commits");
+        let source_note_contents = load_note_contents_for_commits(repo, &source_commits_for_pairs)?;
+        let remapped_count =
+            remap_notes_for_commit_pairs(repo, &commit_pairs, &source_note_contents)?;
+        if remapped_count > 0 {
+            debug_log(&format!(
+                "Remapped {} metadata-only authorship notes for cherry-picked commits",
+                remapped_count
+            ));
+        } else {
+            debug_log("No files modified in source commits");
+        }
         return Ok(());
     }
     let pathspecs_lookup: HashSet<&str> = pathspecs.iter().map(String::as_str).collect();
+    let mut source_note_content_by_new_commit: HashMap<String, String> = HashMap::new();
+    let mut source_note_content_loaded = false;
 
     debug_log(&format!(
         "Processing cherry-pick: {} files modified across {} source commits",
@@ -803,10 +866,27 @@ pub fn rewrite_authorship_after_cherry_pick(
 
         authorship_log.metadata.base_commit_sha = new_commit.clone();
 
-        // Save authorship log
-        let authorship_json = authorship_log
-            .serialize_to_string()
-            .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
+        // Save computed note when it has payload; otherwise preserve original metadata-only notes.
+        let computed_note_has_payload =
+            !authorship_log.attestations.is_empty() || !authorship_log.metadata.prompts.is_empty();
+        let authorship_json = if computed_note_has_payload {
+            authorship_log.serialize_to_string().map_err(|_| {
+                GitAiError::Generic("Failed to serialize authorship log".to_string())
+            })?
+        } else {
+            if !source_note_content_loaded {
+                source_note_content_by_new_commit =
+                    load_note_contents_for_commit_pairs(repo, &commit_pairs)?;
+                source_note_content_loaded = true;
+            }
+            if let Some(raw_note) = source_note_content_by_new_commit.get(new_commit) {
+                remap_note_content_for_target_commit(raw_note, new_commit)
+            } else {
+                authorship_log.serialize_to_string().map_err(|_| {
+                    GitAiError::Generic("Failed to serialize authorship log".to_string())
+                })?
+            }
+        };
 
         crate::git::refs::notes_add(repo, new_commit, &authorship_json)?;
 
@@ -1650,6 +1730,192 @@ fn get_pathspecs_from_commits(
     Ok(pathspecs.into_iter().collect())
 }
 
+fn load_note_contents_for_commits(
+    repo: &Repository,
+    commit_shas: &[String],
+) -> Result<HashMap<String, String>, GitAiError> {
+    if commit_shas.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let note_blob_oids = note_blob_oids_for_commits(repo, commit_shas)?;
+    if note_blob_oids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut blob_oids: Vec<String> = note_blob_oids
+        .values()
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    blob_oids.sort();
+    let blob_contents = batch_read_blob_contents(repo, &blob_oids)?;
+
+    let mut note_contents = HashMap::new();
+    for (commit_sha, blob_oid) in note_blob_oids {
+        if let Some(content) = blob_contents.get(&blob_oid) {
+            note_contents.insert(commit_sha, content.clone());
+        }
+    }
+
+    Ok(note_contents)
+}
+
+fn load_note_contents_for_commit_pairs(
+    repo: &Repository,
+    commit_pairs: &[(String, String)],
+) -> Result<HashMap<String, String>, GitAiError> {
+    if commit_pairs.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let source_commits: Vec<String> = commit_pairs
+        .iter()
+        .map(|(source_commit, _target_commit)| source_commit.clone())
+        .collect();
+    let source_note_contents = load_note_contents_for_commits(repo, &source_commits)?;
+
+    let mut source_note_content_by_target_commit = HashMap::new();
+    for (source_commit, target_commit) in commit_pairs {
+        if let Some(note_content) = source_note_contents.get(source_commit) {
+            source_note_content_by_target_commit
+                .insert(target_commit.clone(), note_content.clone());
+        }
+    }
+
+    Ok(source_note_content_by_target_commit)
+}
+
+fn remap_note_content_for_target_commit(note_content: &str, target_commit: &str) -> String {
+    if let Some(remapped_note) = try_remap_base_commit_sha_field(note_content, target_commit) {
+        return remapped_note;
+    }
+
+    if let Ok(mut authorship_log) = AuthorshipLog::deserialize_from_string(note_content) {
+        authorship_log.metadata.base_commit_sha = target_commit.to_string();
+        if let Ok(serialized) = authorship_log.serialize_to_string() {
+            return serialized;
+        }
+    }
+    note_content.to_string()
+}
+
+fn try_remap_base_commit_sha_field(note_content: &str, target_commit: &str) -> Option<String> {
+    let field = "\"base_commit_sha\"";
+    let field_pos = note_content.find(field)?;
+    let bytes = note_content.as_bytes();
+
+    let mut pos = field_pos + field.len();
+    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\n' | b'\t' | b'\r') {
+        pos += 1;
+    }
+    if pos >= bytes.len() || bytes[pos] != b':' {
+        return None;
+    }
+    pos += 1;
+
+    while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\n' | b'\t' | b'\r') {
+        pos += 1;
+    }
+    if pos >= bytes.len() || bytes[pos] != b'"' {
+        return None;
+    }
+    pos += 1;
+    let value_start = pos;
+
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\\' => {
+                pos += 2;
+            }
+            b'"' => {
+                let value_end = pos;
+                let mut remapped = String::with_capacity(
+                    note_content.len() - (value_end - value_start) + target_commit.len(),
+                );
+                remapped.push_str(&note_content[..value_start]);
+                remapped.push_str(target_commit);
+                remapped.push_str(&note_content[value_end..]);
+                return Some(remapped);
+            }
+            _ => {
+                pos += 1;
+            }
+        }
+    }
+
+    None
+}
+
+fn remap_notes_for_commit_pairs(
+    repo: &Repository,
+    commit_pairs: &[(String, String)],
+    original_note_contents: &HashMap<String, String>,
+) -> Result<usize, GitAiError> {
+    if commit_pairs.is_empty() || original_note_contents.is_empty() {
+        return Ok(0);
+    }
+
+    let mut entries = Vec::new();
+    for (original_commit, new_commit) in commit_pairs {
+        if let Some(raw_note) = original_note_contents.get(original_commit) {
+            entries.push((
+                new_commit.clone(),
+                remap_note_content_for_target_commit(raw_note, new_commit),
+            ));
+        }
+    }
+
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let count = entries.len();
+    crate::git::refs::notes_add_batch(repo, &entries)?;
+    Ok(count)
+}
+
+fn build_metadata_only_authorship_log_from_source_notes(
+    repo: &Repository,
+    source_commits: &[String],
+    target_commit_sha: &str,
+) -> Result<Option<AuthorshipLog>, GitAiError> {
+    let mut merged_prompts = BTreeMap::new();
+    let mut prompt_totals: HashMap<String, (u32, u32)> = HashMap::new();
+    let mut saw_any_note = false;
+
+    for commit_sha in source_commits {
+        let Ok(log) = get_reference_as_authorship_log_v3(repo, commit_sha) else {
+            continue;
+        };
+        saw_any_note = true;
+
+        for (prompt_id, prompt_record) in log.metadata.prompts {
+            let entry = prompt_totals.entry(prompt_id.clone()).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(prompt_record.total_additions);
+            entry.1 = entry.1.saturating_add(prompt_record.total_deletions);
+            merged_prompts.insert(prompt_id, prompt_record);
+        }
+    }
+
+    if !saw_any_note {
+        return Ok(None);
+    }
+
+    for (prompt_id, (total_additions, total_deletions)) in prompt_totals {
+        if let Some(prompt) = merged_prompts.get_mut(&prompt_id) {
+            prompt.total_additions = total_additions;
+            prompt.total_deletions = total_deletions;
+        }
+    }
+
+    let mut authorship_log = AuthorshipLog::new();
+    authorship_log.metadata.base_commit_sha = target_commit_sha.to_string();
+    authorship_log.metadata.prompts = merged_prompts;
+    Ok(Some(authorship_log))
+}
+
 fn try_fast_path_rebase_note_remap(
     repo: &Repository,
     original_commits: &[String],
@@ -1716,9 +1982,30 @@ fn try_fast_path_rebase_note_remap(
     if remapped_blob_entries.is_empty() {
         return Ok(false);
     }
-    let remapped_count = remapped_blob_entries.len();
+    let mut blob_oids: Vec<String> = remapped_blob_entries
+        .iter()
+        .map(|(_new_commit, blob_oid)| blob_oid.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    blob_oids.sort();
+    let blob_contents = batch_read_blob_contents(repo, &blob_oids)?;
+
+    let mut remapped_note_entries: Vec<(String, String)> =
+        Vec::with_capacity(remapped_blob_entries.len());
+    for (new_commit, blob_oid) in remapped_blob_entries {
+        let Some(raw_note) = blob_contents.get(&blob_oid) else {
+            return Ok(false);
+        };
+        remapped_note_entries.push((
+            new_commit.clone(),
+            remap_note_content_for_target_commit(raw_note, &new_commit),
+        ));
+    }
+
+    let remapped_count = remapped_note_entries.len();
     let write_start = std::time::Instant::now();
-    crate::git::refs::notes_add_blob_batch(repo, &remapped_blob_entries)?;
+    crate::git::refs::notes_add_batch(repo, &remapped_note_entries)?;
     debug_performance_log(&format!(
         "Fast-path rebase note remap: wrote {} remapped notes in {}ms",
         remapped_count,
@@ -2468,7 +2755,7 @@ mod tests {
         AttestationEntry, AuthorshipLog, FileAttestation,
     };
     use crate::authorship::virtual_attribution::VirtualAttributions;
-    use crate::git::refs::{get_reference_as_authorship_log_v3, notes_add};
+    use crate::git::refs::{notes_add, show_authorship_note};
     use crate::git::test_utils::TmpRepo;
     use std::collections::{HashMap, HashSet};
 
@@ -2588,7 +2875,8 @@ mod tests {
             .expect("commit base file");
 
         let hex_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        repo.write_file(hex_name, "x\n", true).expect("write hex file");
+        repo.write_file(hex_name, "x\n", true)
+            .expect("write hex file");
         repo.commit_with_message("hex file commit")
             .expect("commit hex file");
         let commit_sha = repo.get_head_commit_sha().expect("head sha");
@@ -2724,8 +3012,10 @@ mod tests {
 
         assert!(did_remap, "expected fast-path remap to trigger");
 
+        let remapped_note_raw =
+            show_authorship_note(repo.gitai_repo(), &new_commit).expect("new note content");
         let remapped =
-            get_reference_as_authorship_log_v3(repo.gitai_repo(), &new_commit).expect("new note");
+            AuthorshipLog::deserialize_from_string(&remapped_note_raw).expect("parse new note");
         assert_eq!(remapped.metadata.base_commit_sha, new_commit);
         assert_eq!(remapped.attestations.len(), 1);
         assert_eq!(remapped.attestations[0].file_path, "ai.txt");
@@ -2781,8 +3071,10 @@ mod tests {
         assert!(did_remap, "expected fast-path remap to trigger");
 
         for new_commit in new_commits {
-            let remapped = get_reference_as_authorship_log_v3(repo.gitai_repo(), &new_commit)
-                .expect("new note");
+            let remapped_note_raw =
+                show_authorship_note(repo.gitai_repo(), &new_commit).expect("new note content");
+            let remapped =
+                AuthorshipLog::deserialize_from_string(&remapped_note_raw).expect("parse new note");
             assert_eq!(remapped.metadata.base_commit_sha, new_commit);
             assert_eq!(remapped.attestations.len(), 1);
             assert_eq!(remapped.attestations[0].file_path, "ai.txt");

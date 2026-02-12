@@ -177,6 +177,7 @@ pub fn notes_add_batch(repo: &Repository, entries: &[(String, String)]) -> Resul
 /// Batch-attach existing note blobs to commits without rewriting blob contents.
 ///
 /// Each entry is (commit_sha, existing_note_blob_oid).
+#[allow(dead_code)]
 pub fn notes_add_blob_batch(
     repo: &Repository,
     entries: &[(String, String)],
@@ -537,8 +538,7 @@ mod tests {
     #[test]
     fn test_parse_batch_check_blob_oid_accepts_sha1_and_sha256() {
         let sha1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa blob 10";
-        let sha256 =
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb blob 20";
+        let sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb blob 20";
         let invalid = "cccccccc blob 10";
 
         assert_eq!(
@@ -547,10 +547,7 @@ mod tests {
         );
         assert_eq!(
             parse_batch_check_blob_oid(sha256),
-            Some(
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    .to_string()
-            )
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string())
         );
         assert_eq!(parse_batch_check_blob_oid(invalid), None);
     }

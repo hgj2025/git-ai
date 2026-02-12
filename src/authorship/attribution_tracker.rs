@@ -2284,7 +2284,12 @@ mod tests {
         );
 
         let return_pos = new.find("return 42;").unwrap();
-        assert_range_owned_by(&updated, return_pos, return_pos + "return 42;".len(), "Alice");
+        assert_range_owned_by(
+            &updated,
+            return_pos,
+            return_pos + "return 42;".len(),
+            "Alice",
+        );
 
         let brace_pos = new.rfind("\n}\n").unwrap() + 1;
         assert_range_owned_by(&updated, brace_pos, brace_pos + 1, "Alice");
