@@ -143,7 +143,7 @@ pub fn notes_add_batch(repo: &Repository, entries: &[(String, String)]) -> Resul
     for (idx, (_commit_sha, note_content)) in deduped_entries.iter().enumerate() {
         script.extend_from_slice(b"blob\n");
         script.extend_from_slice(format!("mark :{}\n", idx + 1).as_bytes());
-        script.extend_from_slice(format!("data {}\n", note_content.as_bytes().len()).as_bytes());
+        script.extend_from_slice(format!("data {}\n", note_content.len()).as_bytes());
         script.extend_from_slice(note_content.as_bytes());
         script.extend_from_slice(b"\n");
     }

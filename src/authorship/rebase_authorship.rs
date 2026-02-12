@@ -30,6 +30,9 @@ struct CommitObjectMetadata {
     first_parent: Option<String>,
 }
 
+type ChangedFileContents = (HashSet<String>, HashMap<String, String>);
+type ChangedFileContentsByCommit = HashMap<String, ChangedFileContents>;
+
 // Process events in the rewrite log and call the correct rewrite functions in this file
 pub fn rewrite_authorship_if_needed(
     repo: &Repository,
@@ -1243,7 +1246,7 @@ fn collect_changed_file_contents_for_commit_pairs(
     commit_pairs: &[(String, String, String)],
     pathspecs_lookup: &HashSet<&str>,
     pathspecs: &[String],
-) -> Result<HashMap<String, (HashSet<String>, HashMap<String, String>)>, GitAiError> {
+) -> Result<ChangedFileContentsByCommit, GitAiError> {
     if commit_pairs.is_empty() {
         return Ok(HashMap::new());
     }
@@ -2269,7 +2272,7 @@ fn build_prompt_line_metrics_from_attributions(
     >,
 ) -> HashMap<String, PromptLineMetrics> {
     let mut metrics = HashMap::new();
-    for (_file_path, (_char_attrs, line_attrs)) in attributions {
+    for (_char_attrs, line_attrs) in attributions.values() {
         add_prompt_line_metrics_for_line_attributions(&mut metrics, line_attrs);
     }
     metrics
@@ -2427,7 +2430,7 @@ fn transform_changed_files_to_final_state(
         let mut transformed_attrs = if !source_has_non_human && !original_file_has_non_human {
             Vec::new()
         } else if let (Some(attrs), Some(content)) = (source_attrs, source_content) {
-            tracker.update_attributions(content, &final_content, &attrs, dummy_author, ts)?
+            tracker.update_attributions(content, &final_content, attrs, dummy_author, ts)?
         } else {
             Vec::new()
         };

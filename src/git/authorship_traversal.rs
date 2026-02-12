@@ -35,7 +35,7 @@ pub async fn load_ai_touched_files_for_commits(
         let mut all_files = HashSet::new();
         for blob_oid in note_blob_map.into_values() {
             if let Some(content) = blob_contents.get(&blob_oid) {
-                extract_file_paths_from_note(&content, &mut all_files);
+                extract_file_paths_from_note(content, &mut all_files);
             }
         }
 
