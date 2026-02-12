@@ -1,0 +1,288 @@
+name: Update Changelog
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-changelog:
+    name: Generate AI Changelog
+    runs-on: ubuntu-latest
+    if: github.event.release.draft == false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get release info
+        id: release-info
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          echo "current_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+          PREVIOUS_TAG=$(git tag --sort=-creatordate | grep -v "^${RELEASE_TAG}$" | grep -v '\-next-' | head -n 1)
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+            echo "No previous tag found, using initial commit: $PREVIOUS_TAG"
+          fi
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+          echo "Current: $RELEASE_TAG, Previous: $PREVIOUS_TAG"
+
+      - name: Collect changes
+        id: collect-changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ steps.release-info.outputs.current_tag }}
+          PREVIOUS_TAG: ${{ steps.release-info.outputs.previous_tag }}
+        run: |
+          echo "## Commits between $PREVIOUS_TAG and $CURRENT_TAG"
+
+          COMMIT_LOG=$(git log "${PREVIOUS_TAG}..${CURRENT_TAG}" --pretty=format:"%h %s" --no-merges 2>/dev/null || echo "")
+          echo "Commits:"
+          echo "$COMMIT_LOG"
+
+          PR_LIST=$(gh pr list \
+            --state merged \
+            --base main \
+            --search "merged:>=$(git log -1 --format=%aI "$PREVIOUS_TAG" 2>/dev/null || echo '2020-01-01')" \
+            --json number,title,labels,body \
+            --limit 100 2>/dev/null || echo "[]")
+
+          {
+            echo "commit_log<<COMMIT_EOF"
+            echo "$COMMIT_LOG"
+            echo "COMMIT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "pr_list<<PR_EOF"
+            echo "$PR_LIST"
+            echo "PR_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog with AI
+        id: generate-changelog
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CURRENT_TAG: ${{ steps.release-info.outputs.current_tag }}
+          PREVIOUS_TAG: ${{ steps.release-info.outputs.previous_tag }}
+          COMMIT_LOG: ${{ steps.collect-changes.outputs.commit_log }}
+          PR_LIST: ${{ steps.collect-changes.outputs.pr_list }}
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          VERSION="${CURRENT_TAG#v}"
+
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "No OPENAI_API_KEY found, generating changelog from commit messages..."
+
+            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'
+
+            ADDED=""
+            CHANGED=""
+            FIXED=""
+            OTHER=""
+
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              msg="${line#* }"
+
+              lower_msg=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
+              case "$lower_msg" in
+                *"skip ci"*|*"bump version"*|*"format rust"*|*"format code"*)
+                  continue
+                  ;;
+              esac
+
+              case "$lower_msg" in
+                add*|*"new feature"*|*"introduce"*|*"implement"*|*"create"*)
+                  ADDED="${ADDED}- ${msg}"$'\n'
+                  ;;
+                fix*|*"bugfix"*|*"patch"*|*"resolve"*|*"correct"*|*"overflow"*|*"panic"*)
+                  FIXED="${FIXED}- ${msg}"$'\n'
+                  ;;
+                *"refactor"*|*"improve"*|*"update"*|*"change"*|*"perf"*|*"optim"*|*"faster"*)
+                  CHANGED="${CHANGED}- ${msg}"$'\n'
+                  ;;
+                *)
+                  OTHER="${OTHER}- ${msg}"$'\n'
+                  ;;
+              esac
+            done <<< "$COMMIT_LOG"
+
+            [ -n "$ADDED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Added"$'\n'"${ADDED}"
+            [ -n "$CHANGED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Changed"$'\n'"${CHANGED}"
+            [ -n "$FIXED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Fixed"$'\n'"${FIXED}"
+            [ -n "$OTHER" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Other"$'\n'"${OTHER}"
+
+            {
+              echo "changelog<<CHANGELOG_EOF"
+              echo "$CHANGELOG_ENTRY"
+              echo "CHANGELOG_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Generating changelog with AI..."
+
+          PROMPT=$(cat <<'PROMPT_END'
+          You are a changelog generator. Given the following git commits and pull requests for a software release, generate a changelog entry following the Keep a Changelog 1.1.0 format (https://keepachangelog.com/en/1.1.0/).
+
+          Rules:
+          - Use ONLY these section headers as needed: Added, Changed, Deprecated, Removed, Fixed, Security
+          - Omit any section that has no entries
+          - Each entry should be a concise, user-facing description (not a raw commit message)
+          - Group related commits into single entries where appropriate
+          - Skip trivial commits (formatting, version bumps, CI-only changes)
+          - Write in imperative mood ("Add feature" not "Added feature")
+          - Focus on what matters to users and contributors
+          - Do NOT include the version header line - just the sections
+
+          PROMPT_END
+          )
+
+          FULL_PROMPT="${PROMPT}
+
+          Commits:
+          ${COMMIT_LOG}
+
+          Pull Requests (JSON):
+          ${PR_LIST}
+
+          Generate the changelog sections now:"
+
+          ESCAPED_PROMPT=$(echo "$FULL_PROMPT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d "{
+              \"model\": \"gpt-4o-mini\",
+              \"temperature\": 0.3,
+              \"max_tokens\": 2000,
+              \"messages\": [
+                {\"role\": \"system\", \"content\": \"You are a precise changelog generator that follows the Keep a Changelog format.\"},
+                {\"role\": \"user\", \"content\": $ESCAPED_PROMPT}
+              ]
+            }")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "OpenAI API returned HTTP $HTTP_CODE, falling back to commit-based changelog"
+            echo "Response: $BODY"
+
+            CHANGELOG_SECTIONS=""
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              msg="${line#* }"
+              lower_msg=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
+              case "$lower_msg" in
+                *"skip ci"*|*"bump version"*|*"format rust"*|*"format code"*) continue ;;
+              esac
+              CHANGELOG_SECTIONS="${CHANGELOG_SECTIONS}- ${msg}"$'\n'
+            done <<< "$COMMIT_LOG"
+
+            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'"### Changed"$'\n'"${CHANGELOG_SECTIONS}"
+          else
+            AI_CONTENT=$(echo "$BODY" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(data['choices'][0]['message']['content'])
+          ")
+            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'"${AI_CONTENT}"
+          fi
+
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "$CHANGELOG_ENTRY"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        env:
+          CHANGELOG_ENTRY: ${{ steps.generate-changelog.outputs.changelog }}
+          PRERELEASE: ${{ steps.release-info.outputs.prerelease }}
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "Skipping CHANGELOG.md update for prerelease"
+            exit 0
+          fi
+
+          if [ ! -f CHANGELOG.md ]; then
+            cat > CHANGELOG.md << 'HEADER'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          This changelog is automatically generated by AI when releases are published.
+          HEADER
+            sed -i 's/^          //' CHANGELOG.md
+          fi
+
+          HEADER=$(head -8 CHANGELOG.md)
+          EXISTING=$(tail -n +9 CHANGELOG.md)
+
+          {
+            echo "$HEADER"
+            echo ""
+            echo "$CHANGELOG_ENTRY"
+            echo "$EXISTING"
+          } > CHANGELOG.md
+
+          echo "Updated CHANGELOG.md:"
+          head -50 CHANGELOG.md
+
+      - name: Commit and push CHANGELOG.md
+        env:
+          PRERELEASE: ${{ steps.release-info.outputs.prerelease }}
+          CURRENT_TAG: ${{ steps.release-info.outputs.current_tag }}
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "Skipping commit for prerelease"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changes to CHANGELOG.md"
+            exit 0
+          fi
+
+          git commit -m "docs: update CHANGELOG.md for ${CURRENT_TAG} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Update release body with changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release-info.outputs.current_tag }}
+          CHANGELOG_ENTRY: ${{ steps.generate-changelog.outputs.changelog }}
+          EXISTING_BODY: ${{ github.event.release.body }}
+        run: |
+          NEW_BODY="${EXISTING_BODY}
+
+          ---
+
+          ## What's Changed
+
+          ${CHANGELOG_ENTRY}"
+
+          gh release edit "$RELEASE_TAG" --notes "$NEW_BODY"
+          echo "Updated release notes for $RELEASE_TAG"
