@@ -20,6 +20,15 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate API key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY secret is not configured. This is required for changelog generation."
+            exit 1
+          fi
+
       - name: Get release info
         id: release-info
         env:
@@ -83,58 +92,6 @@ jobs:
           TODAY=$(date +%Y-%m-%d)
           VERSION="${CURRENT_TAG#v}"
 
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "No OPENAI_API_KEY found, generating changelog from commit messages..."
-
-            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'
-
-            ADDED=""
-            CHANGED=""
-            FIXED=""
-            OTHER=""
-
-            while IFS= read -r line; do
-              [ -z "$line" ] && continue
-              msg="${line#* }"
-
-              lower_msg=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
-              case "$lower_msg" in
-                *"skip ci"*|*"bump version"*|*"format rust"*|*"format code"*)
-                  continue
-                  ;;
-              esac
-
-              case "$lower_msg" in
-                add*|*"new feature"*|*"introduce"*|*"implement"*|*"create"*)
-                  ADDED="${ADDED}- ${msg}"$'\n'
-                  ;;
-                fix*|*"bugfix"*|*"patch"*|*"resolve"*|*"correct"*|*"overflow"*|*"panic"*)
-                  FIXED="${FIXED}- ${msg}"$'\n'
-                  ;;
-                *"refactor"*|*"improve"*|*"update"*|*"change"*|*"perf"*|*"optim"*|*"faster"*)
-                  CHANGED="${CHANGED}- ${msg}"$'\n'
-                  ;;
-                *)
-                  OTHER="${OTHER}- ${msg}"$'\n'
-                  ;;
-              esac
-            done <<< "$COMMIT_LOG"
-
-            [ -n "$ADDED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Added"$'\n'"${ADDED}"
-            [ -n "$CHANGED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Changed"$'\n'"${CHANGED}"
-            [ -n "$FIXED" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Fixed"$'\n'"${FIXED}"
-            [ -n "$OTHER" ] && CHANGELOG_ENTRY="${CHANGELOG_ENTRY}"$'\n'"### Other"$'\n'"${OTHER}"
-
-            {
-              echo "changelog<<CHANGELOG_EOF"
-              echo "$CHANGELOG_ENTRY"
-              echo "CHANGELOG_EOF"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Generating changelog with AI..."
-
           PROMPT=$(cat <<'PROMPT_END'
           You are a changelog generator. Given the following git commits and pull requests for a software release, generate a changelog entry following the Keep a Changelog 1.1.0 format (https://keepachangelog.com/en/1.1.0/).
 
@@ -147,6 +104,7 @@ jobs:
           - Write in imperative mood ("Add feature" not "Added feature")
           - Focus on what matters to users and contributors
           - Do NOT include the version header line - just the sections
+          - Output raw markdown only, no code fences
 
           PROMPT_END
           )
@@ -163,46 +121,56 @@ jobs:
 
           ESCAPED_PROMPT=$(echo "$FULL_PROMPT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" https://api.openai.com/v1/chat/completions \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -d "{
-              \"model\": \"gpt-4o-mini\",
-              \"temperature\": 0.3,
-              \"max_tokens\": 2000,
-              \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are a precise changelog generator that follows the Keep a Changelog format.\"},
-                {\"role\": \"user\", \"content\": $ESCAPED_PROMPT}
-              ]
-            }")
+          MAX_RETRIES=3
+          RETRY=0
+          SUCCESS=false
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+            RETRY=$((RETRY + 1))
+            echo "Attempt $RETRY of $MAX_RETRIES..."
 
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "OpenAI API returned HTTP $HTTP_CODE, falling back to commit-based changelog"
+            RESPONSE=$(curl -s -w "\n%{http_code}" https://api.openai.com/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -d "{
+                \"model\": \"gpt-4.1-nano\",
+                \"temperature\": 0.3,
+                \"max_tokens\": 2000,
+                \"messages\": [
+                  {\"role\": \"system\", \"content\": \"You are a precise changelog generator that follows the Keep a Changelog format.\"},
+                  {\"role\": \"user\", \"content\": $ESCAPED_PROMPT}
+                ]
+              }")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              SUCCESS=true
+              break
+            fi
+
+            echo "OpenAI API returned HTTP $HTTP_CODE on attempt $RETRY"
             echo "Response: $BODY"
 
-            CHANGELOG_SECTIONS=""
-            while IFS= read -r line; do
-              [ -z "$line" ] && continue
-              msg="${line#* }"
-              lower_msg=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
-              case "$lower_msg" in
-                *"skip ci"*|*"bump version"*|*"format rust"*|*"format code"*) continue ;;
-              esac
-              CHANGELOG_SECTIONS="${CHANGELOG_SECTIONS}- ${msg}"$'\n'
-            done <<< "$COMMIT_LOG"
+            if [ $RETRY -lt $MAX_RETRIES ]; then
+              SLEEP_TIME=$((RETRY * 5))
+              echo "Retrying in ${SLEEP_TIME}s..."
+              sleep $SLEEP_TIME
+            fi
+          done
 
-            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'"### Changed"$'\n'"${CHANGELOG_SECTIONS}"
-          else
-            AI_CONTENT=$(echo "$BODY" | python3 -c "
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::Failed to reach OpenAI API after $MAX_RETRIES attempts (last HTTP status: $HTTP_CODE)"
+            exit 1
+          fi
+
+          AI_CONTENT=$(echo "$BODY" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           print(data['choices'][0]['message']['content'])
           ")
-            CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'"${AI_CONTENT}"
-          fi
+          CHANGELOG_ENTRY="## [$VERSION] - $TODAY"$'\n'$'\n'"${AI_CONTENT}"
 
           {
             echo "changelog<<CHANGELOG_EOF"
@@ -221,17 +189,16 @@ jobs:
           fi
 
           if [ ! -f CHANGELOG.md ]; then
-            cat > CHANGELOG.md << 'HEADER'
-          # Changelog
-
-          All notable changes to this project will be documented in this file.
-
-          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-          This changelog is automatically generated by AI when releases are published.
-          HEADER
-            sed -i 's/^          //' CHANGELOG.md
+            printf '%s\n' \
+              "# Changelog" \
+              "" \
+              "All notable changes to this project will be documented in this file." \
+              "" \
+              "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)," \
+              "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)." \
+              "" \
+              "This changelog is automatically generated by AI when releases are published." \
+              > CHANGELOG.md
           fi
 
           HEADER=$(head -8 CHANGELOG.md)
