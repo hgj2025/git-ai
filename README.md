@@ -72,8 +72,8 @@ The format of the notes is outlined here in the [Git AI Standard v3.0.0](https:/
 | Agent/IDE                                                                                  | Authorship | Prompts |
 | ------------------------------------------------------------------------------------------ | ---------- | ------- |
 | Claude Code                                                                                | ✅         | ✅      |
-| OpenAI Codex &gt;0.99.0 (currently alpha release)                                          | ✅         | ✅      |
-| Cursor &gt;1.7                                                                             | ✅         | ✅      |
+| OpenAI Codex                                                                               | ✅         | ✅      |
+| Cursor                                                                                     | ✅         | ✅      |
 | GitHub Copilot in VSCode via Extension                                                     | ✅         | ✅      |
 | OpenCode                                                                                   | ✅         | ✅      |
 | Google Gemini CLI                                                                          | ✅         | ✅      |
