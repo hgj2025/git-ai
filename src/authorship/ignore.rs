@@ -236,6 +236,25 @@ mod tests {
     }
 
     #[test]
+    fn defaults_ignore_nested_named_lockfiles() {
+        let defaults = default_ignore_patterns();
+        let matcher = build_ignore_matcher(&defaults);
+
+        assert!(should_ignore_file_with_matcher(
+            "apps/web/Gemfile.lock",
+            &matcher
+        ));
+        assert!(should_ignore_file_with_matcher(
+            "services/api/package-lock.json",
+            &matcher
+        ));
+        assert!(should_ignore_file_with_matcher(
+            "libs/core/Cargo.lock",
+            &matcher
+        ));
+    }
+
+    #[test]
     fn should_ignore_file_matches_path_and_filename() {
         let patterns = vec!["*.lock".to_string(), "**/node_modules/**".to_string()];
         let matcher = build_ignore_matcher(&patterns);
