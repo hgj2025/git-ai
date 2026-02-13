@@ -22,7 +22,6 @@ const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     "**/vendor/**",
     "**/node_modules/**",
     "**/__snapshots__/**",
-    "**/snapshots/**",
     "**/*.snap",
     "**/*.snap.new",
 ];
@@ -215,6 +214,25 @@ mod tests {
         assert!(defaults.contains(&"**/*.snap".to_string()));
         assert!(defaults.contains(&"Cargo.lock".to_string()));
         assert!(defaults.contains(&"*.generated.*".to_string()));
+    }
+
+    #[test]
+    fn defaults_do_not_ignore_generic_snapshots_directories() {
+        let defaults = default_ignore_patterns();
+        let matcher = build_ignore_matcher(&defaults);
+
+        assert!(!should_ignore_file_with_matcher(
+            "backups/snapshots/state.json",
+            &matcher
+        ));
+        assert!(should_ignore_file_with_matcher(
+            "tests/__snapshots__/feature.snap",
+            &matcher
+        ));
+        assert!(should_ignore_file_with_matcher(
+            "tests/snapshots/feature.snap",
+            &matcher
+        ));
     }
 
     #[test]
