@@ -29,12 +29,17 @@ jobs:
     steps:
       - name: Set release tag
         id: config
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "release_tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
-            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "release_tag=$INPUT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
+            echo "dry_run=$INPUT_DRY_RUN" >> "$GITHUB_OUTPUT"
           else
-            echo "release_tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=$EVENT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -66,10 +71,11 @@ jobs:
           RELEASE_TAG: ${{ steps.config.outputs.release_tag }}
         run: |
           BODY=$(gh release view "$RELEASE_TAG" --json body --jq '.body')
+          DELIMITER="BODY_EOF_$(openssl rand -hex 8)"
           {
-            echo "body<<BODY_EOF"
+            echo "body<<$DELIMITER"
             echo "$BODY"
-            echo "BODY_EOF"
+            echo "$DELIMITER"
           } >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog with AI
@@ -124,10 +130,11 @@ jobs:
             ENTRY=$(awk "/^## ${RELEASE_TAG}/{found=1; next} /^## /{if(found) exit} found{print}" CHANGELOG.md)
           fi
 
+          DELIMITER="ENTRY_EOF_$(openssl rand -hex 8)"
           {
-            echo "entry<<ENTRY_EOF"
+            echo "entry<<$DELIMITER"
             echo "$ENTRY"
-            echo "ENTRY_EOF"
+            echo "$DELIMITER"
           } >> "$GITHUB_OUTPUT"
 
       - name: Update release notes
