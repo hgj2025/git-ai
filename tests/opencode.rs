@@ -16,6 +16,14 @@ fn opencode_storage_fixture_path() -> std::path::PathBuf {
     fixture_path("opencode-storage")
 }
 
+fn opencode_sqlite_fixture_path() -> std::path::PathBuf {
+    fixture_path("opencode-sqlite")
+}
+
+fn opencode_sqlite_empty_fixture_path() -> std::path::PathBuf {
+    fixture_path("opencode-sqlite-empty")
+}
+
 #[test]
 fn test_parse_opencode_storage_transcript() {
     let storage_path = opencode_storage_fixture_path();
@@ -59,6 +67,92 @@ fn test_parse_opencode_storage_transcript() {
     assert!(has_user, "Should have user messages");
     assert!(has_assistant, "Should have assistant messages");
     assert!(has_tool_use, "Should have tool_use messages");
+}
+
+#[test]
+fn test_parse_opencode_sqlite_transcript() {
+    let opencode_root = opencode_sqlite_fixture_path();
+    let session_id = "test-session-123";
+
+    let (transcript, model) =
+        OpenCodePreset::transcript_and_model_from_storage(&opencode_root, session_id)
+            .expect("Failed to parse OpenCode sqlite storage");
+
+    assert!(
+        !transcript.messages().is_empty(),
+        "Transcript should contain messages"
+    );
+    assert_eq!(
+        model.as_deref(),
+        Some("openai/gpt-5"),
+        "Model should come from sqlite assistant message metadata"
+    );
+
+    assert!(
+        matches!(transcript.messages()[0], Message::User { .. }),
+        "First message should be from user"
+    );
+    if let Message::User { text, .. } = &transcript.messages()[0] {
+        assert!(
+            text.contains("sqlite transcript data"),
+            "Expected sqlite fixture user text"
+        );
+    }
+}
+
+#[test]
+fn test_opencode_sqlite_takes_precedence_over_legacy_storage() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let opencode_root = temp_dir.path();
+
+    let sqlite_db = opencode_sqlite_fixture_path().join("opencode.db");
+    fs::copy(&sqlite_db, opencode_root.join("opencode.db")).unwrap();
+
+    let legacy_storage = opencode_storage_fixture_path();
+    copy_dir_all(&legacy_storage, &opencode_root.join("storage")).unwrap();
+
+    let (transcript, model) =
+        OpenCodePreset::transcript_and_model_from_storage(opencode_root, "test-session-123")
+            .expect("Should parse from sqlite first");
+
+    assert_eq!(model.as_deref(), Some("openai/gpt-5"));
+    if let Message::User { text, .. } = &transcript.messages()[0] {
+        assert!(
+            text.contains("sqlite transcript data"),
+            "sqlite transcript should win over legacy storage"
+        );
+        assert!(
+            !text.contains("Update the comment"),
+            "legacy transcript should not be used when sqlite has data"
+        );
+    }
+}
+
+#[test]
+fn test_opencode_sqlite_falls_back_to_legacy_storage_when_sqlite_empty() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let opencode_root = temp_dir.path();
+
+    let sqlite_db = opencode_sqlite_empty_fixture_path().join("opencode.db");
+    fs::copy(&sqlite_db, opencode_root.join("opencode.db")).unwrap();
+
+    let legacy_storage = opencode_storage_fixture_path();
+    copy_dir_all(&legacy_storage, &opencode_root.join("storage")).unwrap();
+
+    let (transcript, model) =
+        OpenCodePreset::transcript_and_model_from_storage(opencode_root, "test-session-123")
+            .expect("Should fallback to legacy storage when sqlite has no session data");
+
+    assert_eq!(
+        model.as_deref(),
+        Some("anthropic/claude-3-5-sonnet-20241022")
+    );
+    if let Message::User { text, .. } = &transcript.messages()[0] {
+        assert!(
+            text.contains("Update the comment"),
+            "Should fallback to legacy fixture transcript"
+        );
+    }
 }
 
 #[test]
