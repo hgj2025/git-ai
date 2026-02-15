@@ -486,7 +486,8 @@ try {
         } else {
             $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
             $appendContent = "`n# Added by git-ai installer on $timestamp`n$pathCmd`n"
-            Add-Content -LiteralPath $targetBashConfig -Value $appendContent -Encoding UTF8
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::AppendAllText($targetBashConfig, $appendContent, $utf8NoBom)
             $gitBashConfigured = $true
         }
     }
