@@ -51,7 +51,7 @@ with open('$png','rb') as f:
     <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}"/>
   </clipPath>
   <g clip-path="url(#clip-${icon})">
-    <rect width="${left_width}" height="${height}" fill="#FFFFFF"/>
+    <rect width="${left_width}" height="${height}" fill="#E5E7EB"/>
     <rect x="${left_width}" width="${right_width}" height="${height}" fill="#22C55E"/>
   </g>
   <image x="${padding}" y="${padding}" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
