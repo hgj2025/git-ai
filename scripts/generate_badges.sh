@@ -34,9 +34,15 @@ with open('$png','rb') as f:
     w, h = struct.unpack('>II', f.read(8))
     print(w, h)
 ")
-  img_height=$(( height - padding * 2 ))
+  # Per-icon padding overrides
+  icon_padding=${padding}
+  if [[ "$icon" == "claude_code" ]]; then
+    icon_padding=8
+  fi
+
+  img_height=$(( height - icon_padding * 2 ))
   img_width=$(python3 -c "print(int(round($img_height * $png_w / $png_h)))")
-  left_width=$(( img_width + padding * 2 ))
+  left_width=$(( img_width + icon_padding * 2 ))
   width=$(( left_width + right_width ))
 
   # Checkmark dimensions
@@ -67,7 +73,7 @@ with open('$png','rb') as f:
     <rect width="${left_width}" height="${height}" fill="url(#gray-${icon})"/>
     <rect x="${left_width}" width="${right_width}" height="${height}" fill="url(#green-${icon})"/>
   </g>
-  <image x="${padding}" y="${padding}" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
+  <image x="${icon_padding}" y="${icon_padding}" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
   <polyline points="$(( check_cx - 12 )),${check_cy} $(( check_cx - 4 )),$(( check_cy + 12 )) $(( check_cx + 14 )),$(( check_cy - 12 ))" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   <line x1="${left_width}" y1="0" x2="${left_width}" y2="${height}" stroke="#9CA3AF" stroke-width="1.5"/>
   <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="none" stroke="#9CA3AF" stroke-width="1.5"/>
