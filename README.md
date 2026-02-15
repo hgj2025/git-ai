@@ -1,44 +1,30 @@
 # git-ai 
 
 <img src="https://github.com/git-ai-project/git-ai/raw/main/assets/docs/git-ai.png" align="right"
-     alt="Git AI Logo" width="178" height="178">
+     alt="Git AI Logo" width="45" height="45">
 
 Git AI is an open source git extension that keeps track of the AI-generated code in your repositories. While you work each AI line is transparently linked to the agent, model plan/prompts; so that the intent, requirements and architecture decisions is preserved. 
 
 * **Cross Agent AI Blame** - our [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-attribution is supported by every major coding agent. 
 * **Save your prompts** - saving the context behind every line makes it possible to review, maintain and build on top of AI-generated code. Securely store your team's prompts on your own infrastructure. 
-* **No workflow changes** - Just prompt, edit and commit. Git AI accuratly tracks AI-code without making AI-commits or making you change your workflow. Attributions live in Git Notes and survive squash, rebase, reset, stash/pop cherry-pick etc.
+* **No workflow changes** - Just prompt, edit and commit. Git AI accuratly tracks AI-code without making your git history messy. Attributions live in Git Notes and survive squash, rebase, reset, stash/pop cherry-pick etc.
 
 
+```bash
+$ git commit
+
+you  ██████████████████████████░░░░░░░░░░░░░░ ai
+     65%                                  35%
+     84% AI code accepted
+
+[fix: sqlite migration 34fb9ed9]
+ 23 files changed, 203 insertions(+)
+```
 
 
-
-
-
-
-
-
-<div>
-<img src="https://github.com/git-ai-project/git-ai/raw/main/assets/docs/git-ai.png" align="right"
-     alt="Git AI by git-ai-project/git-ai" width="100" height="100" />
-
-</div>
-<div>
-<h1 align="left"><b>git-ai</b></h1>
-</div>
-<p align="left">Track the AI Code in your repositories</p>
-<p align="left">
-  <a href="https://discord.gg/XJStYvkb5U"><img alt="Discord" src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" /></a>
-</p>
-
-<video src="https://github.com/user-attachments/assets/68304ca6-b262-4638-9fb6-0a26f55c7986" muted loop controls autoplay></video>
-
-## Quick Start
+## Install
 
 #### Mac, Linux, Windows (WSL)
-
-
-
 
 ```bash
 curl -sSL https://usegitai.com/install.sh | bash
@@ -50,9 +36,24 @@ curl -sSL https://usegitai.com/install.sh | bash
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
 ```
 
-🎊 That's it! **No per-repo setup.** Once installed Git AI will work OOTB with any of these **Supported Agents**:
+🎊 That's it! **No per-repo setup.**
 
-<img width="933" height="364" alt="code-tracking" src="https://github.com/user-attachments/assets/99ab05b1-97a9-4100-8ade-8ea8a227627b" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Documentation https://usegitai.com/docs
 - [AI Blame](https://usegitai.com/docs/cli/ai-blame)
