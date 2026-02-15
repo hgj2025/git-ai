@@ -61,26 +61,22 @@ Also availible in:
 
 See something you don't understand? The /ask skill lets you talk to the agent who wrote the code — its instructions, its decisions, the engineer's intent. Git AI gives you the context you need to maintain and build on top of the massive volume of AI-generated code flooding your codebases.
 
-Just type 
+Git AI installs its `/ask` skill to `~/.agents/skills/` and `~/.claude/skills/` allowing you to invoke it Cursor, Claude Code, Copilot, Codex, etc just by typing `/ask`:
+
 ```
 /ask Why didn't we use the Sentry SDK here?
 ```
 
-<details>
 
-<summary>See the result </summary>
 
-| With /ask | Just reading the code (all slop) |
+| Reading Code + Prompts (`/ask`) | Only Reading Code (not using Git AI) |
 |---|---|
-| **Answer (from the original author's perspective):**<br><br>I wrote the log flushing this way because I needed a **background, non-blocking approach** to uploading telemetry. The pattern works in two stages:<br><br>1. **Write locally first** — during normal operation, log events (errors, metrics, messages) are appended to local envelope files via `append_envelope()`. This keeps the hot path fast and avoids blocking on network I/O.<br>2. **Flush in background** — `spawn_background_flush()` spawns a detached `flush-logs` subprocess that reads those local files and uploads them to Sentry and PostHog. This runs after key events (commits, checkpoints, login) without slowing down the user.<br><br>**Prompt ID:** `fff3b6ae44d4a9b2` | The thin wrapper in `src/commands/flush_logs.rs` is a **routing layer / module boundary convention**. Here's why it's structured this way:<br><br>**The pattern:** `src/commands/` modules act as the CLI command dispatch layer, while the actual logic lives in domain-specific modules (`src/observability/`).<br><br>— `src/commands/flush_logs.rs` — the command handler entry point (5 lines)<br>— `src/observability/flush.rs` — the real implementation (~700 lines of Sentry, PostHog, metrics upload, log processing, etc.)<br><br>**Why the indirection:**<br><br>1. **Separation of concerns** — `commands/` is responsible for routing CLI subcommands to their handlers. `observability/` owns the telemetry domain logic. The thin wrapper keeps the command registry clean without leaking domain internals into the command layer.<br>2. **Consistency** — looking at `src/commands/mod.rs`, there are parallel modules like `flush_cas`, `flush_logs`, `flush_metrics_db`. They all follow the same pattern of being thin dispatch points. This makes the command structure predictable.<br>3. **Future flexibility** — if you ever need to add CLI-level concerns to flush-logs (arg parsing, output formatting, error handling at the command boundary), you have a natural place to put it without touching the observability internals.<br><br>That said, it's arguably over-indirection for a 1-line passthrough. You could just call `crate::observability::flush::handle_flush_logs(args)` directly from wherever the CLI dispatches commands and skip the wrapper entirely. |
-
-</details>
-
-
-
+| When Aidan was building telemetry, he instructed the agent not to block the CLI exit — users shouldn't see the CLI hang because of telemetry. So instead of using the Sentry SDK directly, we came up with a pattern that writes events locally first via `append_envelope()`, then flushes them in the background via a detached subprocess. This keeps the hot path fast and ships telemetry async after the fact. | `src/commands/flush_logs.rs` is a 5-line wrapper that delegates to `src/observability/flush.rs` (~700 lines). The `commands/` layer handles CLI dispatch; `observability/` handles Sentry, PostHog, metrics upload, and log processing. Parallel modules like `flush_cas`, `flush_logs`, `flush_metrics_db` follow the same thin-dispatch pattern. |
 
 
 ## Make your Agents Smarter
+When agents can read past prompts and understand what existing code is supposed to do, they make fewer mistakes, and produce more maintainable code.
+
 
 
 
