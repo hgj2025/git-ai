@@ -47,16 +47,30 @@ with open('$png','rb') as f:
 
   cat > "$OUT_DIR/${icon}.svg" <<SVGEOF
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}">
-  <clipPath id="clip-${icon}">
-    <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}"/>
-  </clipPath>
-  <g clip-path="url(#clip-${icon})">
-    <rect width="${left_width}" height="${height}" fill="#D1D5DB"/>
-    <rect x="${left_width}" width="${right_width}" height="${height}" fill="#22C55E"/>
+  <defs>
+    <clipPath id="clip-${icon}">
+      <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}"/>
+    </clipPath>
+    <linearGradient id="green-${icon}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#16A34A"/>
+    </linearGradient>
+    <linearGradient id="gray-${icon}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E5E7EB"/>
+      <stop offset="100%" stop-color="#D1D5DB"/>
+    </linearGradient>
+    <filter id="shadow-${icon}" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000000" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#clip-${icon})" filter="url(#shadow-${icon})">
+    <rect width="${left_width}" height="${height}" fill="url(#gray-${icon})"/>
+    <rect x="${left_width}" width="${right_width}" height="${height}" fill="url(#green-${icon})"/>
   </g>
   <image x="${padding}" y="${padding}" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
-  <polyline points="$(( check_cx - 10 )),${check_cy} $(( check_cx - 3 )),$(( check_cy + 10 )) $(( check_cx + 12 )),$(( check_cy - 10 ))" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="none" stroke="#708090" stroke-width="2.5"/>
+  <polyline points="$(( check_cx - 12 )),${check_cy} $(( check_cx - 4 )),$(( check_cy + 12 )) $(( check_cx + 14 )),$(( check_cy - 12 ))" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="${left_width}" y1="0" x2="${left_width}" y2="${height}" stroke="#9CA3AF" stroke-width="1.5"/>
+  <rect width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="none" stroke="#9CA3AF" stroke-width="1.5"/>
 </svg>
 SVGEOF
 
