@@ -41,14 +41,16 @@ fn claude_skills_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("skills"))
 }
 
-/// Create a symlink from link_path to target, removing any existing file/symlink first
-fn create_skills_symlink(target: &PathBuf, link_path: &PathBuf) -> Result<(), GitAiError> {
+/// Link a skill directory to the target location.
+/// On Unix, creates a symlink. On Windows, copies the directory to avoid requiring
+/// Administrator privileges (which symlink creation requires on Windows).
+fn link_skill_dir(target: &PathBuf, link_path: &PathBuf) -> Result<(), GitAiError> {
     // Create parent directory if needed
     if let Some(parent) = link_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Remove existing file/symlink if present
+    // Remove existing file/symlink/directory if present
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
         if link_path.is_dir()
             && !link_path
@@ -56,33 +58,50 @@ fn create_skills_symlink(target: &PathBuf, link_path: &PathBuf) -> Result<(), Gi
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false)
         {
-            // It's a real directory, not a symlink - remove it
             fs::remove_dir_all(link_path)?;
         } else {
-            // It's a file or symlink
             fs::remove_file(link_path)?;
         }
     }
 
-    // Create the symlink
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, link_path)?;
 
     #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(target, link_path)?;
+    copy_dir_recursive(target, link_path)?;
 
     Ok(())
 }
 
-/// Remove a symlink if it exists
-fn remove_skills_symlink(link_path: &PathBuf) -> Result<(), GitAiError> {
-    if link_path.symlink_metadata().is_ok()
-        && link_path
+/// Recursively copy a directory and its contents from src to dst.
+#[cfg(windows)]
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<(), GitAiError> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove a skill link (symlink on Unix, copied directory on Windows) if it exists.
+fn remove_skill_link(link_path: &PathBuf) -> Result<(), GitAiError> {
+    if link_path.symlink_metadata().is_ok() {
+        let is_symlink = link_path
             .symlink_metadata()
             .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    {
-        fs::remove_file(link_path)?;
+            .unwrap_or(false);
+        if is_symlink {
+            fs::remove_file(link_path)?;
+        } else if link_path.is_dir() {
+            fs::remove_dir_all(link_path)?;
+        }
     }
     Ok(())
 }
@@ -95,9 +114,9 @@ fn remove_skills_symlink(link_path: &PathBuf) -> Result<(), GitAiError> {
 /// └── prompt-analysis/
 ///     └── SKILL.md
 ///
-/// Then symlinks each skill to:
-/// - ~/.agents/skills/{skill-name}
-/// - ~/.claude/skills/{skill-name}
+/// Then links each skill to:
+/// - ~/.agents/skills/{skill-name} (symlink on Unix, copy on Windows)
+/// - ~/.claude/skills/{skill-name} (symlink on Unix, copy on Windows)
 pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResult, GitAiError> {
     let skills_base = skills_dir_path().ok_or_else(|| {
         GitAiError::Generic("Could not determine skills directory path".to_string())
@@ -128,26 +147,20 @@ pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResu
         let skill_md_path = skill_dir.join("SKILL.md");
         write_atomic(&skill_md_path, skill.skill_md.as_bytes())?;
 
-        // Create symlinks for this skill
+        // Link this skill to agent directories
         // ~/.agents/skills/{skill-name} -> ~/.git-ai/skills/{skill-name}
         if let Some(agents_dir) = agents_skills_dir() {
             let agents_link = agents_dir.join(skill.name);
-            if let Err(e) = create_skills_symlink(&skill_dir, &agents_link) {
-                eprintln!(
-                    "Warning: Failed to create symlink at {:?}: {}",
-                    agents_link, e
-                );
+            if let Err(e) = link_skill_dir(&skill_dir, &agents_link) {
+                eprintln!("Warning: Failed to link skill at {:?}: {}", agents_link, e);
             }
         }
 
         // ~/.claude/skills/{skill-name} -> ~/.git-ai/skills/{skill-name}
         if let Some(claude_dir) = claude_skills_dir() {
             let claude_link = claude_dir.join(skill.name);
-            if let Err(e) = create_skills_symlink(&skill_dir, &claude_link) {
-                eprintln!(
-                    "Warning: Failed to create symlink at {:?}: {}",
-                    claude_link, e
-                );
+            if let Err(e) = link_skill_dir(&skill_dir, &claude_link) {
+                eprintln!("Warning: Failed to link skill at {:?}: {}", claude_link, e);
             }
         }
     }
@@ -158,7 +171,7 @@ pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResu
     })
 }
 
-/// Uninstall all skills by removing ~/.git-ai/skills/ and symlinks
+/// Uninstall all skills by removing ~/.git-ai/skills/ and linked skill directories
 pub fn uninstall_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResult, GitAiError> {
     let skills_base = skills_dir_path().ok_or_else(|| {
         GitAiError::Generic("Could not determine skills directory path".to_string())
@@ -178,14 +191,14 @@ pub fn uninstall_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallRe
         });
     }
 
-    // Remove symlinks for each skill first
+    // Remove linked skill directories first
     for skill in EMBEDDED_SKILLS {
         // ~/.agents/skills/{skill-name}
         if let Some(agents_dir) = agents_skills_dir() {
             let agents_link = agents_dir.join(skill.name);
-            if let Err(e) = remove_skills_symlink(&agents_link) {
+            if let Err(e) = remove_skill_link(&agents_link) {
                 eprintln!(
-                    "Warning: Failed to remove symlink at {:?}: {}",
+                    "Warning: Failed to remove skill link at {:?}: {}",
                     agents_link, e
                 );
             }
@@ -194,9 +207,9 @@ pub fn uninstall_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallRe
         // ~/.claude/skills/{skill-name}
         if let Some(claude_dir) = claude_skills_dir() {
             let claude_link = claude_dir.join(skill.name);
-            if let Err(e) = remove_skills_symlink(&claude_link) {
+            if let Err(e) = remove_skill_link(&claude_link) {
                 eprintln!(
-                    "Warning: Failed to remove symlink at {:?}: {}",
+                    "Warning: Failed to remove skill link at {:?}: {}",
                     claude_link, e
                 );
             }
