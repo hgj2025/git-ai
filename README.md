@@ -7,9 +7,9 @@ Git AI is an open source git extension that tracks the AI-generated code in your
 
 Once installed, every AI line is automatically linked to the agent, model, and prompts that generated it — ensuring the intent, requirements, and architecture decisions behind your code are never forgotten:
 
-`git-ai blame blame /src/log_fmt/authorship_log.rs`
+`git-ai blame /src/log_fmt/authorship_log.rs`
 ```bash
-...
+
 cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  133) pub fn execute_diff(
 cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  134)     repo: &Repository,
 cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  135)     spec: DiffSpec,
@@ -22,18 +22,33 @@ fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  141)          
 fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  142)             let from = resolve_commit(repo, &start)?;...
 ```
 
-**Our Choices:**
-- **No workflow changes** - Just prompt and commit. Git AI accurately tracks AI-code without making your git history messy. 
-- **"Detecting" AI-code is an anti-pattern.** — Git AI doesn't guess if a hunk is AI-generated. The Coding Agents that support our standard tell Git AI exactly which lines they generated resulting in the most accurate AI-attribution possible.
-- **Git Native** — Git AI created the [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes. 
-- **Local-first** — Works offline, no OpenAI or Anthropic key required.
+### Supported Agents:
 
-
-> Supported Agents:
-> 
 > <img src="assets/docs/badges/claude_code.svg" alt="Claude Code" height="25" /> <img src="assets/docs/badges/codex-black.svg" alt="Codex" height="25" /> <img src="assets/docs/badges/cursor.svg" alt="Cursor" height="25" /> <img src="assets/docs/badges/opencode.svg" alt="OpenCode" height="25" /> <img src="assets/docs/badges/gemini.svg" alt="Gemini" height="25" /> <img src="assets/docs/badges/copilot.svg" alt="GitHub Copilot" height="25" /> <img src="assets/docs/badges/continue.svg" alt="Continue" height="25" /> <img src="assets/docs/badges/droid.svg" alt="Droid" height="25" /> <img src="assets/docs/badges/junie_white.svg" alt="Junie" height="25" /> <img src="assets/docs/badges/rovodev.svg" alt="Rovo Dev" height="25" />
 >
 > [+ Add support for another agent](https://usegitai.com/docs/cli/add-your-agent)
+
+
+### Our Choices:
+- **No workflow changes** — Just prompt and commit. Git AI tracks AI-code accurately without making your git history messy.
+- **"Detecting" AI-code is an anti-pattern** — Git AI doesn't guess if a hunk is AI-generated. Supported agents tell Git AI exactly which lines they wrote, giving you the most accurate AI-attribution possible.
+- **Local-first** — Works offline, no OpenAI or Anthropic key required.
+- **Git Native & Open Standard** — Git AI created the [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes.
+- **Prompts stay out of Git** — Git Notes reference prompts and agent sessions, but prompt content is never stored in your repository — keeping repos lean, free of API keys and sensitive information, and giving you access controls over prompt data.
+
+<details>
+<summary><b>How does it work?</b></summary>
+<br>
+
+Supported Coding Agents call Git AI and mark the lines they insert as AI-generated.
+
+On commit, Git AI saves the final AI-attributions into a Git Note. These notes power AI-Blame, AI contribution stats, and more. The CLI makes sure these notes are preserved through rebases, merges, squashes, cherry-picks, etc.
+
+![Git Tree](https://github.com/user-attachments/assets/edd20990-ec0b-4a53-afa4-89fa33de9541)
+
+The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
+
+</details>
 
 ## Install
 
@@ -144,7 +159,7 @@ git-ai stats --json
 }
 ```
 
-For team-wide visibility, the [Git AI Stats Bot](https://usegitai.com/enterprise) aggregates data at the PR, repository, and organization level:
+For team-wide visibility, the Git AI Stats Bot aggregates data at the PR, repository, and organization level:
 
 - **AI code composition** — track what percentage of code is AI-generated across your org
 - **Code durability** — measure how long AI-generated code survives before being modified or removed
@@ -154,18 +169,6 @@ For team-wide visibility, the [Git AI Stats Bot](https://usegitai.com/enterprise
 ![Stats Dashboard](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
 
 > [Get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)
-
----
-
-### How Does it work?
-
-Supported Coding Agents call Git AI and mark the lines they insert as AI-generated. 
-
-On commit, Git AI saves the final AI-attributions into a Git Note. These notes power AI-Blame, AI contribution stats, and more. The CLI makes sure these notes are preserved through rebases, merges, squashes, cherry-picks, etc.
-
-![Git Tree](https://github.com/user-attachments/assets/edd20990-ec0b-4a53-afa4-89fa33de9541)
-
-The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
 
 # License 
