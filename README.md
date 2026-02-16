@@ -1,4 +1,4 @@
-# git-ai 
+# git-ai
 
 <img src="https://github.com/git-ai-project/git-ai/raw/main/assets/docs/git-ai.png" align="right"
      alt="Git AI Logo" width="200" height="200">
@@ -9,13 +9,29 @@ Once installed, it automatically links every AI-written line to the agent, model
 
 **AI attribution on every commit:**
 
-`git commit` 
+`git commit`
 ```
 [hooks-doctor 0afe44b2] wsl compat check
  2 files changed, 81 insertions(+), 3 deletions(-)
 you  ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ ai
      6%             mixed   2%             92%
 ```
+
+## Install
+
+Mac, Linux, Windows (WSL)
+
+```bash
+curl -sSL https://usegitai.com/install.sh | bash
+```
+
+Windows (non-WSL)
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
+```
+
+That's it — **no per-repo setup required.** Prompt and commit as normal. Git AI tracks attribution automatically.
 
 **AI Blame shows the model, agent, and session behind every line:**
 
@@ -48,23 +64,108 @@ fe2c4c8 (claude-4.5-opus [session_id]  2025-12-02 19:25:13 -0500  142)          
 - **Git native and open standard** — Git AI uses an [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes.
 - **Prompts stay out of Git** — Git Notes reference prompts and agent sessions, but prompt content never lives in your repository — keeping repos lean, free of API keys and sensitive information, and giving you control over prompt data.
 
-## Install
+## AI Blame
 
-Mac, Linux, Windows (WSL)
+Git AI blame is a drop-in replacement for `git blame` that shows AI attribution for each line. It supports [all standard `git blame` flags](https://git-scm.com/docs/git-blame).
 
 ```bash
-curl -sSL https://usegitai.com/install.sh | bash
+git-ai blame /src/log_fmt/authorship_log.rs
 ```
 
-Windows (non-WSL)
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
+```bash
+cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  133) pub fn execute_diff(
+cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  134)     repo: &Repository,
+cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  135)     spec: DiffSpec,
+cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  136)     format: DiffFormat,
+cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  137) ) -> Result<String, GitAiError> {
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  138)     // Resolve commits to get from/to SHAs
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  139)     let (from_commit, to_commit) = match spec {
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  140)         DiffSpec::TwoCommit(start, end) => {
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  141)             // Resolve both commits
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  142)             let from = resolve_commit(repo, &start)?;
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  143)             let to = resolve_commit(repo, &end)?;
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  144)             (from, to)
+fe2c4c8 (claude         2025-12-02 19:25:13 -0500  145)         }
 ```
 
-That's it — **no per-repo setup required.**
+### IDE Plugins
+
+In VS Code, Cursor, Windsurf, and Antigravity, the [Git AI extension](https://marketplace.visualstudio.com/items?itemName=git-ai.git-ai-vscode) shows AI blame decorations in the gutter. Each agent session is color-coded so you can see which prompts generated each hunk. If you have prompt storage set up, you can hover over a line to see the raw prompt or summary.
+
+<img width="1192" height="890" alt="Git AI VS Code extension showing color-coded AI blame in the gutter" src="https://github.com/user-attachments/assets/94e332e7-5d96-4e5c-8757-63ac0e2f88e0" />
+
+Also available in:
+- Emacs magit - https://github.com/jwiegley/magit-ai
+- *...have you built support into another editor? Open a PR and we'll add it here*
+
+## Understand Why with the `/ask` Skill
+
+See something you don't understand? The `/ask` skill lets you talk to the agent that wrote the code about its instructions, decisions, and the intent of the engineer who assigned the task.
+
+Git AI adds the `/ask` skill to `~/.agents/skills/` and `~/.claude/skills/` at install time, so you can invoke it from Cursor, Claude Code, Copilot, Codex, and others just by typing `/ask`:
+
+```
+/ask Why didn't we use the SDK here?
+```
+
+Agents with access to the original intent and source code understand the "why." Agents that can only read the code can tell you what it does, but not why:
+
+| Reading Code + Prompts (`/ask`) | Only Reading Code (not using Git AI) |
+|---|---|
+| When Aidan was building telemetry, he instructed the agent not to block the exit of our CLI flushing telemetry. Instead of using the Sentry SDK directly, we came up with a pattern that writes events locally first via `append_envelope()`, then flushes them in the background via a detached subprocess. This keeps the hot path fast and ships telemetry async after the fact. | `src/commands/flush_logs.rs` is a 5-line wrapper that delegates to `src/observability/flush.rs` (~700 lines). The `commands/` layer handles CLI dispatch; `observability/` handles Sentry, PostHog, metrics upload, and log processing. Parallel modules like `flush_cas`, `flush_logs`, `flush_metrics_db` follow the same thin-dispatch pattern. |
 
 
+## Make Your Agents Smarter
+Agents make fewer mistakes and produce more maintainable code when they understand the requirements and decisions behind the code they build on. The best way to provide this context is to give agents the same `/ask` tool you use yourself. Tell your agents to use `/ask` in plan mode:
+
+`Claude|AGENTS.md`
+```markdown
+- In plan mode, always use the /ask skill to read the code and the original prompts that generated it. Understanding intent will help you write a better plan.
+```
+
+## Cross Agent Observability
+
+Git AI collects cross-agent telemetry from prompt to production. Track how much AI code gets accepted, committed, through code review, and into production — so you can identify which tools and practices work best for your team.
+
+```bash
+git-ai stats --json
+```
+
+Learn more: [Stats command reference docs](https://usegitai.com/docs/cli/reference#stats)
+
+```json
+{
+  "human_additions": 28,
+  "mixed_additions": 5,
+  "ai_additions": 76,
+  "ai_accepted": 47,
+  "total_ai_additions": 120,
+  "total_ai_deletions": 34,
+  "time_waiting_for_ai": 240,
+  "tool_model_breakdown": {
+    "claude_code/claude-sonnet-4-5-20250929": {
+      "ai_additions": 76,
+      "mixed_additions": 5,
+      "ai_accepted": 47,
+      "total_ai_additions": 120,
+      "total_ai_deletions": 34,
+      "time_waiting_for_ai": 240
+    }
+  }
+}
+```
+
+For team-wide visibility, [Git AI Enterprise](https://usegitai.com/enterprise) aggregates data at the PR, repository, and organization level:
+
+- **AI code composition** — Track what percentage of code is AI-generated across your org.
+- **Full lifecycle tracking** — See how much AI code is accepted, committed, rewritten during code review, and deployed to production. Measure how durable that code is once it ships and whether it causes alerts or incidents.
+- **Team workflows** — Identify who uses background agents effectively, who runs agents in parallel, and what teams getting the most lift from AI do differently.
+- **Agent readiness** — Measure the effectiveness of agents in your repos. Track the impact of skills, rules, MCPs, and `AGENTS.md` changes across repos and task types.
+- **Agent and model comparison** — Compare acceptance rates and output quality by agent and model.
+
+**[Get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)**
+
+![Git AI Enterprise dashboard showing AI code metrics across repositories](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
 
 <details>
 <summary>How does Git AI work?</summary>
@@ -166,111 +267,6 @@ hooks/post_clone_hook.rs
 The note format is defined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
 </details>
-
-
-## AI Blame
-
-Git AI blame is a drop-in replacement for `git blame` that shows AI attribution for each line. It supports [all standard `git blame` flags](https://git-scm.com/docs/git-blame).
-
-```bash
-git-ai blame /src/log_fmt/authorship_log.rs
-```
-
-```bash
-cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  133) pub fn execute_diff(
-cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  134)     repo: &Repository,
-cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  135)     spec: DiffSpec,
-cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  136)     format: DiffFormat,
-cb832b7 (Aidan Cunniffe 2025-12-13 08:16:29 -0500  137) ) -> Result<String, GitAiError> {
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  138)     // Resolve commits to get from/to SHAs
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  139)     let (from_commit, to_commit) = match spec {
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  140)         DiffSpec::TwoCommit(start, end) => {
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  141)             // Resolve both commits
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  142)             let from = resolve_commit(repo, &start)?;
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  143)             let to = resolve_commit(repo, &end)?;
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  144)             (from, to)
-fe2c4c8 (claude         2025-12-02 19:25:13 -0500  145)         }
-```
-
-### IDE Plugins
-
-In VS Code, Cursor, Windsurf, and Antigravity, the [Git AI extension](https://marketplace.visualstudio.com/items?itemName=git-ai.git-ai-vscode) shows AI blame decorations in the gutter. Each agent session is color-coded so you can see which prompts generated each hunk. If you have prompt storage set up, you can hover over a line to see the raw prompt or summary.
-
-<img width="1192" height="890" alt="image" src="https://github.com/user-attachments/assets/94e332e7-5d96-4e5c-8757-63ac0e2f88e0" />
-
-Also available in:
-- Emacs magit - https://github.com/jwiegley/magit-ai
-- *...have you built support into another editor? Open a PR and we'll add it here*  
-
-## Understand Why with the `/ask` Skill
-
-See something you don't understand? The `/ask` skill lets you talk to the agent that wrote the code about its instructions, decisions, and the intent of the engineer who assigned the task.
-
-Git AI adds the `/ask` skill to `~/.agents/skills/` and `~/.claude/skills/` at install time, so you can invoke it from Cursor, Claude Code, Copilot, Codex, and others just by typing `/ask`:
-
-```
-/ask Why didn't we use the SDK here?
-```
-
-Agents with access to the original intent and source code understand the "why." Agents that can only read the code can tell you what it does, but not why:
-
-| Reading Code + Prompts (`/ask`) | Only Reading Code (not using Git AI) |
-|---|---|
-| When Aidan was building telemetry, he instructed the agent not to block the exit of our CLI flushing telemetry. Instead of using the Sentry SDK directly, we came up with a pattern that writes events locally first via `append_envelope()`, then flushes them in the background via a detached subprocess. This keeps the hot path fast and ships telemetry async after the fact. | `src/commands/flush_logs.rs` is a 5-line wrapper that delegates to `src/observability/flush.rs` (~700 lines). The `commands/` layer handles CLI dispatch; `observability/` handles Sentry, PostHog, metrics upload, and log processing. Parallel modules like `flush_cas`, `flush_logs`, `flush_metrics_db` follow the same thin-dispatch pattern. |
-
-
-## Make Your Agents Smarter
-Agents make fewer mistakes and produce more maintainable code when they understand the requirements and decisions behind the code they build on. The best way to provide this context is to give agents the same `/ask` tool you use yourself. Tell your agents to use `/ask` in plan mode:
-
-`Claude|AGENTS.md`
-```markdown
-- In plan mode, always use the /ask skill to read the code and the original prompts that generated it. Understanding intent will help you write a better plan.
-```
-
-## Cross Agent Observability
-
-Git AI collects cross-agent telemetry from prompt to production. Track how much AI code gets accepted, committed, through code review, and into production — so you can identify which tools and practices work best for your team.
-
-```bash
-git-ai stats --json
-```
-
-Learn more: [Stats command reference docs](https://usegitai.com/docs/cli/reference#stats)
-
-```json
-{
-  "human_additions": 28,
-  "mixed_additions": 5,
-  "ai_additions": 76,
-  "ai_accepted": 47,
-  "total_ai_additions": 120,
-  "total_ai_deletions": 34,
-  "time_waiting_for_ai": 240,
-  "tool_model_breakdown": {
-    "claude_code/claude-sonnet-4-5-20250929": {
-      "ai_additions": 76,
-      "mixed_additions": 5,
-      "ai_accepted": 47,
-      "total_ai_additions": 120,
-      "total_ai_deletions": 34,
-      "time_waiting_for_ai": 240
-    }
-  }
-}
-```
-
-For team-wide visibility, [Git AI Enterprise](https://usegitai.com/enterprise) aggregates data at the PR, repository, and organization level:
-
-- **AI code composition** — Track what percentage of code is AI-generated across your org.
-- **Full lifecycle tracking** — See how much AI code is accepted, committed, rewritten during code review, and deployed to production. Measure how durable that code is once it ships and whether it causes alerts or incidents.
-- **Team workflows** — Identify who uses background agents effectively, who runs agents in parallel, and what teams getting the most lift from AI do differently.
-- **Agent readiness** — Measure the effectiveness of agents in your repos. Track the impact of skills, rules, MCPs, and `AGENTS.md` changes across repos and task types.
-- **Agent and model comparison** — Compare acceptance rates and output quality by agent and model.
-
-**[Get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)**
-
-![alt](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
-
 
 ## License
 Apache 2.0
