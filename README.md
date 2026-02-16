@@ -17,22 +17,6 @@ you  ██░░░░░░░░░░░░░░░░░░░░░░░
      6%             mixed   2%             92%
 ```
 
-## Install
-
-Mac, Linux, Windows (WSL)
-
-```bash
-curl -sSL https://usegitai.com/install.sh | bash
-```
-
-Windows (non-WSL)
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
-```
-
-That's it — **no per-repo setup required.** Prompt and commit as normal. Git AI tracks attribution automatically.
-
 **AI Blame shows the model, agent, and session behind every line:**
 
 `git-ai blame /src/log_fmt/authorship_log.rs`
@@ -63,6 +47,22 @@ fe2c4c8 (claude-4.5-opus [session_id]  2025-12-02 19:25:13 -0500  142)          
 - **Local-first** — Works offline with no OpenAI or Anthropic key required.
 - **Git native and open standard** — Git AI uses an [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes.
 - **Prompts stay out of Git** — Git Notes reference prompts and agent sessions, but prompt content never lives in your repository — keeping repos lean, free of API keys and sensitive information, and giving you control over prompt data.
+
+## Install
+
+Mac, Linux, Windows (WSL)
+
+```bash
+curl -sSL https://usegitai.com/install.sh | bash
+```
+
+Windows (non-WSL)
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
+```
+
+That's it — **no per-repo setup required.** Prompt and commit as normal. Git AI tracks attribution automatically.
 
 ## AI Blame
 
