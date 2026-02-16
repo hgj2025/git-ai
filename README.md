@@ -148,18 +148,13 @@ On commit, Git AI saves the final AI-attributions into a Git Note. These notes p
 
 The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
-## Goals of `git-ai` project
+## Our Choices
 
-🤖 **Track AI code in a Multi-Agent** world. Because developers get to choose their tools, engineering teams need a **vendor agnostic** way to track AI impact in their repos.
-
-🎯 **Accurate attribution** from Laptop → Pull Request → Merged. Claude Code, Cursor and Copilot cannot track code after generation—Git AI follows it through the entire workflow.
-
-🔄 **Support real-world git workflows** by making sure AI-Authorship annotations survive a `merge --squash`, `rebase`, `reset`, `cherry-pick` etc.
-
-🔗 **Maintain link between prompts and code** - there is valuable context and requirements in team prompts—preserve them alongside code.
-
-🚀 **Git-native + Fast** - `git-ai` is built on git plumbing commands. Negligible impact even in large repos (&lt;100ms). Tested in [Chromium](https://github.com/chromium/chromium).
-
+- Multi-agent — The world is and will continue to be multi-agent. Git AI is vendor-agnostic and open.
+- Own your data — Git AI collects data from every Coding Agent and lets you own your own AI-usage and prompt data.
+- "Detecting" AI-code is an anti-pattern. — Git AI doesn't guess if a hunk is AI-generated. The Coding Agents that support our standard tell Git AI exactly which lines they generated resulting in the most accurate AI-attribution possible.
+- Git Native & Open standard — Git AI built the open standard for tracking AI-generated code with Git Notes.
+- Local-first — Works offline, no Anthropic key required.
 
 # License 
 Apache 2.0
