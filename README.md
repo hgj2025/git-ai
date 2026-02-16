@@ -3,12 +3,30 @@
 <img src="https://github.com/git-ai-project/git-ai/raw/main/assets/docs/git-ai.png" align="right"
      alt="Git AI Logo" width="200" height="200">
 
-Git AI is an open source git extension that tracks the AI-generated code in your repositories. Once installed, every AI line is automatically linked to the agent, model, and prompts that generated it — ensuring the intent, requirements, and architecture decisions behind your code are never forgotten.
+Git AI is an open source git extension that tracks the AI-generated code in your repositories. 
 
-* **Cross Agent AI Blame** - our [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-attribution is supported by every major coding agent. 
-* **Save your prompts** - saving the context behind every line makes it possible to review, maintain and build on top of AI-generated code.
-* **Cross-Agent Observability** — track AI usage across your team, compare agents and models, and measure the quality + durability of AI-generated code.
-* **No workflow changes** - Just prompt, edit and commit. Git AI accurately tracks AI-code without making your git history messy. Attributions live in Git Notes and survive squash, rebase, reset, stash/pop, cherry-pick, etc.
+Once installed, every AI line is automatically linked to the agent, model, and prompts that generated it — ensuring the intent, requirements, and architecture decisions behind your code are never forgotten:
+
+`git-ai blame blame /src/log_fmt/authorship_log.rs`
+```bash
+...
+cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  133) pub fn execute_diff(
+cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  134)     repo: &Repository,
+cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  135)     spec: DiffSpec,
+cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  136)     format: DiffFormat,
+cb832b7 (Aidan Cunniffe                2025-12-13 08:16:29 -0500  137) ) -> Result<String, GitAiError> {
+fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  138)     // Resolve commits to get from/to SHAs
+fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  139)     let (from_commit, to_commit) = match spec {
+fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  140)         DiffSpec::TwoCommit(start, end) => {
+fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  141)             // Resolve both commits
+fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  142)             let from = resolve_commit(repo, &start)?;...
+```
+
+**Our Choices:**
+- **No workflow changes** - Just prompt and commit. Git AI accurately tracks AI-code without making your git history messy. 
+- **"Detecting" AI-code is an anti-pattern.** — Git AI doesn't guess if a hunk is AI-generated. The Coding Agents that support our standard tell Git AI exactly which lines they generated resulting in the most accurate AI-attribution possible.
+- **Git Native** — Git AI created the [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes. 
+- **Local-first** — Works offline, no OpenAI or Anthropic key required.
 
 
 > Supported Agents:
@@ -149,13 +167,6 @@ On commit, Git AI saves the final AI-attributions into a Git Note. These notes p
 
 The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
-## Our Choices
-
-- Multi-agent — The world is and will continue to be multi-agent. Git AI is vendor-agnostic and open.
-- Own your data — Git AI collects data from every Coding Agent and lets you own your own AI-usage and prompt data.
-- "Detecting" AI-code is an anti-pattern. — Git AI doesn't guess if a hunk is AI-generated. The Coding Agents that support our standard tell Git AI exactly which lines they generated resulting in the most accurate AI-attribution possible.
-- Git Native & Open standard — Git AI built the open standard for tracking AI-generated code with Git Notes.
-- Local-first — Works offline, no Anthropic key required.
 
 # License 
 Apache 2.0
