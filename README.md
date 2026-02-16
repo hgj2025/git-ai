@@ -7,7 +7,7 @@ Git AI is an open source git extension that tracks the AI-generated code in your
 
 * **Cross Agent AI Blame** - our [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-attribution is supported by every major coding agent. 
 * **Save your prompts** - saving the context behind every line makes it possible to review, maintain and build on top of AI-generated code.
-* **No workflow changes** - Just prompt, edit and commit. Git AI accuratly tracks AI-code without making your git history messy. Attributions live in Git Notes and survive squash, rebase, reset, stash/pop cherry-pick etc.
+* **No workflow changes** - Just prompt, edit and commit. Git AI accurately tracks AI-code without making your git history messy. Attributions live in Git Notes and survive squash, rebase, reset, stash/pop, cherry-pick, etc.
 
 
 > Supported Agents:
@@ -64,7 +64,7 @@ In VSCode, Cursor, Windsurf and Antigravity the [Git AI extension](https://marke
 
 <img width="1192" height="890" alt="image" src="https://github.com/user-attachments/assets/94e332e7-5d96-4e5c-8757-63ac0e2f88e0" />
 
-Also availible in: 
+Also available in:
 - Emacs magit - https://github.com/jwiegley/magit-ai
 - *...have you built support into another editor? Open a PR and we'll add it here*  
 
@@ -93,14 +93,52 @@ Agents make fewer mistakes, and produce more maintainable code, when they unders
 - In plan mode, always use the /ask skill so you can read the code and the original prompts that generated it. Intent will help you write a better plan
 ```
 
---- 
+---
 
-### Measure the actual impact of AI-code
+## AI Stats
 
-...stats
+Measure the % of AI-generated code, accepted-rate by agent and model, and human override rate — for any commit or range of commits.
 
+```bash
+git-ai stats --json
+```
 
-#### How Does it work? 
+```json
+{
+  "human_additions": 28,
+  "mixed_additions": 5,
+  "ai_additions": 76,
+  "ai_accepted": 47,
+  "total_ai_additions": 120,
+  "total_ai_deletions": 34,
+  "time_waiting_for_ai": 240,
+  "tool_model_breakdown": {
+    "claude_code/claude-sonnet-4-5-20250929": {
+      "ai_additions": 76,
+      "mixed_additions": 5,
+      "ai_accepted": 47,
+      "total_ai_additions": 120,
+      "total_ai_deletions": 34,
+      "time_waiting_for_ai": 240
+    }
+  }
+}
+```
+
+For team-wide visibility, the [Git AI Stats Bot](https://usegitai.com/enterprise) aggregates data at the PR, repository, and organization level:
+
+- **AI code composition** — track what percentage of code is AI-generated across your org
+- **Code durability** — measure how long AI-generated code survives before being modified or removed
+- **Agent + model comparison** — see accepted-rate and output quality by agent and model
+- **Incident correlation** — understand how AI-authored code correlates with production incidents
+
+![Stats Dashboard](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
+
+> [Get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)
+
+---
+
+### How Does it work?
 
 Supported Coding Agents call Git AI and mark the lines they insert as AI-generated. 
 
@@ -108,7 +146,7 @@ On commit, Git AI saves the final AI-attributions into a Git Note. These notes p
 
 ![Git Tree](https://github.com/user-attachments/assets/edd20990-ec0b-4a53-afa4-89fa33de9541)
 
-The format of the notes is outlined here in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md)
+The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
 ## Goals of `git-ai` project
 
@@ -123,19 +161,5 @@ The format of the notes is outlined here in the [Git AI Standard v3.0.0](https:/
 🚀 **Git-native + Fast** - `git-ai` is built on git plumbing commands. Negligible impact even in large repos (&lt;100ms). Tested in [Chromium](https://github.com/chromium/chromium).
 
 
-
-
-
-
-
-## Installing the Stats Bot (early access)
-
-Aggregate `git-ai` data at the PR, developer, Repository and Organization levels:
-
-- AI authorship breakdown for every Pull Request
-- Measure % of code that is AI generated through the entire SDLC
-- Compare accepted-rate for code written by each Agent + Model. 
-- AI-Code Halflife (how durable is the AI code)
-> [Get early access by chatting with the maintainers](https://calendly.com/acunniffe/meeting-with-git-ai-authors)
-
-![alt](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
+# License 
+Apache 2.0
