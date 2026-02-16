@@ -40,11 +40,89 @@ fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  142)          
 <summary><b>How does it work?</b></summary>
 <br>
 
-Supported Coding Agents call Git AI and mark the lines they insert as AI-generated.
+— Agents tell Git AI what code they wrote via Pre/Post Edit Hooks. 
+- Each agent edit is stored as a checkpoint — a small diff stored in `.git/ai/` that records whether the change was AI-generated or human-authored. Checkpoints accumulate as you work.
+- On Commit, all checkpoints are processed into an Authorship Log that links line ranges to Agent Sessions. This Authorship Log is attached to the commit via a Git Note.
+- Git AI ensures attribution survives rebases, merges, squashes, stash/pops, cherry-picks, amends, etc -- transparently rewriting Authorship Logs whenever history is rewritten. 
 
-On commit, Git AI saves the final AI-attributions into a Git Note. These notes power AI-Blame, AI contribution stats, and more. The CLI makes sure these notes are preserved through rebases, merges, squashes, cherry-picks, etc.
+<table>
+<tr>
+<td><b>Commit (normal git)</b></td>
+<td><b>Git Note</b> <code>refs/notes/ai #&lt;commitsha&gt;</code></td>
+</tr>
+<tr>
+<td>
 
-![Git Tree](https://github.com/user-attachments/assets/edd20990-ec0b-4a53-afa4-89fa33de9541)
+```rust
+pub fn post_clone_hook(
+    parsed_args: &ParsedGitInvocation,
+    exit_status: std::process::ExitStatus,
+) -> Option<()> {
+
+    if !exit_status.success() {
+        return None;
+    }
+
+    let target_dir =
+        extract_clone_target_directory(&parsed_args.command_args)?;
+
+    let repository =
+        find_repository_in_path(&target_dir).ok()?;
+
+    print!("Fetching authorship notes from origin");
+
+    match fetch_authorship_notes(&repository, "origin") {
+        Ok(()) => {
+            debug_log("successfully fetched");
+            print!(", done.\n");
+        }
+        Err(e) => {
+            debug_log(&format!("fetch failed: {}", e));
+            print!(", failed.\n");
+        }
+    }
+
+    Some(())
+}
+```
+
+</td>
+<td>
+
+```json
+{
+  "files": {
+    "hooks/post_clone_hook.rs": {
+      "promptid1": "6-8",
+      "promptid2": "16,21,25"
+    }
+  },
+  "prompts": {
+    "promptid1": {
+      "agent_id": {
+        "tool": "copilot",
+        "model": "Codex 5.2"
+      },
+      "human_author": "Alice Person",
+      "messages_url": "https://your-git-ai-prompt-store.dev/cas/promptid1_content_hash",
+      "summary": "GitHub #821: Guard note fetching on successful clone."
+    },
+    "promptid2": {
+      "agent_id": {
+        "tool": "cursor",
+        "model": "Sonnet 4.5"
+      },
+      "human_author": "Jeff Coder",
+      "messages_url": "https://your-git-ai-prompt-store.dev/cas/promptid2_content_hash",
+      "summary": "Match Git Clone output style for notes fetch status."
+    }
+  }
+}
+```
+
+</td>
+</tr>
+</table>
 
 The format of the notes is outlined in the [Git AI Standard v3.0.0](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md).
 
