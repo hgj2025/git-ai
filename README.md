@@ -5,7 +5,7 @@
 
 Git AI is an open source git extension that tracks the AI-generated code in your repositories. 
 
-Once installed, every AI line is automatically linked to the agent, model, and prompts that generated it — ensuring the intent, requirements, and architecture decisions behind your code are never forgotten:
+Once installed, every AI line is automatically linked to the agent, model, and prompts that generated it — ensuring the intent, requirements, and architecture decisions behind your code are never forgotten.
 
 `git-ai blame /src/log_fmt/authorship_log.rs`
 ```bash
@@ -34,13 +34,13 @@ fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  142)          
 - **"Detecting" AI-code is an anti-pattern** — Git AI doesn't guess if a hunk is AI-generated. Supported agents tell Git AI exactly which lines they wrote, giving you the most accurate AI-attribution possible.
 - **Local-first** — Works offline, no OpenAI or Anthropic key required.
 - **Git Native & Open Standard** — Git AI created the [open standard](https://github.com/git-ai-project/git-ai/blob/main/specs/git_ai_standard_v3.0.0.md) for tracking AI-generated code with Git Notes.
-- **Prompts stay out of Git** — Git Notes reference prompts and agent sessions, but prompt content is never stored in your repository — keeping repos lean, free of API keys and sensitive information, and giving you access controls over prompt data.
+- **Prompts stay out of Git** — Git Notes reference prompts and agent sessions, but prompt content is never stored in your repository — keeping repos lean, free of API keys + sensitive information, and giving you access controls over prompt data.
 
 <details>
-<summary><b>How does it work?</b></summary>
-<br>
+<summary>How does Git AI work?</summary>
 
-— Agents tell Git AI what code they wrote via Pre/Post Edit Hooks. 
+
+- Agents tell Git AI what code they wrote via Pre/Post Edit Hooks. 
 - Each agent edit is stored as a checkpoint — a small diff stored in `.git/ai/` that records whether the change was AI-generated or human-authored. Checkpoints accumulate as you work.
 - On Commit, all checkpoints are processed into an Authorship Log that links line ranges to Agent Sessions. This Authorship Log is attached to the commit via a Git Note.
 - Git AI ensures attribution survives rebases, merges, squashes, stash/pops, cherry-picks, amends, etc -- transparently rewriting Authorship Logs whenever history is rewritten. 
@@ -48,7 +48,7 @@ fe2c4c8 (claude-4.5-opus [prompt_id]   2025-12-02 19:25:13 -0500  142)          
 <table>
 <tr>
 <td><b>Git Note</b> <code>refs/notes/ai #&lt;commitsha&gt;</code></td>
-<td><b>Commit (normal git)</b></td>
+<td><b>`hooks/post_clone_hook.rs`</b></td>
 </tr>
 <tr>
 <td>
