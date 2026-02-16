@@ -231,7 +231,6 @@ mod tests {
 
     #[test]
     fn test_embedded_skills_are_loaded() {
-        // Verify that the embedded skills are not empty
         for skill in EMBEDDED_SKILLS {
             assert!(!skill.name.is_empty(), "Skill name should not be empty");
             assert!(
@@ -254,5 +253,164 @@ mod tests {
             let parent = path.parent().unwrap();
             assert!(parent.ends_with(".git-ai"));
         }
+    }
+
+    #[test]
+    fn test_link_skill_dir_creates_link_and_content_is_accessible() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "test content").unwrap();
+
+        let link = tmp.path().join("linked-skill");
+        link_skill_dir(&source, &link).unwrap();
+
+        assert!(link.exists());
+        assert!(link.join("SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "test content"
+        );
+    }
+
+    #[test]
+    fn test_link_skill_dir_replaces_existing_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "new content").unwrap();
+
+        let link = tmp.path().join("linked-skill");
+        fs::create_dir_all(&link).unwrap();
+        fs::write(link.join("SKILL.md"), "old content").unwrap();
+
+        link_skill_dir(&source, &link).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "new content"
+        );
+    }
+
+    #[test]
+    fn test_link_skill_dir_replaces_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "content").unwrap();
+
+        let link = tmp.path().join("linked-skill");
+        fs::write(&link, "i am a file").unwrap();
+
+        link_skill_dir(&source, &link).unwrap();
+
+        assert!(link.is_dir() || link.is_symlink());
+        assert!(link.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn test_link_skill_dir_creates_parent_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "content").unwrap();
+
+        let link = tmp.path().join("deep").join("nested").join("linked-skill");
+        link_skill_dir(&source, &link).unwrap();
+
+        assert!(link.exists());
+        assert!(link.join("SKILL.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_link_skill_dir_creates_symlink_on_unix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "content").unwrap();
+
+        let link = tmp.path().join("linked-skill");
+        link_skill_dir(&source, &link).unwrap();
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&link).unwrap(), source);
+    }
+
+    #[test]
+    fn test_remove_skill_link_removes_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("skill-dir");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "content").unwrap();
+
+        remove_skill_link(&dir).unwrap();
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_remove_skill_link_removes_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target");
+        fs::create_dir_all(&target).unwrap();
+
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        remove_skill_link(&link).unwrap();
+        assert!(!link.symlink_metadata().is_ok());
+        assert!(target.exists(), "original target should not be removed");
+    }
+
+    #[test]
+    fn test_remove_skill_link_noop_on_nonexistent_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nonexistent = tmp.path().join("does-not-exist");
+        remove_skill_link(&nonexistent).unwrap();
+    }
+
+    #[test]
+    fn test_install_and_uninstall_skills_lifecycle() {
+        let skills_base = skills_dir_path().unwrap();
+
+        // Dry run should not create anything
+        let dry_result = install_skills(true, false).unwrap();
+        assert!(dry_result.changed);
+        assert_eq!(dry_result.installed_count, EMBEDDED_SKILLS.len());
+
+        // Install creates skill files with correct content
+        let result = install_skills(false, false).unwrap();
+        assert!(result.changed);
+        assert_eq!(result.installed_count, EMBEDDED_SKILLS.len());
+        assert!(skills_base.exists());
+        for skill in EMBEDDED_SKILLS {
+            let skill_md = skills_base.join(skill.name).join("SKILL.md");
+            assert!(skill_md.exists(), "SKILL.md missing for {}", skill.name);
+            let content = fs::read_to_string(&skill_md).unwrap();
+            assert_eq!(content, skill.skill_md);
+        }
+
+        // Install again is idempotent
+        let result2 = install_skills(false, false).unwrap();
+        assert!(result2.changed);
+        for skill in EMBEDDED_SKILLS {
+            let skill_md = skills_base.join(skill.name).join("SKILL.md");
+            assert!(
+                skill_md.exists(),
+                "SKILL.md missing after re-install for {}",
+                skill.name
+            );
+        }
+
+        // Uninstall removes skills directory
+        let uninstall_result = uninstall_skills(false, false).unwrap();
+        assert!(uninstall_result.changed);
+        assert!(!skills_base.exists());
+
+        // Uninstall again is a no-op
+        let noop_result = uninstall_skills(false, false).unwrap();
+        assert!(!noop_result.changed);
+        assert_eq!(noop_result.installed_count, 0);
     }
 }
