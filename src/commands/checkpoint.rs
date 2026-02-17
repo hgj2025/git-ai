@@ -315,10 +315,7 @@ pub fn run(
                 for entry in &checkpoint.entries {
                     eprintln!("    File: {}", entry.file);
                     eprintln!("    Blob SHA: {}", entry.blob_sha);
-                    eprintln!(
-                        "    Line Attributions: {:?}",
-                        entry.line_attributions
-                    );
+                    eprintln!("    Line Attributions: {:?}", entry.line_attributions);
                     eprintln!("    Attributions: {:?}", entry.attributions);
                 }
                 eprintln!();
