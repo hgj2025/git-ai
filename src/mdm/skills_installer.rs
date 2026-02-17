@@ -17,13 +17,12 @@ const EMBEDDED_SKILLS: &[EmbeddedSkill] = &[
         skill_md: include_str!("../../skills/prompt-analysis/SKILL.md"),
     },
     EmbeddedSkill {
-<<<<<<< HEAD
         name: "git-ai-search",
         skill_md: include_str!("../../skills/git-ai-search/SKILL.md"),
-=======
+    },
+    EmbeddedSkill {
         name: "ask",
         skill_md: include_str!("../../skills/ask/SKILL.md"),
->>>>>>> a5286bd6 (new skill)
     },
 ];
 
