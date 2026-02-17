@@ -64,6 +64,10 @@ impl TestRepo {
             test_db_path,
         };
 
+        // Ensure the default branch is named "main" for consistency across Git versions
+        // This is important because Git 2.28+ defaults to "main" while older versions use "master"
+        let _ = repo.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         repo.apply_default_config_patch();
 
         repo
@@ -161,6 +165,9 @@ impl TestRepo {
             test_db_path: mirror_test_db_path,
         };
 
+        // Ensure the default branch is named "main" for consistency across Git versions
+        let _ = mirror.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         upstream.apply_default_config_patch();
         mirror.apply_default_config_patch();
 
@@ -186,6 +193,10 @@ impl TestRepo {
             config_patch: None,
             test_db_path,
         };
+
+        // Ensure the default branch is named "main" for consistency across Git versions
+        let _ = repo.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         repo.apply_default_config_patch();
         repo
     }
