@@ -1042,13 +1042,16 @@ fn test_merge_base_with_branches() {
     file.set_contents(lines!["line1".human()]);
     let base = test_repo.stage_all_and_commit("Base").unwrap();
 
+    // Capture the original branch name before creating feature branch
+    let original_branch = test_repo.current_branch();
+
     // Create branch
     test_repo.git(&["checkout", "-b", "feature"]).unwrap();
     file.set_contents(lines!["line1".human(), "feature".human()]);
     let feature = test_repo.stage_all_and_commit("Feature").unwrap();
 
-    // Go back to main and make different commit
-    test_repo.git(&["checkout", "main"]).unwrap();
+    // Go back to original branch and make different commit
+    test_repo.git(&["checkout", &original_branch]).unwrap();
     file.set_contents(lines!["line1".human(), "main".human()]);
     let main = test_repo.stage_all_and_commit("Main").unwrap();
 
