@@ -37,6 +37,9 @@ fn test_post_merge_hook_squash_success() {
         .stage();
     let base = repo.commit("base commit").unwrap();
 
+    // Capture original branch before creating feature branch
+    let original_branch = repo.current_branch();
+
     // Create feature branch
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature.txt")
@@ -44,8 +47,8 @@ fn test_post_merge_hook_squash_success() {
         .stage();
     let feature = repo.commit("feature commit").unwrap();
 
-    // Go back to main
-    repo.git(&["checkout", "main"]).unwrap();
+    // Go back to original branch
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     let mut repository =
         repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -72,13 +75,15 @@ fn test_post_merge_hook_squash_failed() {
         .stage();
     repo.commit("base commit").unwrap();
 
+    let original_branch = repo.current_branch();
+
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature.txt")
         .set_contents(vec!["feature content"])
         .stage();
     repo.commit("feature commit").unwrap();
 
-    repo.git(&["checkout", "main"]).unwrap();
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     let mut repository =
         repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -116,13 +121,15 @@ fn test_post_merge_hook_normal_merge() {
         .stage();
     repo.commit("base commit").unwrap();
 
+    let original_branch = repo.current_branch();
+
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature.txt")
         .set_contents(vec!["feature content"])
         .stage();
     repo.commit("feature commit").unwrap();
 
-    repo.git(&["checkout", "main"]).unwrap();
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     let mut repository =
         repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -156,13 +163,15 @@ fn test_post_merge_hook_dry_run() {
         .stage();
     repo.commit("base commit").unwrap();
 
+    let original_branch = repo.current_branch();
+
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature.txt")
         .set_contents(vec!["feature content"])
         .stage();
     repo.commit("feature commit").unwrap();
 
-    repo.git(&["checkout", "main"]).unwrap();
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     let mut repository =
         repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -359,6 +368,8 @@ fn test_merge_squash_full_flow() {
         .stage();
     let base = repo.commit("base commit").unwrap();
 
+    let original_branch = repo.current_branch();
+
     // Create feature branch
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature1.txt")
@@ -371,8 +382,8 @@ fn test_merge_squash_full_flow() {
         .stage();
     let feature = repo.commit("feature commit 2").unwrap();
 
-    // Go back to main
-    repo.git(&["checkout", "main"]).unwrap();
+    // Go back to original branch
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     // Execute merge --squash
     let mut repository =
@@ -405,6 +416,8 @@ fn test_merge_squash_with_commit() {
         .stage();
     repo.commit("base commit").unwrap();
 
+    let original_branch = repo.current_branch();
+
     // Create feature branch
     repo.git(&["checkout", "-b", "feature"]).unwrap();
     repo.filename("feature.txt")
@@ -412,8 +425,8 @@ fn test_merge_squash_with_commit() {
         .stage();
     repo.commit("feature commit").unwrap();
 
-    // Go back to main
-    repo.git(&["checkout", "main"]).unwrap();
+    // Go back to original branch
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     // Merge --squash (stages changes)
     let mut repository =
@@ -484,9 +497,11 @@ fn test_merge_squash_empty_branch() {
     repo.filename("base.txt").set_contents(vec!["base"]).stage();
     repo.commit("base commit").unwrap();
 
-    // Create empty feature branch (same as main)
+    let original_branch = repo.current_branch();
+
+    // Create empty feature branch (same as original)
     repo.git(&["checkout", "-b", "feature"]).unwrap();
-    repo.git(&["checkout", "main"]).unwrap();
+    repo.git(&["checkout", &original_branch]).unwrap();
 
     let mut repository =
         repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
