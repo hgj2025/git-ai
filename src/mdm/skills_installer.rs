@@ -45,6 +45,11 @@ fn claude_skills_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("skills"))
 }
 
+/// Get the ~/.cursor/skills directory path
+fn cursor_skills_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".cursor").join("skills"))
+}
+
 /// Link a skill directory to the target location.
 /// On Unix, creates a symlink. On Windows, copies the directory to avoid requiring
 /// Administrator privileges (which symlink creation requires on Windows).
@@ -167,6 +172,14 @@ pub fn install_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallResu
                 eprintln!("Warning: Failed to link skill at {:?}: {}", claude_link, e);
             }
         }
+
+        // ~/.cursor/skills/{skill-name} -> ~/.git-ai/skills/{skill-name}
+        if let Some(cursor_dir) = cursor_skills_dir() {
+            let cursor_link = cursor_dir.join(skill.name);
+            if let Err(e) = link_skill_dir(&skill_dir, &cursor_link) {
+                eprintln!("Warning: Failed to link skill at {:?}: {}", cursor_link, e);
+            }
+        }
     }
 
     Ok(SkillsInstallResult {
@@ -215,6 +228,17 @@ pub fn uninstall_skills(dry_run: bool, _verbose: bool) -> Result<SkillsInstallRe
                 eprintln!(
                     "Warning: Failed to remove skill link at {:?}: {}",
                     claude_link, e
+                );
+            }
+        }
+
+        // ~/.cursor/skills/{skill-name}
+        if let Some(cursor_dir) = cursor_skills_dir() {
+            let cursor_link = cursor_dir.join(skill.name);
+            if let Err(e) = remove_skill_link(&cursor_link) {
+                eprintln!(
+                    "Warning: Failed to remove skill link at {:?}: {}",
+                    cursor_link, e
                 );
             }
         }

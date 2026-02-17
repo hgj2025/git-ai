@@ -1,6 +1,6 @@
 ---
 name: ask
-description: "Use this during plan mode, when you are exploring the codebase. It lets you ask the AI who wrote the code questions about how things work and why they build it this way"
+description: "Use this when you are exploring the codebase. It lets you ask the AI who wrote code questions about how things work and why they chose to build things the way they did. Think of it as asking the engineer who wrote the code for help understanding it."
 argument-hint: "[a question to the AI who authored the code you're looking at]"
 allowed-tools: ["Bash(git-ai:*)", "Read", "Glob", "Grep", "Task"]
 ---
