@@ -226,8 +226,9 @@ fn test_diff_range_start_equals_end() {
 fn test_diff_new_file_from_empty() {
     let repo = TestRepo::new();
 
-    // Create initial empty commit
-    repo.stage_all_and_commit("Empty initial").unwrap();
+    // Create initial empty commit using git directly to avoid checkpoint system
+    repo.git(&["commit", "--allow-empty", "-m", "Empty initial"])
+        .expect("empty commit should succeed");
 
     // Add new file
     let mut file = repo.filename("new.rs");
