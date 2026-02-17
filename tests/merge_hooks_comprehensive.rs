@@ -403,10 +403,7 @@ fn test_merge_squash_full_flow() {
     assert!(merge_squash_event.is_some());
     let event = merge_squash_event.unwrap();
     assert_eq!(event.source_branch, "feature");
-    assert_eq!(
-        event.base_branch,
-        format!("refs/heads/{}", original_branch)
-    );
+    assert_eq!(event.base_branch, format!("refs/heads/{}", original_branch));
 }
 
 #[test]
