@@ -237,3 +237,69 @@ impl HookInstaller for VSCodeInstaller {
         }])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vscode_installer_name() {
+        let installer = VSCodeInstaller;
+        assert_eq!(installer.name(), "VS Code");
+    }
+
+    #[test]
+    fn test_vscode_installer_id() {
+        let installer = VSCodeInstaller;
+        assert_eq!(installer.id(), "vscode");
+    }
+
+    #[test]
+    fn test_vscode_settings_targets() {
+        let targets = VSCodeInstaller::settings_targets();
+        // Should return paths for Code and Code - Insiders
+        assert!(!targets.is_empty());
+        // Targets should contain some known VSCode paths
+        let targets_str: Vec<String> = targets.iter().map(|p| p.display().to_string()).collect();
+        let has_code_path = targets_str
+            .iter()
+            .any(|s| s.contains("Code") || s.contains("code"));
+        assert!(has_code_path, "Should include VSCode-related paths");
+    }
+
+    #[test]
+    fn test_vscode_uninstall_extras_returns_manual_message() {
+        let installer = VSCodeInstaller;
+        let params = HookInstallerParams {
+            binary_path: std::path::PathBuf::from("/usr/local/bin/git-ai"),
+        };
+
+        let results = installer.uninstall_extras(&params, false).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].changed);
+        assert!(results[0].message.contains("manually"));
+    }
+
+    #[test]
+    fn test_vscode_install_hooks_returns_none() {
+        let installer = VSCodeInstaller;
+        let params = HookInstallerParams {
+            binary_path: std::path::PathBuf::from("/usr/local/bin/git-ai"),
+        };
+
+        // install_hooks should return None because VSCode uses extension, not config hooks
+        let result = installer.install_hooks(&params, false).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_vscode_uninstall_hooks_returns_none() {
+        let installer = VSCodeInstaller;
+        let params = HookInstallerParams {
+            binary_path: std::path::PathBuf::from("/usr/local/bin/git-ai"),
+        };
+
+        let result = installer.uninstall_hooks(&params, false).unwrap();
+        assert_eq!(result, None);
+    }
+}
