@@ -270,6 +270,9 @@ fn test_populate_with_author_filter() {
         author
     );
 
+    // Explicitly close the connection before removing the file (Windows requires this)
+    drop(conn);
+
     // Populate with non-matching author (should have no results)
     fs::remove_file(&prompts_db_path).unwrap();
     let result = repo.git_ai(&["prompts", "--author", "NonExistent User"]);
