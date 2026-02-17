@@ -183,7 +183,9 @@ fn test_blame_error_missing_file() {
             || err.contains("does not exist")
             || err.contains("No such file")
             || err.contains("pathspec")
-            || err.contains("did not match"),
+            || err.contains("did not match")
+            || err.contains("cannot find the file")
+            || err.contains("canonicalize file path"),
         "Expected error about missing file, got: {}",
         err
     );
