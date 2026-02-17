@@ -36,10 +36,14 @@ with open('$png','rb') as f:
 ")
   # Per-icon padding overrides
   icon_padding=${padding}
+  icon_y_offset=0
   if [[ "$icon" == "claude_code" ]]; then
     icon_padding=8
   elif [[ "$icon" == "gemini" ]]; then
     icon_padding=6
+    icon_y_offset=3
+  elif [[ "$icon" == "rovodev" ]]; then
+    icon_y_offset=-3
   fi
 
   img_height=$(( height - icon_padding * 2 ))
@@ -67,7 +71,7 @@ with open('$png','rb') as f:
     <rect width="${left_width}" height="${height}" fill="#D6D3D1"/>
     <rect x="${left_width}" width="${right_width}" height="${height}" fill="#000000"/>
   </g>
-  <image x="${icon_padding}" y="${icon_padding}" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
+  <image x="${icon_padding}" y="$(( icon_padding + icon_y_offset ))" width="${img_width}" height="${img_height}" xlink:href="data:image/png;base64,${b64}"/>
   <polyline points="$(( check_cx - 12 )),${check_cy} $(( check_cx - 4 )),$(( check_cy + 12 )) $(( check_cx + 14 )),$(( check_cy - 12 ))" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   <line x1="${left_width}" y1="0" x2="${left_width}" y2="${height}" stroke="#000000" stroke-width="1.5"/>
 </svg>
