@@ -428,6 +428,7 @@ fn test_get_commit_default_author_from_author_equals() {
 // causing interference with other author resolution tests
 #[test]
 #[ignore]
+#[serial_test::serial]
 fn test_get_commit_default_author_env_precedence() {
     let repo = TestRepo::new();
     let repository = repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -456,6 +457,7 @@ fn test_get_commit_default_author_env_precedence() {
 // causing interference with other author resolution tests
 #[test]
 #[ignore]
+#[serial_test::serial]
 fn test_get_commit_default_author_email_env() {
     let repo = TestRepo::new();
     let repository = repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
@@ -480,6 +482,7 @@ fn test_get_commit_default_author_email_env() {
 // causing interference with other author resolution tests
 #[test]
 #[ignore]
+#[serial_test::serial]
 fn test_get_commit_default_author_name_only() {
     let repo = TestRepo::new();
     let repository = repository::find_repository_in_path(repo.path().to_str().unwrap()).unwrap();
