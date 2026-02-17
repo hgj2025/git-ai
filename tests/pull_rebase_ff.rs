@@ -246,7 +246,9 @@ fn test_fast_forward_pull_preserves_ai_attribution() {
         .expect("config should succeed");
 
     // Perform pull with merge (can't fast-forward due to divergent history)
-    local.git(&["pull", "--no-ff"]).expect("pull should succeed");
+    local
+        .git(&["pull", "--no-ff"])
+        .expect("pull should succeed");
 
     // Verify AI attribution is preserved through the ff pull
     ai_file.assert_lines_and_blame(vec!["AI generated line 1".ai(), "AI generated line 2".ai()]);
