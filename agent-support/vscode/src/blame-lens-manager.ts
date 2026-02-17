@@ -361,10 +361,9 @@ export class BlameLensManager {
     if (newDocumentUri !== this.currentDocumentUri) {
       const previousEditor = vscode.window.visibleTextEditors.find(
         e => e.document.uri.toString() === this.currentDocumentUri
-      this.currentBlameResult = null;
-      this.currentDocumentUri = null;
-      this.pendingBlameRequest = null;
-      this.casFetchInProgress.clear();
+      );
+      if (previousEditor) {
+        this.clearColoredBorders(previousEditor);
       }
 
       this.currentBlameResult = null;
