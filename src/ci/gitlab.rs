@@ -281,3 +281,162 @@ pub fn print_gitlab_ci_yaml() {
     println!();
     println!("{}", GITLAB_CI_TEMPLATE_YAML);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    unsafe fn clear_gitlab_env() {
+        for var in &[
+            "CI_API_V4_URL",
+            "CI_PROJECT_ID",
+            "CI_COMMIT_SHA",
+            "CI_SERVER_URL",
+            "CI_PROJECT_PATH",
+            "GITLAB_TOKEN",
+            "CI_JOB_TOKEN",
+        ] {
+            std::env::remove_var(var);
+        }
+    }
+
+    unsafe fn set_gitlab_env() {
+        std::env::set_var("CI_API_V4_URL", "https://gitlab.example.com/api/v4");
+        std::env::set_var("CI_PROJECT_ID", "123");
+        std::env::set_var("CI_COMMIT_SHA", "abc123def456");
+        std::env::set_var("CI_SERVER_URL", "https://gitlab.example.com");
+        std::env::set_var("CI_PROJECT_PATH", "group/project");
+    }
+
+    #[test]
+    #[serial]
+    fn test_missing_ci_api_v4_url() {
+        unsafe { clear_gitlab_env() };
+        let result = get_gitlab_ci_context();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("CI_API_V4_URL"),
+            "Expected CI_API_V4_URL error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_missing_ci_project_id() {
+        unsafe {
+            clear_gitlab_env();
+            std::env::set_var("CI_API_V4_URL", "https://gitlab.example.com/api/v4");
+        }
+        let result = get_gitlab_ci_context();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("CI_PROJECT_ID"),
+            "Expected CI_PROJECT_ID error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_missing_ci_commit_sha() {
+        unsafe {
+            clear_gitlab_env();
+            std::env::set_var("CI_API_V4_URL", "https://gitlab.example.com/api/v4");
+            std::env::set_var("CI_PROJECT_ID", "123");
+        }
+        let result = get_gitlab_ci_context();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("CI_COMMIT_SHA"),
+            "Expected CI_COMMIT_SHA error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_missing_auth_tokens() {
+        unsafe {
+            clear_gitlab_env();
+            set_gitlab_env();
+        }
+        let result = get_gitlab_ci_context();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("GITLAB_TOKEN") && err.contains("CI_JOB_TOKEN"),
+            "Expected auth token error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_gitlab_merge_request_deserialization() {
+        let json = r#"{
+            "iid": 42,
+            "title": "Fix bug",
+            "source_branch": "feature/fix",
+            "target_branch": "main",
+            "sha": "abc123",
+            "merge_commit_sha": "def456",
+            "squash_commit_sha": null,
+            "squash": false
+        }"#;
+        let mr: GitLabMergeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(mr.iid, 42);
+        assert_eq!(mr.title, Some("Fix bug".to_string()));
+        assert_eq!(mr.source_branch, "feature/fix");
+        assert_eq!(mr.target_branch, "main");
+        assert_eq!(mr.sha, "abc123");
+        assert_eq!(mr.merge_commit_sha, Some("def456".to_string()));
+        assert!(mr.squash_commit_sha.is_none());
+        assert_eq!(mr.squash, Some(false));
+    }
+
+    #[test]
+    fn test_gitlab_merge_request_deserialization_with_squash() {
+        let json = r#"{
+            "iid": 99,
+            "title": "Squash merge",
+            "source_branch": "feature/squash",
+            "target_branch": "main",
+            "sha": "head123",
+            "merge_commit_sha": "merge456",
+            "squash_commit_sha": "squash789",
+            "squash": true
+        }"#;
+        let mr: GitLabMergeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(mr.iid, 99);
+        assert_eq!(mr.squash_commit_sha, Some("squash789".to_string()));
+        assert_eq!(mr.squash, Some(true));
+    }
+
+    #[test]
+    fn test_gitlab_merge_request_deserialization_minimal() {
+        let json = r#"{
+            "iid": 1,
+            "source_branch": "dev",
+            "target_branch": "main",
+            "sha": "abc"
+        }"#;
+        let mr: GitLabMergeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(mr.iid, 1);
+        assert!(mr.title.is_none());
+        assert!(mr.merge_commit_sha.is_none());
+        assert!(mr.squash_commit_sha.is_none());
+        assert!(mr.squash.is_none());
+    }
+
+    #[test]
+    fn test_gitlab_ci_template_yaml_not_empty() {
+        assert!(
+            !GITLAB_CI_TEMPLATE_YAML.is_empty(),
+            "GitLab CI template YAML should not be empty"
+        );
+    }
+}
