@@ -22,6 +22,7 @@ use std::time::Instant;
 
 const CONFIG_KEY_CORE_HOOKS_PATH: &str = "core.hooksPath";
 const REPO_HOOK_STATE_FILE: &str = "git_hooks_state.json";
+const REPO_HOOK_ENABLEMENT_FILE: &str = "git_hooks_enabled";
 const PULL_HOOK_STATE_FILE: &str = "pull_hook_state.json";
 const REBASE_HOOK_MASK_STATE_FILE: &str = "rebase_hook_mask_state.json";
 const STASH_REF_TX_STATE_FILE: &str = "stash_ref_tx_state.json";
@@ -38,8 +39,8 @@ pub const ENV_SKIP_ALL_HOOKS: &str = "GIT_AI_SKIP_ALL_HOOKS";
 pub const ENV_SKIP_MANAGED_HOOKS: &str = "GITAI_SKIP_MANAGED_HOOKS";
 const ENV_SKIP_MANAGED_HOOKS_LEGACY: &str = "GIT_AI_SKIP_MANAGED_HOOKS";
 
-// All core hooks recognised by git. Non-managed hooks get symlinks to the git-ai binary only
-// when the corresponding hook script exists in the forward target directory, so git-ai can
+// All core hooks recognised by git. Non-managed hooks get managed entries to the git-ai binary
+// only when the corresponding hook script exists in the forward target directory, so git-ai can
 // properly forward to it at the original path (preserving $0/dirname for Husky-style hooks).
 const CORE_GIT_HOOK_NAMES: &[&str] = &[
     "applypatch-msg",
@@ -70,10 +71,10 @@ const CORE_GIT_HOOK_NAMES: &[&str] = &[
     "post-update",
     "push-to-checkout",
     "reference-transaction",
-    "pre-solve-refs",
 ];
 
-// Hooks with managed git-ai behavior. Always installed as symlinks.
+// Hooks with managed git-ai behavior. Always installed as managed entries.
+// Unix uses symlinks; Windows uses binary copies.
 const MANAGED_GIT_HOOK_NAMES: &[&str] = &[
     "pre-commit",
     "prepare-commit-msg",
@@ -153,16 +154,49 @@ struct CherryPickBatchState {
 }
 
 #[cfg(unix)]
-fn create_file_symlink(target: &Path, link: &Path) -> Result<(), GitAiError> {
-    std::os::unix::fs::symlink(target, link)?;
+fn install_hook_entry(target: &Path, entry_path: &Path) -> Result<(), GitAiError> {
+    std::os::unix::fs::symlink(target, entry_path)?;
     Ok(())
 }
 
 #[cfg(windows)]
-fn create_file_symlink(target: &Path, link: &Path) -> Result<(), GitAiError> {
-    std::os::windows::fs::symlink_file(target, link)
-        .or_else(|_| std::fs::copy(target, link).map(|_| ()))
+fn install_hook_entry(target: &Path, entry_path: &Path) -> Result<(), GitAiError> {
+    fs::copy(target, entry_path)
+        .map(|_| ())
         .map_err(GitAiError::IoError)
+}
+
+#[cfg(windows)]
+fn files_match_by_content(left: &Path, right: &Path) -> Result<bool, GitAiError> {
+    let left_meta = fs::metadata(left)?;
+    let right_meta = fs::metadata(right)?;
+
+    if !left_meta.is_file() || !right_meta.is_file() {
+        return Ok(false);
+    }
+    if left_meta.len() != right_meta.len() {
+        return Ok(false);
+    }
+
+    let mut left_file = std::io::BufReader::new(fs::File::open(left)?);
+    let mut right_file = std::io::BufReader::new(fs::File::open(right)?);
+    let mut left_buf = [0u8; 8192];
+    let mut right_buf = [0u8; 8192];
+
+    loop {
+        let left_read = left_file.read(&mut left_buf)?;
+        let right_read = right_file.read(&mut right_buf)?;
+
+        if left_read != right_read {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+        if left_buf[..left_read] != right_buf[..right_read] {
+            return Ok(false);
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -206,6 +240,10 @@ fn repo_state_path(repo: &Repository) -> PathBuf {
     repo.path().join("ai").join(REPO_HOOK_STATE_FILE)
 }
 
+fn repo_enablement_path(repo: &Repository) -> PathBuf {
+    repo.path().join("ai").join(REPO_HOOK_ENABLEMENT_FILE)
+}
+
 fn rebase_hook_mask_state_path(repo: &Repository) -> PathBuf {
     repo.path().join("ai").join(REBASE_HOOK_MASK_STATE_FILE)
 }
@@ -228,6 +266,47 @@ fn cherry_pick_batch_state_path(repo: &Repository) -> PathBuf {
 
 fn normalize_path(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn canonicalize_if_possible(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn path_is_inside_managed_hooks(path: &Path, managed_hooks_dir: &Path) -> bool {
+    normalize_path(path).starts_with(normalize_path(managed_hooks_dir))
+}
+
+fn resolve_repo_hook_binary_path(
+    managed_hooks_dir: &Path,
+    prior_state: Option<&RepoHookState>,
+    current_exe_path: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(saved_path) = prior_state
+        .map(|state| state.binary_path.trim())
+        .filter(|path| !path.is_empty())
+    {
+        let saved_path = canonicalize_if_possible(PathBuf::from(saved_path));
+        if saved_path.exists() && !path_is_inside_managed_hooks(&saved_path, managed_hooks_dir) {
+            return saved_path;
+        }
+    }
+
+    if let Some(current_exe) = current_exe_path.as_ref()
+        && current_exe.exists()
+        && !path_is_inside_managed_hooks(current_exe, managed_hooks_dir)
+    {
+        return current_exe.clone();
+    }
+
+    if let Some(current_exe) = current_exe_path {
+        return current_exe;
+    }
+
+    PathBuf::from("git-ai")
+}
+
+fn resolved_current_exe_path() -> Option<PathBuf> {
+    std::env::current_exe().ok().map(canonicalize_if_possible)
 }
 
 fn is_managed_hooks_path(path: &Path, repo: Option<&Repository>) -> bool {
@@ -395,24 +474,31 @@ fn delete_state_file(path: &Path, dry_run: bool) -> Result<bool, GitAiError> {
     Ok(true)
 }
 
-fn ensure_hook_symlink(
+fn ensure_hook_entry_installed(
     hook_path: &Path,
     binary_path: &Path,
     dry_run: bool,
 ) -> Result<bool, GitAiError> {
     if hook_path.exists() || hook_path.symlink_metadata().is_ok() {
+        #[cfg(unix)]
         let should_replace = match fs::read_link(hook_path) {
             Ok(target) => normalize_path(&target) != normalize_path(binary_path),
             Err(_) => true,
         };
 
+        #[cfg(windows)]
+        let should_replace = {
+            let metadata = hook_path.symlink_metadata()?;
+            if metadata.file_type().is_file() {
+                !files_match_by_content(hook_path, binary_path)?
+            } else {
+                true
+            }
+        };
+
         if should_replace {
             if !dry_run {
-                if hook_path.is_dir() {
-                    fs::remove_dir_all(hook_path)?;
-                } else {
-                    fs::remove_file(hook_path)?;
-                }
+                remove_hook_entry(hook_path)?;
             }
         } else {
             return Ok(false);
@@ -420,14 +506,17 @@ fn ensure_hook_symlink(
     }
 
     if !dry_run {
-        create_file_symlink(binary_path, hook_path)?;
+        install_hook_entry(binary_path, hook_path)?;
     }
 
     Ok(true)
 }
 
 fn remove_hook_entry(hook_path: &Path) -> Result<(), GitAiError> {
-    if hook_path.is_dir() {
+    let metadata = hook_path.symlink_metadata()?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_dir() && !file_type.is_symlink() {
         fs::remove_dir_all(hook_path)?;
     } else {
         fs::remove_file(hook_path)?;
@@ -435,7 +524,7 @@ fn remove_hook_entry(hook_path: &Path) -> Result<(), GitAiError> {
     Ok(())
 }
 
-fn sync_non_managed_hook_symlinks(
+fn sync_non_managed_hook_entries(
     managed_hooks_dir: &Path,
     binary_path: &Path,
     forward_hooks_path: Option<&str>,
@@ -454,7 +543,7 @@ fn sync_non_managed_hook_symlinks(
             .is_some_and(|p| p.exists() && !p.is_dir());
 
         if original_exists {
-            changed |= ensure_hook_symlink(&hook_path, binary_path, dry_run)?;
+            changed |= ensure_hook_entry_installed(&hook_path, binary_path, dry_run)?;
         } else if hook_path.exists() || hook_path.symlink_metadata().is_ok() {
             changed = true;
             if !dry_run {
@@ -590,10 +679,11 @@ pub fn ensure_repo_hooks_installed(
     let local_config_path = repo.path().join("config");
     let prior_state = read_repo_hook_state(&state_path)?;
 
-    let binary_path = std::env::current_exe()
-        .ok()
-        .and_then(|path| fs::canonicalize(path).ok())
-        .unwrap_or_else(|| PathBuf::from("git-ai"));
+    let binary_path = resolve_repo_hook_binary_path(
+        &managed_hooks_dir,
+        prior_state.as_ref(),
+        resolved_current_exe_path(),
+    );
     let current_local_hooks =
         read_hooks_path_from_config(&local_config_path, gix_config::Source::Local);
     let (forward_mode, forward_hooks_path, original_local_hooks_path) =
@@ -611,10 +701,10 @@ pub fn ensure_repo_hooks_installed(
 
     for hook_name in MANAGED_GIT_HOOK_NAMES {
         let hook_path = managed_hooks_dir.join(hook_name);
-        changed |= ensure_hook_symlink(&hook_path, &binary_path, dry_run)?;
+        changed |= ensure_hook_entry_installed(&hook_path, &binary_path, dry_run)?;
     }
 
-    changed |= sync_non_managed_hook_symlinks(
+    changed |= sync_non_managed_hook_entries(
         &managed_hooks_dir,
         &binary_path,
         forward_hooks_path.as_deref(),
@@ -644,6 +734,24 @@ pub fn ensure_repo_hooks_installed(
     })
 }
 
+pub fn mark_repo_hooks_enabled(repo: &Repository) -> Result<bool, GitAiError> {
+    let path = repo_enablement_path(repo);
+    if path.exists() || path.symlink_metadata().is_ok() {
+        return Ok(false);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, b"enabled\n")?;
+    Ok(true)
+}
+
+fn is_repo_hooks_enabled(repo: &Repository) -> bool {
+    let path = repo_enablement_path(repo);
+    path.exists() || path.symlink_metadata().is_ok()
+}
+
 static REPO_SELF_HEAL_GUARD: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 fn repo_lookup_path_for_self_heal(repo: &Repository) -> PathBuf {
@@ -655,6 +763,10 @@ fn repo_lookup_path_for_self_heal(repo: &Repository) -> PathBuf {
 }
 
 pub fn maybe_spawn_repo_hook_self_heal(repo: &Repository) {
+    if !is_repo_hooks_enabled(repo) {
+        return;
+    }
+
     // Keep tests deterministic and avoid touching developer hook config during tests.
     if std::env::var("GIT_AI_TEST_DB_PATH").is_ok() {
         return;
@@ -2510,6 +2622,32 @@ mod tests {
     }
 
     #[test]
+    fn repo_self_heal_opt_in_defaults_to_disabled() {
+        let tmp = tempfile::tempdir().expect("failed to create tempdir");
+        let repo = init_repo(&tmp.path().join("repo"));
+        assert!(
+            !is_repo_hooks_enabled(&repo),
+            "self-heal should be disabled by default"
+        );
+    }
+
+    #[test]
+    fn mark_repo_hooks_enabled_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("failed to create tempdir");
+        let repo = init_repo(&tmp.path().join("repo"));
+
+        let first = mark_repo_hooks_enabled(&repo).expect("first opt-in should succeed");
+        let second = mark_repo_hooks_enabled(&repo).expect("second opt-in should succeed");
+
+        assert!(first, "first opt-in should report change");
+        assert!(!second, "second opt-in should be a no-op");
+        assert!(
+            is_repo_hooks_enabled(&repo),
+            "opt-in marker should be present"
+        );
+    }
+
+    #[test]
     fn repo_self_heal_lookup_uses_git_dir_for_bare_repo() {
         let tmp = tempfile::tempdir().expect("failed to create tempdir");
         let bare_dir = tmp.path().join("repo.git");
@@ -2667,25 +2805,75 @@ mod tests {
     }
 
     #[test]
-    fn ensure_hook_symlink_is_idempotent() {
+    fn ensure_hook_entry_install_is_idempotent() {
         let tmp = tempfile::tempdir().expect("failed to create tempdir");
         let repo = init_repo(&tmp.path().join("repo"));
         ensure_repo_hooks_installed(&repo, false).expect("ensure repo hooks should succeed");
 
         let managed_hooks_dir = managed_git_hooks_dir_for_repo(&repo);
-        let binary_path = std::env::current_exe()
-            .ok()
-            .and_then(|path| fs::canonicalize(path).ok())
-            .unwrap_or_else(|| PathBuf::from("git-ai"));
+        let binary_path =
+            resolve_repo_hook_binary_path(&managed_hooks_dir, None, resolved_current_exe_path());
 
         let hook_path = managed_hooks_dir.join("pre-commit");
-        let first = ensure_hook_symlink(&hook_path, &binary_path, false)
-            .expect("first ensure_hook_symlink");
+        let first = ensure_hook_entry_installed(&hook_path, &binary_path, false)
+            .expect("first ensure_hook_entry_installed");
         assert!(!first, "second call should report no change");
 
-        let second = ensure_hook_symlink(&hook_path, &binary_path, false)
-            .expect("second ensure_hook_symlink");
+        let second = ensure_hook_entry_installed(&hook_path, &binary_path, false)
+            .expect("second ensure_hook_entry_installed");
         assert!(!second, "third call should also report no change");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_hook_entry_install_updates_copied_binary_when_source_changes() {
+        let tmp = tempfile::tempdir().expect("failed to create tempdir");
+        let source_binary = tmp.path().join("source.exe");
+        let hook_entry = tmp.path().join("pre-commit");
+
+        fs::write(&source_binary, b"binary-v1").expect("failed to write source binary");
+        let first = ensure_hook_entry_installed(&hook_entry, &source_binary, false)
+            .expect("first install should succeed");
+        assert!(first, "initial install should report change");
+
+        fs::write(&source_binary, b"binary-v2").expect("failed to update source binary");
+        let second = ensure_hook_entry_installed(&hook_entry, &source_binary, false)
+            .expect("second install should succeed");
+        assert!(second, "updated source should trigger replacement");
+
+        let installed = fs::read(&hook_entry).expect("failed to read installed hook entry");
+        assert_eq!(installed, b"binary-v2");
+    }
+
+    #[test]
+    fn resolve_repo_hook_binary_path_prefers_prior_external_binary_when_runtime_inside_hooks() {
+        let tmp = tempfile::tempdir().expect("failed to create tempdir");
+        let managed_hooks_dir = tmp.path().join(".git").join("ai").join("hooks");
+        fs::create_dir_all(&managed_hooks_dir).expect("failed to create managed hooks dir");
+
+        let saved_binary = tmp.path().join("bin").join("git-ai");
+        fs::create_dir_all(saved_binary.parent().expect("saved binary parent"))
+            .expect("failed to create saved binary parent");
+        fs::write(&saved_binary, b"saved-binary").expect("failed to write saved binary");
+
+        let runtime_binary = managed_hooks_dir.join("pre-commit");
+        fs::write(&runtime_binary, b"runtime-binary").expect("failed to write runtime binary");
+
+        let state = RepoHookState {
+            binary_path: saved_binary.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+
+        let resolved = resolve_repo_hook_binary_path(
+            &managed_hooks_dir,
+            Some(&state),
+            Some(runtime_binary.clone()),
+        );
+        assert_eq!(
+            normalize_path(&resolved),
+            normalize_path(&saved_binary),
+            "saved external binary path should be preferred when runtime path is inside managed hooks"
+        );
     }
 
     #[test]
@@ -2857,7 +3045,7 @@ mod tests {
     }
 
     #[test]
-    fn non_managed_hook_symlinks_cleaned_on_resync() {
+    fn non_managed_hook_entries_cleaned_on_resync() {
         let tmp = tempfile::tempdir().expect("failed to create tempdir");
         let managed_dir = tmp.path().join("managed");
         fs::create_dir_all(&managed_dir).expect("failed to create managed dir");
@@ -2869,7 +3057,7 @@ mod tests {
         fs::write(forward_dir.join("commit-msg"), "#!/bin/sh\nexit 0\n")
             .expect("failed to write commit-msg");
 
-        let changed = sync_non_managed_hook_symlinks(
+        let changed = sync_non_managed_hook_entries(
             &managed_dir,
             &binary,
             Some(forward_dir.to_string_lossy().as_ref()),
@@ -2879,11 +3067,11 @@ mod tests {
         assert!(changed, "first sync should report changes");
         assert!(
             managed_dir.join("commit-msg").symlink_metadata().is_ok(),
-            "commit-msg symlink should exist after sync"
+            "commit-msg hook entry should exist after sync"
         );
 
         fs::remove_file(forward_dir.join("commit-msg")).expect("failed to remove original");
-        let changed = sync_non_managed_hook_symlinks(
+        let changed = sync_non_managed_hook_entries(
             &managed_dir,
             &binary,
             Some(forward_dir.to_string_lossy().as_ref()),
@@ -2893,7 +3081,7 @@ mod tests {
         assert!(changed, "resync should report changes (stale removal)");
         assert!(
             managed_dir.join("commit-msg").symlink_metadata().is_err(),
-            "commit-msg symlink should be removed after original deleted"
+            "commit-msg hook entry should be removed after original deleted"
         );
     }
 

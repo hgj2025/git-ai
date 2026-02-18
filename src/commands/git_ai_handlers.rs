@@ -1066,6 +1066,10 @@ fn handle_git_hooks(args: &[String]) {
 
             match commands::git_hook_handlers::ensure_repo_hooks_installed(&repo, false) {
                 Ok(report) => {
+                    if let Err(e) = commands::git_hook_handlers::mark_repo_hooks_enabled(&repo) {
+                        eprintln!("Failed to persist repo hook opt-in: {}", e);
+                        std::process::exit(1);
+                    }
                     let status = if report.changed { "updated" } else { "ok" };
                     println!(
                         "repo hooks {}: {}",

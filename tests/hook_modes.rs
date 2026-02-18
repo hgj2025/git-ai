@@ -72,6 +72,31 @@ fn set_executable(path: &Path) {
 
 #[test]
 #[serial]
+fn git_hooks_ensure_records_repo_opt_in_marker() {
+    let _mode = EnvVarGuard::set("GIT_AI_TEST_GIT_MODE", "wrapper");
+    let repo = TestRepo::new();
+    let marker_path = repo
+        .path()
+        .join(".git")
+        .join("ai")
+        .join("git_hooks_enabled");
+
+    assert!(
+        !marker_path.exists(),
+        "marker should not exist before running git-hooks ensure"
+    );
+
+    repo.git_ai(&["git-hooks", "ensure"])
+        .expect("git-hooks ensure should succeed");
+
+    assert!(
+        marker_path.exists(),
+        "marker should exist after running git-hooks ensure"
+    );
+}
+
+#[test]
+#[serial]
 fn hook_mode_runs_without_wrapper() {
     let _mode = EnvVarGuard::set("GIT_AI_TEST_GIT_MODE", "hooks");
 
