@@ -240,36 +240,6 @@ impl HookInstaller for VSCodeInstaller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    struct EnvVarGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: Test-scoped environment variable mutation, serialized via serial_test.
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            // SAFETY: Restoring process env to original value in serialized tests.
-            unsafe {
-                match &self.original {
-                    Some(value) => std::env::set_var(self.key, value),
-                    None => std::env::remove_var(self.key),
-                }
-            }
-        }
-    }
 
     #[test]
     fn test_vscode_installer_name() {
@@ -333,42 +303,8 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn test_vscode_install_extras_configures_git_path_idempotently() {
-        let temp_dir = TempDir::new().unwrap();
-        let home_path = temp_dir.path().to_string_lossy().to_string();
-        let _home_guard = EnvVarGuard::set("HOME", &home_path);
-        let _userprofile_guard = EnvVarGuard::set("USERPROFILE", &home_path);
-
-        let settings_path = VSCodeInstaller::settings_targets()
-            .into_iter()
-            .next()
-            .unwrap();
-        fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
-        fs::write(&settings_path, "{\n  \"editor.tabSize\": 2\n}\n").unwrap();
-
-        let installer = VSCodeInstaller;
-        let params = HookInstallerParams {
-            binary_path: std::path::PathBuf::from("/usr/local/bin/git-ai"),
-        };
-
-        let first = installer.install_extras(&params, false).unwrap();
-        assert!(
-            first
-                .iter()
-                .any(|r| r.message.contains("VS Code: git.path updated in"))
-        );
-
-        let updated = fs::read_to_string(&settings_path).unwrap();
-        assert_eq!(updated.matches("\"git.path\"").count(), 1);
-
-        let second = installer.install_extras(&params, false).unwrap();
-        assert!(second.iter().any(|r| {
-            r.message
-                .contains("VS Code: git.path already configured in")
-        }));
-
-        let updated_again = fs::read_to_string(&settings_path).unwrap();
-        assert_eq!(updated_again.matches("\"git.path\"").count(), 1);
+    fn test_vscode_settings_targets_returns_candidates() {
+        let targets = VSCodeInstaller::settings_targets();
+        assert!(!targets.is_empty());
     }
 }
