@@ -250,3 +250,142 @@ pub fn log_metrics(events: Vec<MetricEvent>) {
         append_envelope(LogEnvelope::Metrics(envelope));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    // Test error logging
+    #[test]
+    fn test_log_error_no_panic() {
+        use std::io;
+        let error = io::Error::new(io::ErrorKind::NotFound, "test error");
+        log_error(&error, None);
+    }
+
+    #[test]
+    fn test_log_error_with_context() {
+        use serde_json::json;
+        use std::io;
+        let error = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
+        let context = json!({"file": "test.txt", "operation": "read"});
+        log_error(&error, Some(context));
+    }
+
+    // Test performance logging
+    #[test]
+    fn test_log_performance_basic() {
+        log_performance("test_operation", Duration::from_millis(100), None, None);
+    }
+
+    #[test]
+    fn test_log_performance_with_context() {
+        use serde_json::json;
+        let context = json!({"files": 5, "lines": 100});
+        log_performance("test_op", Duration::from_secs(1), Some(context), None);
+    }
+
+    #[test]
+    fn test_log_performance_with_tags() {
+        let mut tags = HashMap::new();
+        tags.insert("command".to_string(), "commit".to_string());
+        tags.insert("repo".to_string(), "test".to_string());
+        log_performance("commit_op", Duration::from_millis(500), None, Some(tags));
+    }
+
+    // Test message logging
+    #[test]
+    fn test_log_message_basic() {
+        log_message("test message", "info", None);
+    }
+
+    #[test]
+    fn test_log_message_with_context() {
+        use serde_json::json;
+        let context = json!({"user": "test", "action": "login"});
+        log_message("user logged in", "info", Some(context));
+    }
+
+    #[test]
+    fn test_log_message_warning() {
+        log_message("warning message", "warning", None);
+    }
+
+    // Test metrics logging
+    #[test]
+    fn test_log_metrics_empty() {
+        log_metrics(vec![]);
+    }
+
+    // Test spawn_background_flush
+    #[test]
+    fn test_spawn_background_flush_no_panic() {
+        // In test mode, this should exit early due to GIT_AI_TEST_DB_PATH check
+        spawn_background_flush();
+    }
+
+    // Test constants
+    #[test]
+    fn test_max_metrics_per_envelope() {
+        assert_eq!(MAX_METRICS_PER_ENVELOPE, 250);
+    }
+
+    // Test envelope serialization
+    #[test]
+    fn test_error_envelope_to_json() {
+        let envelope = ErrorEnvelope {
+            event_type: "error".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            message: "test error".to_string(),
+            context: None,
+        };
+        let log_envelope = LogEnvelope::Error(envelope);
+        let json = log_envelope.to_json();
+        assert!(json.is_some());
+    }
+
+    #[test]
+    fn test_performance_envelope_to_json() {
+        let envelope = PerformanceEnvelope {
+            event_type: "performance".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            operation: "test_op".to_string(),
+            duration_ms: 100,
+            context: None,
+            tags: None,
+        };
+        let log_envelope = LogEnvelope::Performance(envelope);
+        let json = log_envelope.to_json();
+        assert!(json.is_some());
+    }
+
+    #[test]
+    fn test_message_envelope_to_json() {
+        let envelope = MessageEnvelope {
+            event_type: "message".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            message: "test message".to_string(),
+            level: "info".to_string(),
+            context: None,
+        };
+        let log_envelope = LogEnvelope::Message(envelope);
+        let json = log_envelope.to_json();
+        assert!(json.is_some());
+    }
+
+    #[test]
+    fn test_metrics_envelope_to_json() {
+        // Test empty metrics envelope
+        let envelope = MetricsEnvelope {
+            event_type: "metrics".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            version: 1,
+            events: vec![],
+        };
+        let log_envelope = LogEnvelope::Metrics(envelope);
+        let json = log_envelope.to_json();
+        assert!(json.is_some());
+    }
+}

@@ -64,6 +64,10 @@ impl TestRepo {
             test_db_path,
         };
 
+        // Ensure the default branch is named "main" for consistency across Git versions
+        // This is important because Git 2.28+ defaults to "main" while older versions use "master"
+        let _ = repo.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         repo.apply_default_config_patch();
 
         repo
@@ -120,6 +124,9 @@ impl TestRepo {
             test_db_path: upstream_test_db_path,
         };
 
+        // Ensure the upstream default branch is named "main" for consistency across Git versions
+        let _ = upstream.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         // Clone upstream to create mirror with origin configured
         let mirror_n: u64 = rng.gen_range(0..10000000000);
         let mirror_path = base.join(mirror_n.to_string());
@@ -161,6 +168,9 @@ impl TestRepo {
             test_db_path: mirror_test_db_path,
         };
 
+        // Ensure the default branch is named "main" for consistency across Git versions
+        let _ = mirror.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         upstream.apply_default_config_patch();
         mirror.apply_default_config_patch();
 
@@ -186,6 +196,10 @@ impl TestRepo {
             config_patch: None,
             test_db_path,
         };
+
+        // Ensure the default branch is named "main" for consistency across Git versions
+        let _ = repo.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         repo.apply_default_config_patch();
         repo
     }
@@ -663,23 +677,10 @@ static COMPILED_BINARY: OnceLock<PathBuf> = OnceLock::new();
 static DEFAULT_BRANCH_NAME: OnceLock<String> = OnceLock::new();
 
 fn get_default_branch_name() -> String {
-    // Use git2 to read the config directly, just like Repository::init() does
-    // This ensures consistency between what default_branchname() returns and what
-    // branch name git2::Repository::init() actually creates
-    use git2::Config;
-
-    // Open the global git config
-    if let Ok(config) = Config::open_default() {
-        if let Ok(branch_name) = config.get_string("init.defaultBranch") {
-            if !branch_name.is_empty() {
-                return branch_name;
-            }
-        }
-    }
-
-    // Fallback to "master" if not configured
-    // This matches libgit2's default behavior
-    "master".to_string()
+    // Since TestRepo::new() explicitly sets the default branch to "main" via symbolic-ref,
+    // we always return "main" to match that behavior and ensure test consistency across
+    // different Git versions and configurations.
+    "main".to_string()
 }
 
 pub fn default_branchname() -> &'static str {
