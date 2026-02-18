@@ -533,6 +533,16 @@ fn handle_checkpoint(args: &[String]) {
     // First, try the standard approach using the working directory
     let repo_result = find_repository_in_path(&final_working_dir);
 
+    let config = config::Config::get();
+    if let Ok(ref repo) = repo_result {
+        if !config.is_allowed_repository(&Some(repo.clone())) {
+            eprintln!(
+                "Skipping checkpoint because repository is excluded or not in allow_repositories list"
+            );
+            std::process::exit(0);
+        }
+    }
+
     // If the working directory is not a git repository, we need to detect repos from file paths
     // This happens in multi-repo workspaces where the workspace root contains multiple git repos
     let needs_file_based_repo_detection = repo_result.is_err();
@@ -610,8 +620,6 @@ fn handle_checkpoint(args: &[String]) {
             let mut total_files_edited = 0;
             let mut repos_processed = 0;
             let total_repos = repo_files.len();
-
-            let config = config::Config::get();
 
             // Process each repository separately
             for (repo_workdir, (repo, repo_file_paths)) in repo_files {
@@ -711,16 +719,6 @@ fn handle_checkpoint(args: &[String]) {
 
     // Standard single-repo mode
     let repo = repo_result.unwrap();
-
-    // Re-check if this resolved repository is allowed
-    // Agent presets may resolve a different repo than the current working directory
-    let config = config::Config::get();
-    if !config.is_allowed_repository(&Some(repo.clone())) {
-        eprintln!(
-            "Skipping checkpoint because repository is excluded or not in allow_repositories list"
-        );
-        std::process::exit(0);
-    }
 
     // Get the effective working directory from the detected repository
     let effective_working_dir = repo
