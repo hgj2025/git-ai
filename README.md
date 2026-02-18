@@ -92,7 +92,7 @@ That's it — **no per-repo setup required.** Prompt and commit as normal. Git A
 - Restart any transcript, by any contributor
 - Advanced cross-agent dashboards to measure AI adoption, code durability, and compare agents across your team 
 
-**[Click here to get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)**
+**[Click here to get early access](https://calendly.com/d/cxjh-z79-ktm/meeting-with-git-ai-authors)**
 
 </td>
 </tr>
@@ -215,7 +215,7 @@ For team-wide visibility, [Git AI Enterprise](https://usegitai.com/enterprise) a
 - **Agent readiness** — Measure the effectiveness of agents in your repos. Track the impact of skills, rules, MCPs, and `AGENTS.md` changes across repos and task types.
 - **Agent and model comparison** — Compare acceptance rates and output quality by agent and model.
 
-**[Get early access](https://calendly.com/acunniffe/meeting-with-git-ai-authors)**
+**[Get early access](https://calendly.com/d/cxjh-z79-ktm/meeting-with-git-ai-authors)**
 
 ![Git AI Enterprise dashboard showing AI code metrics across repositories](https://github.com/git-ai-project/git-ai/raw/main/assets/docs/dashboard.png)
 
