@@ -624,8 +624,17 @@ fn handle_checkpoint(args: &[String]) {
             let mut repos_processed = 0;
             let total_repos = repo_files.len();
 
+            let config = config::Config::get();
+
             // Process each repository separately
             for (repo_workdir, (repo, repo_file_paths)) in repo_files {
+                if !config.is_allowed_repository(&Some(repo.clone())) {
+                    eprintln!(
+                        "Skipping checkpoint for {} because repository is excluded or not in allow_repositories list",
+                        repo_workdir.display()
+                    );
+                    continue;
+                }
                 repos_processed += 1;
                 eprintln!(
                     "Processing repository {}/{}: {}",
@@ -715,6 +724,16 @@ fn handle_checkpoint(args: &[String]) {
 
     // Standard single-repo mode
     let repo = repo_result.unwrap();
+
+    // Re-check if this resolved repository is allowed
+    // Agent presets may resolve a different repo than the current working directory
+    let config = config::Config::get();
+    if !config.is_allowed_repository(&Some(repo.clone())) {
+        eprintln!(
+            "Skipping checkpoint because repository is excluded or not in allow_repositories list"
+        );
+        std::process::exit(0);
+    }
 
     // Get the effective working directory from the detected repository
     let effective_working_dir = repo
