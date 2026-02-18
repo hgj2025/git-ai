@@ -177,8 +177,7 @@ impl HookInstaller for VSCodeInstaller {
             });
         }
 
-        // Configure git.path on Windows
-        #[cfg(windows)]
+        // Configure git.path
         {
             use crate::mdm::utils::{git_shim_path_string, update_git_path_setting};
 
@@ -301,5 +300,11 @@ mod tests {
 
         let result = installer.uninstall_hooks(&params, false).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_vscode_settings_targets_returns_candidates() {
+        let targets = VSCodeInstaller::settings_targets();
+        assert!(!targets.is_empty());
     }
 }
