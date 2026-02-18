@@ -25,7 +25,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static TEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_id(base: &str) -> String {
-    format!("{}-{}", base, TEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "{}-{}",
+        base,
+        TEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Helper to create a test PromptDbRecord
@@ -68,9 +72,7 @@ fn create_test_prompt(
 /// Helper to populate internal database with test prompts
 fn populate_test_database(_repo: &TestRepo, prompts: Vec<PromptDbRecord>) {
     let db = InternalDatabase::global().expect("Failed to get global database");
-    let mut db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     for prompt in prompts {
         db_guard
@@ -458,9 +460,7 @@ fn test_database_list_prompts_no_filter() {
 
     // List all prompts
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let results = db_guard.list_prompts(None, None, 10, 0).unwrap();
 
     assert!(results.len() >= 2, "Should have at least 2 prompts");
@@ -503,9 +503,7 @@ fn test_database_list_prompts_with_workdir_filter() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let results = db_guard.list_prompts(Some(&workdir), None, 10, 0).unwrap();
 
     assert!(
@@ -549,9 +547,7 @@ fn test_database_list_prompts_pagination() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // First page: limit 2, offset 0
     let page1 = db_guard.list_prompts(None, None, 2, 0).unwrap();
@@ -610,9 +606,7 @@ fn test_database_search_prompts_finds_matches() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // Search for "authentication" scoped to this test's workdir
     let results = db_guard
@@ -650,9 +644,7 @@ fn test_database_search_prompts_case_insensitive() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // Search with lowercase scoped to this test's workdir
     let results = db_guard
@@ -688,9 +680,7 @@ fn test_database_search_prompts_no_matches() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let results = db_guard
         .search_prompts("nonexistent_term_xyz", Some(&workdir), 10, 0)
@@ -734,9 +724,7 @@ fn test_database_search_prompts_with_workdir_filter() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let results = db_guard
         .search_prompts("Fix bug", Some(&workdir), 10, 0)
@@ -780,9 +768,7 @@ fn test_database_search_prompts_pagination() {
     populate_test_database(&repo, prompts);
 
     let db = InternalDatabase::global().unwrap();
-    let db_guard = db
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_guard = db.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // First page scoped to this test's workdir
     let page1 = db_guard
