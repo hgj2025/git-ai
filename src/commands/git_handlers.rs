@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::authorship::virtual_attribution::VirtualAttributions;
 use crate::commands::git_hook_handlers::{
-    ENV_SKIP_MANAGED_HOOKS, resolve_previous_non_managed_hooks_path,
+    ENV_SKIP_MANAGED_HOOKS, has_repo_hook_state, resolve_previous_non_managed_hooks_path,
 };
 use crate::commands::hooks::checkout_hooks;
 use crate::commands::hooks::cherry_pick_hooks;
@@ -551,6 +551,9 @@ fn resolve_child_git_hooks_path_override(
     if !command_uses_managed_hooks(parsed_args.command.as_deref()) {
         return None;
     }
+    if !has_repo_hook_state(repository) {
+        return None;
+    }
 
     let hooks_path = resolve_previous_non_managed_hooks_path(repository)
         .map(|path| path.to_string_lossy().to_string())
@@ -736,6 +739,10 @@ fn in_shell_completion_context() -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse_alias_tokens;
+    use super::{parse_git_cli_args, resolve_child_git_hooks_path_override};
+    use crate::git::find_repository_in_path;
+    use std::process::Command;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_alias_tokens_empty_string() {
@@ -832,6 +839,30 @@ mod tests {
                 "--oneline".to_string(),
                 "-5".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn resolve_child_hooks_path_override_no_state_file_returns_none() {
+        let temp = tempdir().expect("tempdir should create");
+        let output = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git init should run");
+        assert!(
+            output.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let repo = find_repository_in_path(&temp.path().to_string_lossy())
+            .expect("repository should be discovered");
+        let parsed = parse_git_cli_args(&["commit".to_string()]);
+
+        assert_eq!(
+            resolve_child_git_hooks_path_override(&parsed, Some(&repo)),
+            None
         );
     }
 

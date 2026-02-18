@@ -881,6 +881,13 @@ fn context_repo_ai_dir() -> Option<PathBuf> {
     git_dir_from_context().map(|git_dir| git_dir.join("ai"))
 }
 
+pub fn has_repo_hook_state(repo: Option<&Repository>) -> bool {
+    let state_path = repo.map(repo_state_path).or_else(repo_state_path_from_env);
+    state_path
+        .map(|path| path.exists() || path.symlink_metadata().is_ok())
+        .unwrap_or(false)
+}
+
 fn should_forward_repo_state_first(repo: Option<&Repository>) -> Option<PathBuf> {
     let state_path = repo
         .map(repo_state_path)

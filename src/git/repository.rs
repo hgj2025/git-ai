@@ -16,19 +16,19 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(windows)]
 use crate::utils::CREATE_NO_WINDOW;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-// This is intentionally thread-local so top-level wrapper operations can suppress managed
-// hooks for their own internal `exec_git*` calls without affecting unrelated threads.
-// Background threads that run authorship sync remain safe because those commands also pass
-// explicit `-c core.hooksPath=...` overrides in sync_authorship.rs.
+// Keep a thread-local depth for low-overhead checks on the active thread and a process-global
+// depth so internal git spawned from background threads inherits suppression state.
 thread_local! {
     static INTERNAL_GIT_HOOKS_DISABLED_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
+static INTERNAL_GIT_HOOKS_DISABLED_DEPTH_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 
 pub struct InternalGitHooksGuard;
 
@@ -40,6 +40,7 @@ impl Drop for InternalGitHooksGuard {
                 depth.set(current - 1);
             }
         });
+        INTERNAL_GIT_HOOKS_DISABLED_DEPTH_GLOBAL.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -47,11 +48,13 @@ impl Drop for InternalGitHooksGuard {
 /// Use this guard around higher-level operations that already execute hook logic explicitly.
 pub fn disable_internal_git_hooks() -> InternalGitHooksGuard {
     INTERNAL_GIT_HOOKS_DISABLED_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    INTERNAL_GIT_HOOKS_DISABLED_DEPTH_GLOBAL.fetch_add(1, Ordering::Relaxed);
     InternalGitHooksGuard
 }
 
 fn should_disable_internal_git_hooks() -> bool {
     INTERNAL_GIT_HOOKS_DISABLED_DEPTH.with(|depth| depth.get() > 0)
+        || INTERNAL_GIT_HOOKS_DISABLED_DEPTH_GLOBAL.load(Ordering::Relaxed) > 0
 }
 
 #[cfg(windows)]
@@ -2698,6 +2701,21 @@ mod tests {
         assert_eq!(parse_git_version("not a version"), None);
         assert_eq!(parse_git_version("git version"), None);
         assert_eq!(parse_git_version("git version x.y.z"), None);
+    }
+
+    #[test]
+    fn disable_internal_git_hooks_guard_applies_to_spawned_threads() {
+        let args = vec!["status".to_string()];
+        let _guard = disable_internal_git_hooks();
+
+        let spawned_args = args.clone();
+        let forwarded =
+            std::thread::spawn(move || args_with_disabled_hooks_if_needed(&spawned_args))
+                .join()
+                .expect("thread should join");
+
+        assert_eq!(forwarded[0], "-c");
+        assert!(forwarded[1].starts_with("core.hooksPath="));
     }
 
     #[test]
