@@ -124,6 +124,9 @@ impl TestRepo {
             test_db_path: upstream_test_db_path,
         };
 
+        // Ensure the upstream default branch is named "main" for consistency across Git versions
+        let _ = upstream.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+
         // Clone upstream to create mirror with origin configured
         let mirror_n: u64 = rng.gen_range(0..10000000000);
         let mirror_path = base.join(mirror_n.to_string());
