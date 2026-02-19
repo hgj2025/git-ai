@@ -10,7 +10,7 @@ use crate::metrics::{MetricEvent, MetricsBatch};
 const MAX_BATCH_SIZE: usize = 250;
 
 /// Spawn a background process to flush metrics DB
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn spawn_background_metrics_db_flush() {
     use std::process::Command;
 
@@ -24,7 +24,7 @@ pub fn spawn_background_metrics_db_flush() {
 }
 
 /// No-op in test mode.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn spawn_background_metrics_db_flush() {}
 
 /// Handle the flush-metrics-db command

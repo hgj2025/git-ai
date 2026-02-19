@@ -233,11 +233,13 @@ fn should_spawn_background_flush() -> bool {
 /// Events are batched into envelopes of up to 250 events each.
 /// The flush-logs command will then upload them to the API or
 /// store them in SQLite for later upload.
-pub fn log_metrics(#[cfg_attr(test, allow(unused))] events: Vec<MetricEvent>) {
-    #[cfg(test)]
+pub fn log_metrics(
+    #[cfg_attr(any(test, feature = "test-support"), allow(unused))] events: Vec<MetricEvent>,
+) {
+    #[cfg(any(test, feature = "test-support"))]
     return;
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         if events.is_empty() {
             return;
