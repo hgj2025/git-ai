@@ -47,7 +47,6 @@ fn main() {
 
     let cli = Cli::parse();
 
-
     #[cfg(debug_assertions)]
     {
         if std::env::var("GIT_AI").as_deref() == Ok("git") {
