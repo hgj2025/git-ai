@@ -233,21 +233,29 @@ fn should_spawn_background_flush() -> bool {
 /// Events are batched into envelopes of up to 250 events each.
 /// The flush-logs command will then upload them to the API or
 /// store them in SQLite for later upload.
-pub fn log_metrics(events: Vec<MetricEvent>) {
-    if events.is_empty() {
-        return;
-    }
+pub fn log_metrics(
+    #[cfg_attr(any(test, feature = "test-support"), allow(unused))] events: Vec<MetricEvent>,
+) {
+    #[cfg(any(test, feature = "test-support"))]
+    return;
 
-    // Split into chunks of MAX_METRICS_PER_ENVELOPE
-    for chunk in events.chunks(MAX_METRICS_PER_ENVELOPE) {
-        let envelope = MetricsEnvelope {
-            event_type: "metrics".to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            version: METRICS_API_VERSION,
-            events: chunk.to_vec(),
-        };
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        if events.is_empty() {
+            return;
+        }
 
-        append_envelope(LogEnvelope::Metrics(envelope));
+        // Split into chunks of MAX_METRICS_PER_ENVELOPE
+        for chunk in events.chunks(MAX_METRICS_PER_ENVELOPE) {
+            let envelope = MetricsEnvelope {
+                event_type: "metrics".to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                version: METRICS_API_VERSION,
+                events: chunk.to_vec(),
+            };
+
+            append_envelope(LogEnvelope::Metrics(envelope));
+        }
     }
 }
 
