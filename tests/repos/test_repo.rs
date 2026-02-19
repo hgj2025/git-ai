@@ -57,7 +57,6 @@ fn create_file_symlink(target: &PathBuf, link: &PathBuf) -> std::io::Result<()> 
         .or_else(|_| std::fs::copy(target, link).map(|_| ()))
 }
 
-
 #[derive(Clone, Debug)]
 pub struct TestRepo {
     path: PathBuf,
@@ -320,7 +319,6 @@ impl TestRepo {
             command.env("GIT_AI_GLOBAL_GIT_HOOKS", "true");
         }
     }
-
 
     /// Patch the git-ai config for this test repo
     /// Allows overriding specific config properties like ignore_prompts, telemetry settings, etc.

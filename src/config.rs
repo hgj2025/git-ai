@@ -636,7 +636,6 @@ fn build_feature_flags(file_cfg: &Option<FileConfig>) -> FeatureFlags {
         flags.insert("global_git_hooks".to_string(), value);
     }
 
-
     // Try to deserialize the feature flags from the JSON value
     let file_flags = file_flags_value.and_then(|value| {
         // Use from_value to deserialize, but ignore any errors and fall back to defaults
