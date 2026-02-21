@@ -834,6 +834,7 @@ fn handle_checkpoint(args: &[String]) {
         agent_run_result,
         false,
     );
+    let local_checkpoint_failed = checkpoint_result.is_err();
     match checkpoint_result {
         Ok((_, files_edited, _)) => {
             let elapsed = checkpoint_start.elapsed();
@@ -850,7 +851,6 @@ fn handle_checkpoint(args: &[String]) {
                 "checkpoint_kind": format!("{:?}", checkpoint_kind)
             });
             observability::log_error(&e, Some(context));
-            std::process::exit(0);
         }
     }
 
@@ -923,6 +923,10 @@ fn handle_checkpoint(args: &[String]) {
 
     if checkpoint_kind != CheckpointKind::Human {
         observability::spawn_background_flush();
+    }
+
+    if local_checkpoint_failed {
+        std::process::exit(0);
     }
 }
 
