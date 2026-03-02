@@ -1464,7 +1464,7 @@ impl Repository {
     /// The result is cached per Repository instance for performance.
     ///
     /// Use this for "who is the current user" lookups (blame, status, prompts, etc.).
-    /// For commit authorship specifically, use [`git_commit_author_identity`] instead.
+    /// For commit authorship specifically, use [`Self::git_commit_author_identity`] instead.
     pub fn git_author_identity(&self) -> &GitAuthorIdentity {
         self.cached_author_identity
             .get_or_init(|| self.resolve_git_var_identity("GIT_COMMITTER_IDENT"))
