@@ -1,4 +1,5 @@
 [
+  { "icon": "amp", "name": "Amp", "color": "#000000" },
   { "icon": "claude_code", "name": "Claude Code", "color": "#D97757" },
   { "icon": "codex-black", "name": "Codex", "color": "#1A1A1A" },
   { "icon": "continue", "name": "Continue", "color": "#2563EB" },
