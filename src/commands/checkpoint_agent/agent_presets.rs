@@ -628,9 +628,9 @@ impl AgentCheckpointPreset for WindsurfPreset {
             });
 
         // Parse transcript (best-effort)
-        let (transcript, model) =
+        let transcript =
             match WindsurfPreset::transcript_and_model_from_windsurf_jsonl(&transcript_path) {
-                Ok((transcript, model)) => (transcript, model),
+                Ok((transcript, _model)) => transcript,
                 Err(e) => {
                     eprintln!("[Warning] Failed to parse Windsurf JSONL: {e}");
                     log_error(
@@ -640,17 +640,15 @@ impl AgentCheckpointPreset for WindsurfPreset {
                             "operation": "transcript_and_model_from_windsurf_jsonl"
                         })),
                     );
-                    (
-                        crate::authorship::transcript::AiTranscript::new(),
-                        None,
-                    )
+                    crate::authorship::transcript::AiTranscript::new()
                 }
             };
 
+        // Windsurf doesn't expose model info in hooks yet — hardcode to "unknown"
         let agent_id = AgentId {
             tool: "windsurf".to_string(),
             id: trajectory_id.to_string(),
-            model: model.unwrap_or_else(|| "unknown".to_string()),
+            model: "unknown".to_string(),
         };
 
         // Extract file_path from tool_info if present
