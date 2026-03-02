@@ -1098,6 +1098,80 @@ impl<'a> Iterator for References<'a> {
     }
 }
 
+/// The effective git author identity (name + email) for the current repository.
+///
+/// Resolved via `git var GIT_COMMITTER_IDENT` which respects the full git precedence
+/// chain (env vars > config > system defaults), unlike a raw `git config user.name`
+/// lookup which can miss identities configured via environment variables or system-level
+/// defaults.
+#[derive(Debug, Clone, Default)]
+pub struct GitAuthorIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+impl GitAuthorIdentity {
+    /// Format as `"Name <email>"`, `"Name"`, `"<email>"`, or `None`.
+    pub fn formatted(&self) -> Option<String> {
+        match (&self.name, &self.email) {
+            (Some(n), Some(e)) => Some(format!("{} <{}>", n, e)),
+            (Some(n), None) => Some(n.clone()),
+            (None, Some(e)) => Some(format!("<{}>", e)),
+            (None, None) => None,
+        }
+    }
+
+    /// Return the name or `"unknown"` as fallback.
+    pub fn name_or_unknown(&self) -> String {
+        self.name.clone().unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
+/// Parse `git var GIT_COMMITTER_IDENT` output into name and email.
+///
+/// The output format is: `Name <email> unix-timestamp timezone`
+/// For example: `John Doe <john@example.com> 1234567890 +0000`
+fn parse_git_var_identity(output: &str) -> GitAuthorIdentity {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return GitAuthorIdentity::default();
+    }
+
+    // Find email in angle brackets
+    let email_start = trimmed.find('<');
+    let email_end = trimmed.find('>');
+
+    match (email_start, email_end) {
+        (Some(start), Some(end)) if end > start => {
+            let name = trimmed[..start].trim();
+            let email = trimmed[start + 1..end].trim();
+            GitAuthorIdentity {
+                name: if name.is_empty() {
+                    None
+                } else {
+                    Some(name.to_string())
+                },
+                email: if email.is_empty() {
+                    None
+                } else {
+                    Some(email.to_string())
+                },
+            }
+        }
+        _ => {
+            // No angle brackets - just treat as name
+            GitAuthorIdentity {
+                name: if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                },
+                email: None,
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Repository {
     global_args: Vec<String>,
@@ -1111,6 +1185,8 @@ pub struct Repository {
     /// Canonical (absolute, resolved) version of workdir for reliable path comparisons
     /// On Windows, this uses the \\?\ UNC prefix format
     canonical_workdir: PathBuf,
+    /// Cached git author identity resolved via `git var GIT_COMMITTER_IDENT`.
+    cached_author_identity: std::cell::OnceCell<GitAuthorIdentity>,
 }
 
 impl Repository {
@@ -1380,6 +1456,52 @@ impl Repository {
     pub fn config_get_str(&self, key: &str) -> Result<Option<String>, GitAiError> {
         self.get_git_config_file()
             .map(|cfg| cfg.string(key).map(|cow| cow.to_string()))
+    }
+
+    /// Get the effective git author identity for this repository.
+    ///
+    /// Uses `git var GIT_COMMITTER_IDENT` which respects the full git identity precedence:
+    /// `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` env vars > `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`
+    /// env vars > `user.name`/`user.email` config > system defaults.
+    ///
+    /// Falls back to `git config user.name` / `user.email` if `git var` fails.
+    /// The result is cached per Repository instance for performance.
+    pub fn git_author_identity(&self) -> &GitAuthorIdentity {
+        self.cached_author_identity
+            .get_or_init(|| self.resolve_git_author_identity())
+    }
+
+    /// Internal: resolve the git author identity without caching.
+    fn resolve_git_author_identity(&self) -> GitAuthorIdentity {
+        // Try `git var GIT_COMMITTER_IDENT` first - this respects the full precedence chain
+        let mut args = self.global_args_for_exec();
+        args.push("var".to_string());
+        args.push("GIT_COMMITTER_IDENT".to_string());
+
+        if let Ok(output) = exec_git(&args)
+            && let Ok(stdout) = String::from_utf8(output.stdout)
+        {
+            let identity = parse_git_var_identity(&stdout);
+            if identity.name.is_some() || identity.email.is_some() {
+                return identity;
+            }
+        }
+
+        // Fall back to git config user.name / user.email
+        let name = self
+            .config_get_str("user.name")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string());
+        let email = self
+            .config_get_str("user.email")
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string());
+
+        GitAuthorIdentity { name, email }
     }
 
     /// Get all config values matching a regex pattern.
@@ -2364,6 +2486,7 @@ pub fn find_repository(global_args: &[String]) -> Result<Repository, GitAiError>
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
+        cached_author_identity: std::cell::OnceCell::new(),
     })
 }
 
@@ -2452,6 +2575,7 @@ pub fn from_bare_repository(git_dir: &Path) -> Result<Repository, GitAiError> {
         pre_reset_target_commit: None,
         workdir,
         canonical_workdir,
+        cached_author_identity: std::cell::OnceCell::new(),
     })
 }
 
