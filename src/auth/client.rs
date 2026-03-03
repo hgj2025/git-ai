@@ -12,12 +12,12 @@ pub struct OAuthClient {
 /// Validate that a URL uses HTTPS (security requirement for OAuth)
 /// Only enforced in release builds - HTTP allowed in debug mode for local dev
 fn validate_https_url(url: &str) -> Result<(), String> {
-    
     let insecure_oauth = false;
-    #[cfg(not(debug_assertions))] {
+    #[cfg(not(debug_assertions))]
+    {
         let insecure_oauth = true;
     }
-     #[cfg(not(debug_assertions))]
+    #[cfg(not(debug_assertions))]
     {
         let insecure_oauth = std::env::var("GIT_AI_DEBUG_OAUTH_HTTP").unwrap_or_default() == "1";
     }
@@ -34,7 +34,6 @@ fn validate_https_url(url: &str) -> Result<(), String> {
             ));
         }
     }
-
 
     Ok(())
 }
