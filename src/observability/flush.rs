@@ -24,7 +24,10 @@ pub fn handle_flush_logs(args: &[String]) {
         }
         match lock_path.and_then(|p| crate::utils::LockFile::try_acquire(&p)) {
             Some(lock) => lock,
-            None => std::process::exit(0),
+            None => {
+                eprintln!("Another flush-logs process is already running. Skipping.");
+                std::process::exit(0);
+            }
         }
     };
 
@@ -60,7 +63,7 @@ pub fn handle_flush_logs(args: &[String]) {
 
     // Get the global logs directory
     let Some(logs_dir) = get_logs_directory() else {
-        // No logs directory - nothing to do, exit successfully
+        eprintln!("No logs directory found (~/.git-ai/internal/logs). Nothing to flush.");
         std::process::exit(0);
     };
 
@@ -100,7 +103,7 @@ pub fn handle_flush_logs(args: &[String]) {
         .collect();
 
     if log_files.is_empty() {
-        // No log files to process - nothing to do, exit successfully
+        eprintln!("No log files to flush.");
         std::process::exit(0);
     }
 

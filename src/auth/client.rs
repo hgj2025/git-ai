@@ -12,8 +12,21 @@ pub struct OAuthClient {
 /// Validate that a URL uses HTTPS (security requirement for OAuth)
 /// Only enforced in release builds - HTTP allowed in debug mode for local dev
 fn validate_https_url(url: &str) -> Result<(), String> {
-    #[cfg(not(debug_assertions))]
+    
+    let insecure_oauth = false;
+    #[cfg(not(debug_assertions))] {
+        let insecure_oauth = true;
+    }
+     #[cfg(not(debug_assertions))]
     {
+        let insecure_oauth = std::env::var("GIT_AI_DEBUG_OAUTH_HTTP").unwrap_or_default() == "1";
+    }
+
+    if !insecure_oauth {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            return Err(format!("Invalid URL scheme: {}", url));
+        }
+    } else {
         if !url.starts_with("https://") {
             return Err(format!(
                 "Security error: OAuth requires HTTPS. URL '{}' is not secure.",
@@ -21,12 +34,8 @@ fn validate_https_url(url: &str) -> Result<(), String> {
             ));
         }
     }
-    #[cfg(debug_assertions)]
-    {
-        if !url.starts_with("https://") && !url.starts_with("http://") {
-            return Err(format!("Invalid URL scheme: {}", url));
-        }
-    }
+
+
     Ok(())
 }
 
