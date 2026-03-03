@@ -61,7 +61,7 @@ impl HookInstaller for WindsurfInstaller {
         let existing: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
 
         // Check if any of our hook events have a git-ai checkpoint command
-        let has_hooks = HOOK_EVENTS.iter().any(|event| {
+        let has_hooks = HOOK_EVENTS.iter().all(|event| {
             existing
                 .get("hooks")
                 .and_then(|h| h.get(*event))
