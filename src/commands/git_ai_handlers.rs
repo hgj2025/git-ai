@@ -8,6 +8,7 @@ use crate::commands;
 use crate::commands::checkpoint_agent::agent_presets::{
     AgentCheckpointFlags, AgentCheckpointPreset, AgentRunResult, AiTabPreset, ClaudePreset,
     CodexPreset, ContinueCliPreset, CursorPreset, DroidPreset, GeminiPreset, GithubCopilotPreset,
+    WindsurfPreset,
 };
 use crate::commands::checkpoint_agent::agent_v1_preset::AgentV1Preset;
 use crate::commands::checkpoint_agent::amp_preset::AmpPreset;
@@ -187,7 +188,7 @@ fn print_help() {
     eprintln!("Commands:");
     eprintln!("  checkpoint         Checkpoint working changes and attribute author");
     eprintln!(
-        "    Presets: claude, codex, continue-cli, cursor, gemini, github-copilot, amp, opencode, ai_tab, mock_ai"
+        "    Presets: claude, codex, continue-cli, cursor, gemini, github-copilot, amp, windsurf, opencode, ai_tab, mock_ai"
     );
     eprintln!(
         "    --hook-input <json|stdin>   JSON payload required by presets, or 'stdin' to read from stdin"
@@ -382,6 +383,22 @@ fn handle_checkpoint(args: &[String]) {
                     }
                     Err(e) => {
                         eprintln!("Gemini preset error: {}", e);
+                        std::process::exit(0);
+                    }
+                }
+            }
+            "windsurf" => {
+                match WindsurfPreset.run(AgentCheckpointFlags {
+                    hook_input: hook_input.clone(),
+                }) {
+                    Ok(agent_run) => {
+                        if agent_run.repo_working_dir.is_some() {
+                            repository_working_dir = agent_run.repo_working_dir.clone().unwrap();
+                        }
+                        agent_run_result = Some(agent_run);
+                    }
+                    Err(e) => {
+                        eprintln!("Windsurf preset error: {}", e);
                         std::process::exit(0);
                     }
                 }
@@ -1292,7 +1309,9 @@ fn handle_show_transcript(args: &[String]) {
     if args.len() < 2 {
         eprintln!("Error: show-transcript requires agent name and path/id");
         eprintln!("Usage: git-ai show-transcript <agent> <path|id>");
-        eprintln!("  Agents: claude, codex, gemini, continue-cli, github-copilot, cursor, amp");
+        eprintln!(
+            "  Agents: claude, codex, gemini, continue-cli, github-copilot, cursor, amp, windsurf"
+        );
         eprintln!("  For cursor and amp, provide conversation/thread id instead of path");
         std::process::exit(1);
     }
@@ -1322,6 +1341,13 @@ fn handle_show_transcript(args: &[String]) {
             Ok((transcript, model)) => Ok((transcript, model)),
             Err(e) => {
                 eprintln!("Error loading Gemini transcript: {}", e);
+                std::process::exit(1);
+            }
+        },
+        "windsurf" => match WindsurfPreset::transcript_and_model_from_windsurf_jsonl(path_or_id) {
+            Ok((transcript, model)) => Ok((transcript, model)),
+            Err(e) => {
+                eprintln!("Error loading Windsurf transcript: {}", e);
                 std::process::exit(1);
             }
         },
@@ -1372,7 +1398,7 @@ fn handle_show_transcript(args: &[String]) {
         _ => {
             eprintln!("Error: Unknown agent '{}'", agent_name);
             eprintln!(
-                "Supported agents: claude, codex, gemini, continue-cli, github-copilot, cursor, amp"
+                "Supported agents: claude, codex, gemini, continue-cli, github-copilot, cursor, amp, windsurf"
             );
             std::process::exit(1);
         }
