@@ -779,10 +779,31 @@ fn select_forward_target_for_repo(
     current_local_hooks: Option<&str>,
     prior_state: Option<&RepoHookState>,
 ) -> (ForwardMode, Option<String>, Option<String>) {
-    // When hooks are externally managed, disable all forwarding
+    // When hooks are externally managed, disable all forwarding.
+    // Preserve any previously saved `original_local_hooks_path` so that
+    // `git-hooks remove` can still restore the user's prior hooksPath.
     let feature_flags = config::Config::get().get_feature_flags().clone();
     if feature_flags.git_hooks_enabled && feature_flags.git_hooks_externally_managed {
-        return (ForwardMode::None, None, None);
+        let preserved_original_local_hooks_path = prior_state
+            .and_then(|state| state.original_local_hooks_path.clone())
+            .or_else(|| {
+                current_local_hooks
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .and_then(|value| {
+                        let path = PathBuf::from(value);
+                        if is_disallowed_forward_hooks_path(
+                            &path,
+                            Some(repo),
+                            Some(managed_hooks_dir),
+                        ) {
+                            None
+                        } else {
+                            Some(value.to_string())
+                        }
+                    })
+            });
+        return (ForwardMode::None, None, preserved_original_local_hooks_path);
     }
 
     if let Some(local_hooks) = current_local_hooks

@@ -242,6 +242,67 @@ fn externally_managed_hooks_disables_forwarding() {
 
 #[test]
 #[serial]
+fn externally_managed_preserves_original_hooks_path_for_remove() {
+    let _mode = EnvVarGuard::set("GIT_AI_TEST_GIT_MODE", "wrapper");
+    let repo = TestRepo::new();
+
+    // Set up a pre-existing hooks path that will be overwritten by managed mode.
+    let user_hooks_dir = git_common_dir(&repo).join("custom-hooks");
+    fs::create_dir_all(&user_hooks_dir).expect("failed to create custom hooks dir");
+    repo.git(&[
+        "config",
+        "--local",
+        "core.hooksPath",
+        user_hooks_dir.to_string_lossy().as_ref(),
+    ])
+    .expect("setting preexisting local hooksPath should succeed");
+
+    // First ensure in managed mode so the original hooksPath is saved in state.
+    repo.git_ai_with_env(
+        &["git-hooks", "ensure"],
+        &[
+            ("GIT_AI_GIT_HOOKS_ENABLED", "true"),
+            ("GIT_AI_GIT_HOOKS_EXTERNALLY_MANAGED", "false"),
+        ],
+    )
+    .expect("git-hooks ensure should succeed");
+
+    let managed_hooks_dir = git_hooks_ai_dir(&repo).join("hooks");
+    let hooks_path_after_first_ensure = repo
+        .git(&["config", "--local", "--get", "core.hooksPath"])
+        .expect("hooksPath should exist after ensure");
+    assert_eq!(
+        hooks_path_after_first_ensure.trim(),
+        managed_hooks_dir.to_string_lossy().as_ref(),
+        "first ensure should set core.hooksPath to managed hooks dir"
+    );
+
+    // Switch to externally managed mode and ensure again; this should not drop the
+    // previously saved original hooksPath from state.
+    repo.git_ai_with_env(
+        &["git-hooks", "ensure"],
+        &[
+            ("GIT_AI_GIT_HOOKS_ENABLED", "true"),
+            ("GIT_AI_GIT_HOOKS_EXTERNALLY_MANAGED", "true"),
+        ],
+    )
+    .expect("git-hooks ensure with externally_managed should succeed");
+
+    repo.git_ai(&["git-hooks", "remove"])
+        .expect("git-hooks remove should succeed");
+
+    let hooks_path_after_remove = repo
+        .git(&["config", "--local", "--get", "core.hooksPath"])
+        .expect("hooksPath should be restored after remove");
+    assert_eq!(
+        hooks_path_after_remove.trim(),
+        user_hooks_dir.to_string_lossy().as_ref(),
+        "remove should restore the user's original core.hooksPath"
+    );
+}
+
+#[test]
+#[serial]
 fn externally_managed_without_hooks_enabled_has_no_effect() {
     // When hooks_externally_managed is true but hooks_enabled is false,
     // the externally_managed flag should have no effect
