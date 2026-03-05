@@ -1165,7 +1165,7 @@ fn handle_stats(args: &[String]) {
 
     // Handle commit range if detected
     if let Some(range) = commit_range {
-        match range_authorship::range_authorship(range, false, &effective_patterns) {
+        match range_authorship::range_authorship(range, false, &effective_patterns, None) {
             Ok(stats) => {
                 if json_output {
                     let json_str = serde_json::to_string(&stats).unwrap();

@@ -44,6 +44,7 @@ pub fn range_authorship(
     commit_range: CommitRange,
     pre_fetch_contents: bool,
     ignore_patterns: &[String],
+    commit_shas: Option<Vec<String>>,
 ) -> Result<RangeAuthorshipStats, GitAiError> {
     commit_range.is_valid()?;
 
@@ -106,16 +107,19 @@ pub fn range_authorship(
     let repository = commit_range.repo();
     let commit_range_clone = commit_range.clone();
 
-    // Collect commit SHAs from the range
-    let commit_shas: Vec<String> = commit_range
-        .into_iter()
-        .map(|c| c.id().to_string())
-        .collect();
+    // Use provided commit SHAs or collect them from the range
+    let commit_shas: Vec<String> = match commit_shas {
+        Some(shas) => shas,
+        None => commit_range
+            .into_iter()
+            .map(|c| c.id().to_string())
+            .collect(),
+    };
     let commit_authorship = get_commits_with_notes_from_list(repository, &commit_shas)?;
 
-    // Calculate range stats - now just pass start, end, and commits
+    // Calculate range stats - pass commit_shas directly to avoid re-fetching
     let range_stats =
-        calculate_range_stats_direct(repository, commit_range_clone, ignore_patterns)?;
+        calculate_range_stats_direct(repository, commit_range_clone, &commit_shas, ignore_patterns)?;
 
     Ok(RangeAuthorshipStats {
         authorship_stats: RangeAuthorshipStatsData {
@@ -394,6 +398,7 @@ fn get_git_diff_stats_for_range(
 fn calculate_range_stats_direct(
     repo: &Repository,
     commit_range: CommitRange,
+    commit_shas: &[String],
     ignore_patterns: &[String],
 ) -> Result<CommitStats, GitAiError> {
     let start_sha = commit_range.start_oid.clone();
@@ -410,9 +415,8 @@ fn calculate_range_stats_direct(
     let diff_ai_stats = diff_ai_accepted_stats(repo, &start_sha, &end_sha, None, ignore_patterns)?;
 
     // Step 2: Create in-memory authorship log for the range, filtered to only commits in the range
-    let commit_shas = commit_range.clone().all_commits();
     let authorship_log =
-        create_authorship_log_for_range(repo, &start_sha, &end_sha, &commit_shas, ignore_patterns)?;
+        create_authorship_log_for_range(repo, &start_sha, &end_sha, commit_shas, ignore_patterns)?;
 
     // Step 3: Calculate stats from the authorship log
     let stats = stats_from_authorship_log(
@@ -509,7 +513,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify stats
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -553,7 +557,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify stats - should include all commits from beginning
         assert_eq!(stats.authorship_stats.total_commits, 2);
@@ -597,7 +601,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // For single commit, should use stats_for_commit_stats
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -654,7 +658,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify stats
         assert_eq!(stats.authorship_stats.total_commits, 3);
@@ -692,7 +696,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Should have 1 commit but no diffs since start == end
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -731,7 +735,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify all files are included
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -791,7 +795,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify lockfile is excluded: only 2 lines added (from main.rs), not 1000+ from lockfile
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -862,7 +866,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Key assertion: git_diff should only count lib.rs changes (3 lines), not package-lock.json (3000 lines)
         assert_eq!(stats.authorship_stats.total_commits, 2);
@@ -927,7 +931,7 @@ mod tests {
             "poetry.lock".to_string(),
             "go.sum".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify: only the 1 README line is counted, all lockfiles excluded (2000 lines ignored)
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -983,7 +987,7 @@ mod tests {
             "package-lock.json".to_string(),
             "yarn.lock".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &lockfile_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &lockfile_patterns, None).unwrap();
 
         // Verify: no lines counted since only lockfiles changed
         assert_eq!(stats.authorship_stats.total_commits, 1);
@@ -1424,7 +1428,7 @@ mod tests {
             "*lock.json".to_string(), // Matches package-lock.json
             "*.generated.*".to_string(),
         ];
-        let stats = range_authorship(commit_range, false, &glob_patterns).unwrap();
+        let stats = range_authorship(commit_range, false, &glob_patterns, None).unwrap();
 
         // Should only count the 1 line in main.rs, ignoring 1700 lines in lockfiles and generated files
         assert_eq!(stats.range_stats.git_diff_added_lines, 1);
