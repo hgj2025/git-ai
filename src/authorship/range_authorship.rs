@@ -118,8 +118,12 @@ pub fn range_authorship(
     let commit_authorship = get_commits_with_notes_from_list(repository, &commit_shas)?;
 
     // Calculate range stats - pass commit_shas directly to avoid re-fetching
-    let range_stats =
-        calculate_range_stats_direct(repository, commit_range_clone, &commit_shas, ignore_patterns)?;
+    let range_stats = calculate_range_stats_direct(
+        repository,
+        commit_range_clone,
+        &commit_shas,
+        ignore_patterns,
+    )?;
 
     Ok(RangeAuthorshipStats {
         authorship_stats: RangeAuthorshipStatsData {
