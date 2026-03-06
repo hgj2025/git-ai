@@ -107,15 +107,10 @@ fn open_browser(url: &str) -> Result<(), String> {
         cmd
     };
 
-    let status = cmd
-        .stdout(std::process::Stdio::null())
+    cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .spawn()
         .map_err(|e| e.to_string())?;
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err("browser command failed".to_string())
-    }
+    Ok(())
 }
