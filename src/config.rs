@@ -81,7 +81,6 @@ pub struct Config {
     #[serde(serialize_with = "serialize_masked_api_key")]
     api_key: Option<String>,
     quiet: bool,
-    custom_attributes: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
@@ -391,11 +390,6 @@ impl Config {
         self.quiet
     }
 
-    /// Returns custom attributes configured via file config and/or env var
-    pub fn custom_attributes(&self) -> &HashMap<String, serde_json::Value> {
-        &self.custom_attributes
-    }
-
     /// Serialize the effective runtime config into pretty JSON.
     /// Sensitive values are redacted via field serializers.
     pub fn to_printable_json_pretty(&self) -> Result<String, String> {
@@ -625,35 +619,6 @@ fn build_config() -> Config {
     // Get quiet setting (defaults to false)
     let quiet = file_cfg.as_ref().and_then(|c| c.quiet).unwrap_or(false);
 
-    // Build custom_attributes: merge file config with env var (env var wins on conflicts)
-    let mut custom_attributes = file_cfg
-        .as_ref()
-        .and_then(|c| c.custom_attributes.clone())
-        .unwrap_or_default();
-
-    if let Ok(env_val) = env::var("GIT_AI_CUSTOM_ATTRIBUTES") {
-        if let Ok(env_attrs) =
-            serde_json::from_str::<HashMap<String, serde_json::Value>>(&env_val)
-        {
-            custom_attributes.extend(env_attrs);
-        } else {
-            crate::utils::debug_log("GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON, ignoring");
-        }
-    }
-
-    custom_attributes.retain(|key, value| match value {
-        serde_json::Value::String(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::Bool(_) => true,
-        _ => {
-            crate::utils::debug_log(&format!(
-                "custom_attributes key '{}' has unsupported type, ignoring",
-                key
-            ));
-            false
-        }
-    });
-
     #[cfg(any(test, feature = "test-support"))]
     {
         let mut config = Config {
@@ -673,7 +638,6 @@ fn build_config() -> Config {
             default_prompt_storage,
             api_key,
             quiet,
-            custom_attributes,
         };
         apply_test_config_patch(&mut config);
         config
@@ -697,8 +661,42 @@ fn build_config() -> Config {
         default_prompt_storage,
         api_key,
         quiet,
-        custom_attributes,
     }
+}
+
+/// Load custom attributes on demand from file config + env var.
+/// Called at post-commit time (not at config init) so the env var is read
+/// in the correct process context.
+pub fn load_custom_attributes() -> HashMap<String, serde_json::Value> {
+    let file_cfg = load_file_config();
+    let mut custom_attributes = file_cfg
+        .as_ref()
+        .and_then(|c| c.custom_attributes.clone())
+        .unwrap_or_default();
+
+    if let Ok(env_val) = env::var("GIT_AI_CUSTOM_ATTRIBUTES") {
+        if let Ok(env_attrs) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&env_val)
+        {
+            custom_attributes.extend(env_attrs);
+        } else {
+            crate::utils::debug_log("GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON, ignoring");
+        }
+    }
+
+    custom_attributes.retain(|key, value| match value {
+        serde_json::Value::String(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::Bool(_) => true,
+        _ => {
+            crate::utils::debug_log(&format!(
+                "custom_attributes key '{}' has unsupported type, ignoring",
+                key
+            ));
+            false
+        }
+    });
+
+    custom_attributes
 }
 
 fn build_feature_flags(file_cfg: &Option<FileConfig>) -> FeatureFlags {
@@ -970,7 +968,6 @@ mod tests {
             default_prompt_storage: None,
             api_key: None,
             quiet: false,
-            custom_attributes: HashMap::new(),
         }
     }
 
@@ -1078,7 +1075,6 @@ mod tests {
             default_prompt_storage: None,
             api_key: None,
             quiet: false,
-            custom_attributes: HashMap::new(),
         }
     }
 
@@ -1195,7 +1191,6 @@ mod tests {
             default_prompt_storage: default_prompt_storage.map(|s| s.to_string()),
             api_key: None,
             quiet: false,
-            custom_attributes: HashMap::new(),
         }
     }
 

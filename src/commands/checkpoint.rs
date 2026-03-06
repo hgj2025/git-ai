@@ -66,7 +66,7 @@ fn build_checkpoint_attrs(
     }
 
     // Attach custom attributes
-    let custom = crate::config::Config::get().custom_attributes();
+    let custom = &crate::config::load_custom_attributes();
     attrs = attrs.custom_attributes_map(custom);
 
     // Add repo URL

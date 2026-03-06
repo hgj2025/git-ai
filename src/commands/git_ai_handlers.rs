@@ -1277,7 +1277,7 @@ fn emit_no_repo_agent_metrics(agent_run_result: Option<&AgentRunResult>) {
     }
 
     let prompt_id = generate_short_hash(&agent_id.id, &agent_id.tool);
-    let custom = crate::config::Config::get().custom_attributes();
+    let custom = &crate::config::load_custom_attributes();
     let attrs = crate::metrics::EventAttributes::with_version(env!("CARGO_PKG_VERSION"))
         .tool(&agent_id.tool)
         .model(&agent_id.model)
