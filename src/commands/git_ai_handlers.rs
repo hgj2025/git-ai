@@ -214,6 +214,10 @@ fn print_help() {
     eprintln!("  diff <commit|range>  Show diff with AI authorship annotations");
     eprintln!("    <commit>              Diff from commit's parent to commit");
     eprintln!("    <commit1>..<commit2>  Diff between two commits");
+    eprintln!("    --json                 Output in JSON format");
+    eprintln!(
+        "    --include-stats        Include commit_stats in JSON output (single commit only)"
+    );
     eprintln!("  stats [commit]     Show AI authorship statistics for a commit");
     eprintln!("    --json                 Output in JSON format");
     eprintln!("  status             Show uncommitted AI authorship status (debug)");

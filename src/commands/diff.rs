@@ -2,6 +2,7 @@ use crate::authorship::authorship_log::{LineRange, PromptRecord};
 use crate::authorship::ignore::{
     build_ignore_matcher, effective_ignore_patterns, should_ignore_file_with_matcher,
 };
+use crate::authorship::stats::{CommitStats, stats_for_commit_stats};
 use crate::commands::blame::GitAiBlameOptions;
 use crate::error::GitAiError;
 use crate::git::refs::show_authorship_note;
@@ -45,6 +46,7 @@ pub struct DiffCommandOptions {
     pub format: DiffFormat,
     pub blame_deletions: bool,
     pub blame_deletions_since: Option<String>,
+    pub include_stats: bool,
 }
 
 impl Default for DiffCommandOptions {
@@ -53,6 +55,7 @@ impl Default for DiffCommandOptions {
             format: DiffFormat::GitCompatibleTerminal,
             blame_deletions: false,
             blame_deletions_since: None,
+            include_stats: false,
         }
     }
 }
@@ -83,6 +86,9 @@ pub struct DiffJson {
     /// Commit metadata for all commits referenced by hunks
     #[serde(default)]
     pub commits: BTreeMap<String, DiffCommitMetadata>,
+    /// Optional commit stats for single-commit diffs (`--json --include-stats`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_stats: Option<CommitStats>,
 }
 
 /// Per-file diff information in JSON output
@@ -197,6 +203,10 @@ pub fn parse_diff_args(args: &[String]) -> Result<ParsedDiffArgs, GitAiError> {
                 options.blame_deletions_since = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--include-stats" => {
+                options.include_stats = true;
+                i += 1;
+            }
             arg if arg.starts_with("--") => {
                 return Err(GitAiError::Generic(format!("Unknown option: {}", arg)));
             }
@@ -210,6 +220,11 @@ pub fn parse_diff_args(args: &[String]) -> Result<ParsedDiffArgs, GitAiError> {
     if options.blame_deletions_since.is_some() && !options.blame_deletions {
         return Err(GitAiError::Generic(
             "--blame-deletions-since requires --blame-deletions".to_string(),
+        ));
+    }
+    if options.include_stats && !matches!(options.format, DiffFormat::Json) {
+        return Err(GitAiError::Generic(
+            "--include-stats requires --json".to_string(),
         ));
     }
 
@@ -249,6 +264,12 @@ pub fn parse_diff_args(args: &[String]) -> Result<ParsedDiffArgs, GitAiError> {
         }
     };
 
+    if options.include_stats && matches!(spec, DiffSpec::TwoCommit(_, _)) {
+        return Err(GitAiError::Generic(
+            "--include-stats is only supported for single-commit diffs".to_string(),
+        ));
+    }
+
     Ok(ParsedDiffArgs { spec, options })
 }
 
@@ -279,7 +300,18 @@ pub fn execute_diff(repo: &Repository, parsed: ParsedDiffArgs) -> Result<String,
     // Format and output annotated diff
     let output = match parsed.options.format {
         DiffFormat::Json => {
-            let diff_json = build_diff_json(repo, &from_commit, &to_commit, &artifacts)?;
+            let commit_stats = if parsed.options.include_stats {
+                let effective_patterns = effective_ignore_patterns(repo, &[], &[]);
+                Some(stats_for_commit_stats(
+                    repo,
+                    &to_commit,
+                    &effective_patterns,
+                )?)
+            } else {
+                None
+            };
+            let diff_json =
+                build_diff_json(repo, &from_commit, &to_commit, &artifacts, commit_stats)?;
             serde_json::to_string(&diff_json)
                 .map_err(|e| GitAiError::Generic(format!("Failed to serialize JSON: {}", e)))?
         }
@@ -1114,6 +1146,7 @@ fn build_diff_json(
     from_commit: &str,
     to_commit: &str,
     artifacts: &DiffBuildArtifacts,
+    commit_stats: Option<CommitStats>,
 ) -> Result<DiffJson, GitAiError> {
     let mut files: BTreeMap<String, FileDiffJson> = BTreeMap::new();
     let file_diffs = get_diff_split_by_file(repo, from_commit, to_commit)?;
@@ -1148,6 +1181,7 @@ fn build_diff_json(
         prompts: artifacts.prompts.clone(),
         hunks: artifacts.json_hunks.clone(),
         commits: artifacts.commits.clone(),
+        commit_stats,
     })
 }
 
@@ -1467,7 +1501,7 @@ pub fn get_diff_json_filtered(
         },
     )?;
 
-    let mut diff_json = build_diff_json(repo, &from_commit, &to_commit, &artifacts)?;
+    let mut diff_json = build_diff_json(repo, &from_commit, &to_commit, &artifacts, None)?;
 
     // Apply filtering if requested
     if options.filter_to_attributed_files
@@ -1538,6 +1572,7 @@ mod tests {
         ));
         assert!(!parsed.options.blame_deletions);
         assert!(parsed.options.blame_deletions_since.is_none());
+        assert!(!parsed.options.include_stats);
     }
 
     #[test]
@@ -1586,6 +1621,37 @@ mod tests {
         }
 
         assert!(matches!(parsed.options.format, DiffFormat::Json));
+    }
+
+    #[test]
+    fn test_parse_diff_args_include_stats_requires_json() {
+        let args = vec!["abc123".to_string(), "--include-stats".to_string()];
+        let result = parse_diff_args(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_diff_args_include_stats_single_commit_json() {
+        let args = vec![
+            "abc123".to_string(),
+            "--json".to_string(),
+            "--include-stats".to_string(),
+        ];
+        let parsed = parse_diff_args(&args).unwrap();
+        assert!(matches!(parsed.spec, DiffSpec::SingleCommit(_)));
+        assert!(matches!(parsed.options.format, DiffFormat::Json));
+        assert!(parsed.options.include_stats);
+    }
+
+    #[test]
+    fn test_parse_diff_args_include_stats_rejects_ranges() {
+        let args = vec![
+            "abc123..def456".to_string(),
+            "--json".to_string(),
+            "--include-stats".to_string(),
+        ];
+        let result = parse_diff_args(&args);
+        assert!(result.is_err());
     }
 
     #[test]

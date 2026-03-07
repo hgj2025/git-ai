@@ -313,6 +313,12 @@ fn commit_keys(json: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+fn extract_json_object(output: &str) -> String {
+    let start = output.find('{').unwrap_or(0);
+    let end = output.rfind('}').unwrap_or(output.len().saturating_sub(1));
+    output[start..=end].to_string()
+}
+
 fn configure_repo_external_diff_helper(repo: &TestRepo) -> String {
     let marker = "EXTERNAL_DIFF_MARKER";
     let helper_path = repo.path().join("ext-diff-helper.sh");
@@ -900,6 +906,78 @@ fn test_diff_json_output_with_escaped_newlines() {
 
     // Print the JSON output for inspection
     println!("JSON output:\n{}", serde_json::to_string(&json).unwrap());
+}
+
+#[test]
+fn test_diff_json_omits_commit_stats_without_include_stats_flag() {
+    let repo = TestRepo::new();
+
+    let mut file = repo.filename("stats_omitted.txt");
+    file.set_contents(lines!["base".human()]);
+    repo.stage_all_and_commit("Initial").unwrap();
+
+    file.set_contents(lines!["base".human(), "ai line".ai()]);
+    let commit = repo.stage_all_and_commit("Add AI line").unwrap();
+
+    let output = repo
+        .git_ai(&["diff", &commit.commit_sha, "--json"])
+        .expect("git-ai diff --json should succeed");
+    let json: Value = serde_json::from_str(&output).expect("diff JSON should parse");
+
+    assert!(
+        json.get("commit_stats").is_none(),
+        "commit_stats should be omitted unless --include-stats is provided"
+    );
+}
+
+#[test]
+fn test_diff_json_include_stats_matches_stats_command() {
+    let repo = TestRepo::new();
+
+    let mut file = repo.filename("stats_present.txt");
+    file.set_contents(lines!["base".human()]);
+    repo.stage_all_and_commit("Initial").unwrap();
+
+    file.set_contents(lines!["base".human(), "ai line 1".ai(), "ai line 2".ai()]);
+    let commit = repo.stage_all_and_commit("Add AI lines").unwrap();
+
+    let diff_output = repo
+        .git_ai(&["diff", &commit.commit_sha, "--json", "--include-stats"])
+        .expect("git-ai diff --json --include-stats should succeed");
+    let diff_json: Value = serde_json::from_str(&diff_output).expect("diff JSON should parse");
+
+    let stats_output = repo
+        .git_ai(&["stats", &commit.commit_sha, "--json"])
+        .expect("git-ai stats --json should succeed");
+    let stats_json_raw = extract_json_object(&stats_output);
+    let stats_json: Value = serde_json::from_str(&stats_json_raw).expect("stats JSON should parse");
+
+    let commit_stats = diff_json
+        .get("commit_stats")
+        .expect("diff JSON should include commit_stats");
+    assert_eq!(
+        commit_stats, &stats_json,
+        "commit_stats in diff JSON should reuse git-ai stats output"
+    );
+}
+
+#[test]
+fn test_diff_json_include_stats_rejects_commit_ranges() {
+    let repo = TestRepo::new();
+
+    let mut file = repo.filename("range_stats.txt");
+    file.set_contents(lines!["line 1".human()]);
+    let first = repo.stage_all_and_commit("Commit 1").unwrap();
+
+    file.set_contents(lines!["line 1".human(), "line 2".ai()]);
+    let second = repo.stage_all_and_commit("Commit 2").unwrap();
+
+    let range = format!("{}..{}", first.commit_sha, second.commit_sha);
+    let result = repo.git_ai(&["diff", &range, "--json", "--include-stats"]);
+    assert!(
+        result.is_err(),
+        "--include-stats should be rejected for commit ranges"
+    );
 }
 
 #[test]
@@ -1745,6 +1823,9 @@ reuse_tests_in_worktree!(
     test_diff_output_format,
     test_diff_error_on_no_args,
     test_diff_json_output_with_escaped_newlines,
+    test_diff_json_omits_commit_stats_without_include_stats_flag,
+    test_diff_json_include_stats_matches_stats_command,
+    test_diff_json_include_stats_rejects_commit_ranges,
     test_diff_preserves_context_lines,
     test_diff_exact_sequence_verification,
     test_diff_range_multiple_commits,
