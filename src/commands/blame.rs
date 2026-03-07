@@ -10,7 +10,7 @@ use crate::git::repository::{exec_git, exec_git_stdin};
 #[cfg(windows)]
 use crate::utils::normalize_to_posix;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -24,7 +24,7 @@ pub static OLDEST_AI_BLAME_DATE: LazyLock<DateTime<FixedOffset>> = LazyLock::new
         .unwrap()
 });
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BlameHunk {
     /// Line range [start, end] (inclusive) - current line numbers in the file
     pub range: (u32, u32),
@@ -57,7 +57,7 @@ pub struct BlameHunk {
     pub is_boundary: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BlameAnalysisResult {
     pub line_authors: HashMap<u32, String>,
     pub prompt_records: HashMap<String, PromptRecord>,
@@ -71,7 +71,8 @@ struct PreparedBlameRequest {
     options: GitAiBlameOptions,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GitAiBlameOptions {
     // Line range options
     pub line_ranges: Vec<(u32, u32)>,
