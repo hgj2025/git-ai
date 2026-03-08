@@ -516,19 +516,21 @@ fn parse_diff_hunks(diff_text: &str) -> Result<Vec<DiffHunk>, GitAiError> {
             continue;
         }
 
-        if let Some(path_opt) = parse_old_file_path_from_minus_header_line(line) {
-            current_old_file = path_opt;
-            if current_file.is_empty() {
-                current_file = current_old_file.clone().unwrap_or_default();
+        if current_hunk.is_none() {
+            if let Some(path_opt) = parse_old_file_path_from_minus_header_line(line) {
+                current_old_file = path_opt;
+                if current_file.is_empty() {
+                    current_file = current_old_file.clone().unwrap_or_default();
+                }
+                continue;
             }
-            continue;
-        }
 
-        if let Some(path_opt) = parse_new_file_path_from_plus_header_line(line) {
-            current_file = path_opt
-                .or_else(|| current_old_file.clone())
-                .unwrap_or_default();
-            continue;
+            if let Some(path_opt) = parse_new_file_path_from_plus_header_line(line) {
+                current_file = path_opt
+                    .or_else(|| current_old_file.clone())
+                    .unwrap_or_default();
+                continue;
+            }
         }
 
         if line.starts_with("@@ ") {
@@ -544,13 +546,13 @@ fn parse_diff_hunks(diff_text: &str) -> Result<Vec<DiffHunk>, GitAiError> {
         }
 
         if let Some(hunk) = current_hunk.as_mut() {
-            if line.starts_with('-') && !line.starts_with("---") {
+            if let Some(stripped) = line.strip_prefix('-') {
                 hunk.deleted_lines.push(old_line_cursor);
-                hunk.deleted_contents.push(line[1..].to_string());
+                hunk.deleted_contents.push(stripped.to_string());
                 old_line_cursor += 1;
-            } else if line.starts_with('+') && !line.starts_with("+++") {
+            } else if let Some(stripped) = line.strip_prefix('+') {
                 hunk.added_lines.push(new_line_cursor);
-                hunk.added_contents.push(line[1..].to_string());
+                hunk.added_contents.push(stripped.to_string());
                 new_line_cursor += 1;
             } else if line.starts_with(' ') {
                 old_line_cursor += 1;
@@ -886,11 +888,13 @@ fn apply_blame_for_side(
         return;
     }
 
-    let mut blame_options = GitAiBlameOptions::default();
-    blame_options.line_ranges = line_ranges;
-    blame_options.no_output = true;
-    blame_options.use_prompt_hashes_as_names = true;
-    blame_options.newest_commit = Some(newest_commit.unwrap_or(from_commit).to_string());
+    let mut blame_options = GitAiBlameOptions {
+        line_ranges,
+        no_output: true,
+        use_prompt_hashes_as_names: true,
+        newest_commit: Some(newest_commit.unwrap_or(from_commit).to_string()),
+        ..GitAiBlameOptions::default()
+    };
     if matches!(side, LineSide::New) {
         blame_options.oldest_commit = Some(from_commit.to_string());
     } else {
@@ -1476,6 +1480,7 @@ fn get_diff_sections_by_file(
     let mut current_file = String::new();
     let mut current_diff = String::new();
     let mut current_old_file: Option<String> = None;
+    let mut in_hunk = false;
 
     let flush_section = |sections: &mut Vec<(String, String)>,
                          current_file: &mut String,
@@ -1497,6 +1502,7 @@ fn get_diff_sections_by_file(
                 current_old_file = None;
                 current_file.clear();
             }
+            in_hunk = false;
             current_diff.push_str(line);
             current_diff.push('\n');
             continue;
@@ -1509,19 +1515,26 @@ fn get_diff_sections_by_file(
         current_diff.push_str(line);
         current_diff.push('\n');
 
-        if let Some(path_opt) = parse_old_file_path_from_minus_header_line(line) {
-            current_old_file = path_opt.clone();
-            if current_file.is_empty() {
-                current_file = path_opt.unwrap_or_default();
-            }
+        if line.starts_with("@@ ") {
+            in_hunk = true;
             continue;
         }
 
-        if let Some(path_opt) = parse_new_file_path_from_plus_header_line(line) {
-            current_file = path_opt
-                .or_else(|| current_old_file.clone())
-                .unwrap_or_default();
-            continue;
+        if !in_hunk {
+            if let Some(path_opt) = parse_old_file_path_from_minus_header_line(line) {
+                current_old_file = path_opt.clone();
+                if current_file.is_empty() {
+                    current_file = path_opt.unwrap_or_default();
+                }
+                continue;
+            }
+
+            if let Some(path_opt) = parse_new_file_path_from_plus_header_line(line) {
+                current_file = path_opt
+                    .or_else(|| current_old_file.clone())
+                    .unwrap_or_default();
+                continue;
+            }
         }
     }
 
@@ -1552,21 +1565,22 @@ pub fn format_annotated_diff(
 
         let mut old_line_num = 0u32;
         let mut new_line_num = 0u32;
+        let mut in_hunk = false;
 
         for line in section_text.lines() {
-            if line.starts_with("diff --git")
-                || line.starts_with("index ")
-                || line.starts_with("--- ")
-                || line.starts_with("+++ ")
-            {
+            if is_diff_header_line(line, in_hunk) {
+                if line.starts_with("diff --git") {
+                    in_hunk = false;
+                }
                 result.push_str(&format_line(line, LineType::DiffHeader, use_color, None));
             } else if line.starts_with("@@ ") {
+                in_hunk = true;
                 if let Some((old_start, new_start)) = parse_hunk_header_for_line_nums(line) {
                     old_line_num = old_start;
                     new_line_num = new_start;
                 }
                 result.push_str(&format_line(line, LineType::HunkHeader, use_color, None));
-            } else if line.starts_with('-') && !line.starts_with("---") {
+            } else if in_hunk && line.starts_with('-') {
                 let key = DiffLineKey {
                     file: file_path.clone(),
                     line: old_line_num,
@@ -1580,7 +1594,7 @@ pub fn format_annotated_diff(
                     attribution,
                 ));
                 old_line_num += 1;
-            } else if line.starts_with('+') && !line.starts_with("+++") {
+            } else if in_hunk && line.starts_with('+') {
                 let key = DiffLineKey {
                     file: file_path.clone(),
                     line: new_line_num,
@@ -1594,7 +1608,7 @@ pub fn format_annotated_diff(
                     attribution,
                 ));
                 new_line_num += 1;
-            } else if line.starts_with(' ') {
+            } else if in_hunk && line.starts_with(' ') {
                 result.push_str(&format_line(line, LineType::Context, use_color, None));
                 old_line_num += 1;
                 new_line_num += 1;
@@ -1607,6 +1621,12 @@ pub fn format_annotated_diff(
     }
 
     Ok(result)
+}
+
+fn is_diff_header_line(line: &str, in_hunk: bool) -> bool {
+    line.starts_with("diff --git")
+        || line.starts_with("index ")
+        || (!in_hunk && (line.starts_with("--- ") || line.starts_with("+++ ")))
 }
 
 fn parse_hunk_header_for_line_nums(line: &str) -> Option<(u32, u32)> {
@@ -2245,6 +2265,68 @@ index abc123..def456 100644
         let result = parse_diff_hunks(diff_text).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_path, "DST/file1.rs");
+    }
+
+    #[test]
+    fn test_parse_diff_hunks_preserves_header_like_content_inside_hunk() {
+        let diff_text = r#"diff --git a/query.sql b/query.sql
+index abc123..def456 100644
+--- a/query.sql
++++ b/query.sql
+@@ -10,3 +10,3 @@
+--- old sql comment
+-WHERE id = 1;
++++ new marker
++WHERE id = 2;
+ SELECT * FROM users;
+@@ -30,1 +30,1 @@
+-regular old
++regular new
+"#;
+
+        let result = parse_diff_hunks(diff_text).unwrap();
+        assert_eq!(result.len(), 2);
+
+        assert_eq!(result[0].file_path, "query.sql");
+        assert_eq!(result[0].deleted_lines, vec![10, 11]);
+        assert_eq!(result[0].deleted_contents, vec!["-- old sql comment", "WHERE id = 1;"]);
+        assert_eq!(result[0].added_lines, vec![10, 11]);
+        assert_eq!(result[0].added_contents, vec!["++ new marker", "WHERE id = 2;"]);
+
+        assert_eq!(result[1].file_path, "query.sql");
+        assert_eq!(result[1].deleted_lines, vec![30]);
+        assert_eq!(result[1].added_lines, vec![30]);
+    }
+
+    #[test]
+    fn test_parse_diff_hunks_preserves_plus_plus_plus_content_inside_hunk() {
+        let diff_text = r#"diff --git a/script.lua b/script.lua
+index abc123..def456 100644
+--- a/script.lua
++++ b/script.lua
+@@ -41,0 +42,2 @@
++++ section marker
++print("hello")
+"#;
+
+        let result = parse_diff_hunks(diff_text).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_path, "script.lua");
+        assert_eq!(result[0].added_lines, vec![42, 43]);
+        assert_eq!(
+            result[0].added_contents,
+            vec!["++ section marker", "print(\"hello\")"]
+        );
+    }
+
+    #[test]
+    fn test_is_diff_header_line_respects_hunk_state() {
+        assert!(is_diff_header_line("diff --git a/f b/f", false));
+        assert!(is_diff_header_line("index abc..def 100644", false));
+        assert!(is_diff_header_line("--- a/file.txt", false));
+        assert!(is_diff_header_line("+++ b/file.txt", false));
+        assert!(!is_diff_header_line("--- content line", true));
+        assert!(!is_diff_header_line("+++ content line", true));
     }
 
     #[test]
