@@ -149,7 +149,7 @@ pub struct FileConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quiet: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_attributes: Option<HashMap<String, serde_json::Value>>,
+    pub custom_attributes: Option<HashMap<String, String>>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -672,12 +672,14 @@ fn build_config() -> Config {
 /// users can use them to tag AI authorship data with organizational metadata
 /// such as employee IDs, device IDs, team names, etc.
 ///
+/// All values are strings. When reading from JSON sources, non-string scalar
+/// values (numbers, booleans) are converted to their string representation.
+/// Arrays, objects, and null are silently dropped.
+///
 /// # Resolution order
 /// 1. Read `custom_attributes` from `~/.git-ai/config.json` (if present).
 /// 2. Parse `GIT_AI_CUSTOM_ATTRIBUTES` env var as a JSON object. Env var
 ///    keys **override** file config keys on conflict.
-/// 3. Drop any key whose value is not a string, number, or boolean
-///    (arrays, objects, and null are silently ignored via `debug_log`).
 ///
 /// # Why this is not part of `Config`
 /// `Config` is initialised once via `OnceLock` at first access, which may
@@ -687,9 +689,9 @@ fn build_config() -> Config {
 ///
 /// # Example env var
 /// ```sh
-/// export GIT_AI_CUSTOM_ATTRIBUTES='{"employee_id":"E123","team":"platform","active":true}'
+/// export GIT_AI_CUSTOM_ATTRIBUTES='{"employee_id":"E123","team":"platform"}'
 /// ```
-pub fn load_custom_attributes() -> HashMap<String, serde_json::Value> {
+pub fn load_custom_attributes() -> HashMap<String, String> {
     let file_cfg = load_file_config();
     let mut custom_attributes = file_cfg
         .as_ref()
@@ -697,26 +699,12 @@ pub fn load_custom_attributes() -> HashMap<String, serde_json::Value> {
         .unwrap_or_default();
 
     if let Ok(env_val) = env::var("GIT_AI_CUSTOM_ATTRIBUTES") {
-        if let Ok(env_attrs) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&env_val)
-        {
+        if let Ok(env_attrs) = serde_json::from_str::<HashMap<String, String>>(&env_val) {
             custom_attributes.extend(env_attrs);
         } else {
-            crate::utils::debug_log("GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON, ignoring");
+            crate::utils::debug_log("GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON or contains non-string values, ignoring");
         }
     }
-
-    custom_attributes.retain(|key, value| match value {
-        serde_json::Value::String(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::Bool(_) => true,
-        _ => {
-            crate::utils::debug_log(&format!(
-                "custom_attributes key '{}' has unsupported type, ignoring",
-                key
-            ));
-            false
-        }
-    });
 
     custom_attributes
 }

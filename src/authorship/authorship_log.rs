@@ -205,7 +205,7 @@ pub struct PromptRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_attributes: Option<HashMap<String, serde_json::Value>>,
+    pub custom_attributes: Option<HashMap<String, String>>,
 }
 
 impl Eq for PromptRecord {}
