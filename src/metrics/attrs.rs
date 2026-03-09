@@ -195,10 +195,7 @@ impl EventAttributes {
         self
     }
 
-    pub fn custom_attributes_map(
-        self,
-        attrs: &std::collections::HashMap<String, String>,
-    ) -> Self {
+    pub fn custom_attributes_map(self, attrs: &std::collections::HashMap<String, String>) -> Self {
         if attrs.is_empty() {
             self
         } else {

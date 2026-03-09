@@ -684,8 +684,7 @@ fn build_custom_attributes(file_cfg: &Option<FileConfig>) -> HashMap<String, Str
         .unwrap_or_default();
 
     if let Ok(env_val) = env::var("GIT_AI_CUSTOM_ATTRIBUTES") {
-        if let Ok(env_attrs) =
-            serde_json::from_str::<HashMap<String, serde_json::Value>>(&env_val)
+        if let Ok(env_attrs) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&env_val)
         {
             for (k, v) in env_attrs {
                 match v {
@@ -702,9 +701,7 @@ fn build_custom_attributes(file_cfg: &Option<FileConfig>) -> HashMap<String, Str
                 }
             }
         } else {
-            crate::utils::debug_log(
-                "GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON, ignoring",
-            );
+            crate::utils::debug_log("GIT_AI_CUSTOM_ATTRIBUTES is not valid JSON, ignoring");
         }
     }
 
