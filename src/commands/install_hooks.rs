@@ -405,9 +405,7 @@ async fn async_run_install(
 fn emit_install_hooks_metrics(results: &[(String, InstallResult)]) {
     use crate::metrics::{EventAttributes, InstallHooksValues};
 
-    let custom = &crate::config::load_custom_attributes();
-    let attrs =
-        EventAttributes::with_version(env!("CARGO_PKG_VERSION")).custom_attributes_map(custom);
+    let attrs = EventAttributes::with_version(env!("CARGO_PKG_VERSION"));
 
     for (tool_id, result) in results {
         let mut values = InstallHooksValues::new()
