@@ -486,8 +486,7 @@ fn get_diff_text(
     args.push(to.to_string());
 
     let output = exec_git_with_profile(&args, InternalGitProfile::PatchParse)?;
-    String::from_utf8(output.stdout)
-        .map_err(|e| GitAiError::Generic(format!("Failed to parse diff output: {}", e)))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn parse_diff_hunks(diff_text: &str) -> Result<Vec<DiffHunk>, GitAiError> {
