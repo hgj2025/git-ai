@@ -20,6 +20,9 @@ if [ -z "${HOME:-}" ]; then
         fi
     elif id -un >/dev/null 2>&1; then
         export HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+        if [ -z "$HOME" ]; then
+            export HOME="/root"
+        fi
     else
         export HOME="/root"
     fi
