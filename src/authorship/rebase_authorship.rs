@@ -1502,6 +1502,14 @@ pub fn rewrite_authorship_after_commit_amend(
     // Update base commit SHA
     authorship_log.metadata.base_commit_sha = amended_commit.to_string();
 
+    // Inject custom attributes into all PromptRecords (same as post_commit)
+    let custom_attrs = crate::config::Config::get().custom_attributes();
+    if !custom_attrs.is_empty() {
+        for pr in authorship_log.metadata.prompts.values_mut() {
+            pr.custom_attributes = Some(custom_attrs.clone());
+        }
+    }
+
     // Save authorship log
     let authorship_json = authorship_log
         .serialize_to_string()
