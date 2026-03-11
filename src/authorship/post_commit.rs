@@ -153,12 +153,13 @@ pub fn post_commit(
         PromptStorageMode::Default => {
             // "default" - attempt CAS upload, NEVER keep messages in notes
             // Check conditions for CAS upload:
-            // - user is logged in OR using custom API URL
+            // - user is logged in OR has API key OR using custom API URL
             let context = ApiContext::new(None);
             let client = ApiClient::new(context);
             let using_custom_api =
                 Config::get().api_base_url() != crate::config::DEFAULT_API_BASE_URL;
-            let should_enqueue_cas = client.is_logged_in() || using_custom_api;
+            let should_enqueue_cas =
+                client.is_logged_in() || client.has_api_key() || using_custom_api;
 
             if should_enqueue_cas {
                 // Redact secrets before uploading to CAS
