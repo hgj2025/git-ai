@@ -333,7 +333,7 @@ fn test_squash_merge_preserves_custom_attributes_from_config() {
 
     // Create initial commit on default branch
     let mut file = repo.filename("main.txt");
-    file.set_contents(lines!["line 1", "line 2", "line 3"]);
+    file.set_contents(lines!["line 1", "line 2", "line 3", ""]);
     repo.stage_all_and_commit("Initial commit").unwrap();
     let default_branch = repo.current_branch();
 
