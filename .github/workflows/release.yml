@@ -316,12 +316,11 @@ jobs:
           if [ -z "$CHECKSUMS" ]; then
             CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"
           fi
-          # Replace variable assignment lines to embed release-specific values
-          # Line 15: REPO, Line 22: PINNED_VERSION, Line 27: EMBEDDED_CHECKSUMS
+          # Replace placeholder values with release-specific values (pattern-based to be resilient to line changes)
           awk -v repo="$REPO" -v version="$VERSION" -v checksums="$CHECKSUMS" '
-            NR==15 { sub(/__REPO_PLACEHOLDER__/, repo) }
-            NR==22 { sub(/__VERSION_PLACEHOLDER__/, version) }
-            NR==27 { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
+            /^REPO="__REPO_PLACEHOLDER__"/ { sub(/__REPO_PLACEHOLDER__/, repo) }
+            /^PINNED_VERSION="__VERSION_PLACEHOLDER__"/ { sub(/__VERSION_PLACEHOLDER__/, version) }
+            /^EMBEDDED_CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"/ { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
             { print }
           ' repo/install.sh > release/install.sh
           chmod +x release/install.sh
@@ -337,12 +336,11 @@ jobs:
           if [ -z "$CHECKSUMS" ]; then
             CHECKSUMS="__CHECKSUMS_PLACEHOLDER__"
           fi
-          # Replace variable assignment lines to embed release-specific values
-          # Line 90: REPO, Line 97: PINNED_VERSION, Line 102: EMBEDDED_CHECKSUMS
+          # Replace placeholder values with release-specific values (pattern-based to be resilient to line changes)
           awk -v repo="$REPO" -v version="$VERSION" -v checksums="$CHECKSUMS" '
-            NR==90 { sub(/__REPO_PLACEHOLDER__/, repo) }
-            NR==97 { sub(/__VERSION_PLACEHOLDER__/, version) }
-            NR==102 { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
+            /^[$]Repo = .__REPO_PLACEHOLDER__/ { sub(/__REPO_PLACEHOLDER__/, repo) }
+            /^[$]PinnedVersion = .__VERSION_PLACEHOLDER__/ { sub(/__VERSION_PLACEHOLDER__/, version) }
+            /^[$]EmbeddedChecksums = .__CHECKSUMS_PLACEHOLDER__/ { sub(/__CHECKSUMS_PLACEHOLDER__/, checksums) }
             { print }
           ' repo/install.ps1 > release/install.ps1
           echo "Generated version-pinned install.ps1 for $VERSION from $REPO"
