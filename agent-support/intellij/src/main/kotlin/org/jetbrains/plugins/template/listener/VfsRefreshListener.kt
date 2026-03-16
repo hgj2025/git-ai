@@ -35,22 +35,47 @@ internal fun collectSweepEntriesForPaths(
     agentTouchedFiles: ConcurrentHashMap<String, TrackedAgent>,
     now: Long,
     readContent: (String) -> String?,
+    onSkip: (reason: String, path: String) -> Unit = { _, _ -> },
 ): Map<String, List<SweepEntry>> {
     val entriesByAgent = mutableMapOf<String, MutableList<SweepEntry>>()
 
     for (absolutePath in pathsToSweep) {
-        val tracked = agentTouchedFiles[absolutePath] ?: continue
-        if (tracked.workspaceRoot != workspaceRoot) continue
-
-        if (now - tracked.trackedAt > TrackedAgent.STALE_THRESHOLD_MS) {
-            agentTouchedFiles.remove(absolutePath, tracked)
+        val tracked = agentTouchedFiles[absolutePath]
+        if (tracked == null) {
+            onSkip("missing_tracking", absolutePath)
+            continue
+        }
+        if (tracked.workspaceRoot != workspaceRoot) {
+            onSkip("workspace_mismatch", absolutePath)
             continue
         }
 
-        val content = readContent(absolutePath) ?: continue
-        if (content == tracked.lastCheckpointContent) continue
+        if (now > tracked.refreshEligibleUntil) {
+            agentTouchedFiles.remove(absolutePath, tracked)
+            onSkip("expired", absolutePath)
+            continue
+        }
 
-        if (!agentTouchedFiles.remove(absolutePath, tracked)) continue
+        if (now - tracked.trackedAt > TrackedAgent.STALE_THRESHOLD_MS) {
+            agentTouchedFiles.remove(absolutePath, tracked)
+            onSkip("stale", absolutePath)
+            continue
+        }
+
+        val content = readContent(absolutePath)
+        if (content == null) {
+            onSkip("missing_content", absolutePath)
+            continue
+        }
+        if (content == tracked.lastCheckpointContent) {
+            onSkip("content_unchanged", absolutePath)
+            continue
+        }
+
+        if (!agentTouchedFiles.remove(absolutePath, tracked)) {
+            onSkip("tracking_changed", absolutePath)
+            continue
+        }
 
         val relativePath = toRelativePath(absolutePath, workspaceRoot)
         entriesByAgent.getOrPut(tracked.agentName) { mutableListOf() }
@@ -84,12 +109,22 @@ class VfsRefreshListener(
     private val pendingSweepPaths = ConcurrentHashMap<String, MutableSet<String>>()
 
     override fun after(events: List<VFileEvent>) {
+        val now = System.currentTimeMillis()
         val workspaceRootsToSweep = mutableSetOf<String>()
 
         for (event in events) {
             if (event !is VFileContentChangeEvent) continue
             if (!event.isFromRefresh) continue
-            val tracked = agentTouchedFiles[event.path] ?: continue
+            val tracked = agentTouchedFiles[event.path]
+            if (tracked == null) {
+                logger.debug("Skipping refresh event [reason=missing_tracking, path=${event.path}]")
+                continue
+            }
+            if (now > tracked.refreshEligibleUntil) {
+                agentTouchedFiles.remove(event.path, tracked)
+                logger.debug("Skipping refresh event [reason=expired, path=${event.path}]")
+                continue
+            }
             val workspaceRoot = tracked.workspaceRoot
             pendingSweepPaths
                 .computeIfAbsent(workspaceRoot) { ConcurrentHashMap.newKeySet() }
@@ -125,13 +160,17 @@ class VfsRefreshListener(
             workspaceRoot = workspaceRoot,
             pathsToSweep = pathsToSweep,
             agentTouchedFiles = agentTouchedFiles,
-            now = now
-        ) { absolutePath ->
-            ApplicationManager.getApplication().runReadAction<String?> {
-                LocalFileSystem.getInstance().findFileByPath(absolutePath)
-                    ?.let { String(it.contentsToByteArray(), Charsets.UTF_8) }
+            now = now,
+            readContent = { absolutePath ->
+                ApplicationManager.getApplication().runReadAction<String?> {
+                    LocalFileSystem.getInstance().findFileByPath(absolutePath)
+                        ?.let { String(it.contentsToByteArray(), Charsets.UTF_8) }
+                }
+            },
+            onSkip = { reason, path ->
+                logger.debug("Skipping sweep path [reason=$reason, path=$path, workspace=$workspaceRoot]")
             }
-        }
+        )
 
         val service = GitAiService.getInstance()
         for ((agent, entries) in entriesByAgent) {

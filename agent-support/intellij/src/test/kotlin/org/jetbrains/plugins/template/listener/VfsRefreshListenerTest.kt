@@ -1,6 +1,7 @@
 package org.jetbrains.plugins.template.listener
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.util.concurrent.ConcurrentHashMap
 import org.junit.Test
@@ -53,15 +54,16 @@ class VfsRefreshListenerTest {
             workspaceRoot = workspaceRoot,
             pathsToSweep = listOf(refreshedPath),
             agentTouchedFiles = trackedFiles,
-            now = 2_000L
-        ) { path ->
-            readPaths.add(path)
-            when (path) {
-                refreshedPath -> "after-refresh"
-                unrelatedPath -> "after-manual-edit"
-                else -> null
+            now = 2_000L,
+            readContent = { path ->
+                readPaths.add(path)
+                when (path) {
+                    refreshedPath -> "after-refresh"
+                    unrelatedPath -> "after-manual-edit"
+                    else -> null
+                }
             }
-        }
+        )
 
         assertEquals(listOf(refreshedPath), readPaths)
         assertEquals(null, trackedFiles[refreshedPath])
@@ -94,14 +96,79 @@ class VfsRefreshListenerTest {
             workspaceRoot = workspaceRoot,
             pathsToSweep = listOf(filePath),
             agentTouchedFiles = trackedFiles,
-            now = 2_000L
-        ) {
-            // Simulate a concurrent in-editor update that rewrites the tracked entry.
-            trackedFiles[filePath] = updatedTracked
-            "disk-refresh-content"
-        }
+            now = 2_000L,
+            readContent = {
+                // Simulate a concurrent in-editor update that rewrites the tracked entry.
+                trackedFiles[filePath] = updatedTracked
+                "disk-refresh-content"
+            }
+        )
 
         assertTrue(entriesByAgent.isEmpty())
         assertEquals(updatedTracked, trackedFiles[filePath])
+    }
+
+    @Test
+    fun sweepSkipsRefreshOutsideEligibilityWindowAndEvictsTrackedEntry() {
+        val workspaceRoot = "/repo"
+        val filePath = "$workspaceRoot/file.txt"
+        val tracked = TrackedAgent(
+            agentName = "copilot",
+            workspaceRoot = workspaceRoot,
+            lastCheckpointContent = "before",
+            trackedAt = 1_000L,
+            refreshEligibleUntil = 1_500L
+        )
+
+        val trackedFiles = ConcurrentHashMap<String, TrackedAgent>().apply {
+            put(filePath, tracked)
+        }
+        val skipped = mutableListOf<String>()
+
+        val entriesByAgent = collectSweepEntriesForPaths(
+            workspaceRoot = workspaceRoot,
+            pathsToSweep = listOf(filePath),
+            agentTouchedFiles = trackedFiles,
+            now = 2_000L,
+            readContent = { "after-refresh" },
+            onSkip = { reason, path -> skipped.add("$reason:$path") }
+        )
+
+        assertTrue(entriesByAgent.isEmpty())
+        assertNull(trackedFiles[filePath])
+        assertEquals(listOf("expired:$filePath"), skipped)
+    }
+
+    @Test
+    fun delayedSweepDoesNotCheckpointEntryAfterEligibilityExpires() {
+        val workspaceRoot = "/repo"
+        val filePath = "$workspaceRoot/file.txt"
+        val pendingSweepPaths = ConcurrentHashMap<String, MutableSet<String>>().apply {
+            computeIfAbsent(workspaceRoot) { ConcurrentHashMap.newKeySet() }.add(filePath)
+        }
+
+        val pathsToSweep = drainPendingPaths(pendingSweepPaths, workspaceRoot)
+        val tracked = TrackedAgent(
+            agentName = "copilot",
+            workspaceRoot = workspaceRoot,
+            lastCheckpointContent = "before",
+            trackedAt = 1_000L,
+            refreshEligibleUntil = 1_200L
+        )
+        val trackedFiles = ConcurrentHashMap<String, TrackedAgent>().apply {
+            put(filePath, tracked)
+        }
+
+        val entriesByAgent = collectSweepEntriesForPaths(
+            workspaceRoot = workspaceRoot,
+            pathsToSweep = pathsToSweep,
+            agentTouchedFiles = trackedFiles,
+            now = 2_000L,
+            readContent = { "after-unrelated-refresh" }
+        )
+
+        assertEquals(listOf(filePath), pathsToSweep)
+        assertTrue(entriesByAgent.isEmpty())
+        assertNull(trackedFiles[filePath])
     }
 }

@@ -85,7 +85,8 @@ class DocumentChangeListener(
         agentTouchedFiles[filePath] = TrackedAgent(
             agentName = analysis.sourceName,
             workspaceRoot = workspaceRoot,
-            lastCheckpointContent = currentContent
+            lastCheckpointContent = currentContent,
+            trackedAt = now
         )
 
         // Trigger before_edit checkpoint
@@ -115,10 +116,27 @@ class DocumentChangeListener(
 
         val workspaceRoot = findWorkspaceRoot(file) ?: return
         val contentAfterEdit = document.text
+        val now = System.currentTimeMillis()
 
-        // Update tracked file content so sweep won't re-checkpoint the same state
-        agentTouchedFiles.computeIfPresent(filePath) { _, existing ->
-            existing.copy(lastCheckpointContent = contentAfterEdit)
+        // Refresh tracking state so only near-term refreshes can trigger sweep checkpoints.
+        agentTouchedFiles.compute(filePath) { _, existing ->
+            val updatedTrackedAt = now
+            if (existing == null) {
+                TrackedAgent(
+                    agentName = analysis.sourceName,
+                    workspaceRoot = workspaceRoot,
+                    lastCheckpointContent = contentAfterEdit,
+                    trackedAt = updatedTrackedAt
+                )
+            } else {
+                existing.copy(
+                    agentName = analysis.sourceName,
+                    workspaceRoot = workspaceRoot,
+                    lastCheckpointContent = contentAfterEdit,
+                    trackedAt = updatedTrackedAt,
+                    refreshEligibleUntil = updatedTrackedAt + TrackedAgent.REFRESH_ELIGIBILITY_WINDOW_MS
+                )
+            }
         }
 
         // Cancel any existing pending checkpoint for this file
