@@ -82,6 +82,7 @@ pub struct Config {
     api_key: Option<String>,
     quiet: bool,
     custom_attributes: HashMap<String, String>,
+    droid_cli_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
@@ -151,6 +152,8 @@ pub struct FileConfig {
     pub quiet: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_attributes: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub droid_cli_path: Option<String>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -398,6 +401,11 @@ impl Config {
         &self.custom_attributes
     }
 
+    /// Returns the path to the droid CLI binary, if configured.
+    pub fn droid_cli_path(&self) -> Option<&str> {
+        self.droid_cli_path.as_deref()
+    }
+
     /// Serialize the effective runtime config into pretty JSON.
     /// Sensitive values are redacted via field serializers.
     pub fn to_printable_json_pretty(&self) -> Result<String, String> {
@@ -630,6 +638,10 @@ fn build_config() -> Config {
     // Build custom attributes: file config as base, env var overrides
     let custom_attributes = build_custom_attributes(&file_cfg);
 
+    let droid_cli_path = file_cfg
+        .as_ref()
+        .and_then(|c| c.droid_cli_path.clone());
+
     #[cfg(any(test, feature = "test-support"))]
     {
         let mut config = Config {
@@ -650,6 +662,7 @@ fn build_config() -> Config {
             api_key,
             quiet,
             custom_attributes: custom_attributes.clone(),
+            droid_cli_path: droid_cli_path.clone(),
         };
         apply_test_config_patch(&mut config);
         config
@@ -674,6 +687,7 @@ fn build_config() -> Config {
         api_key,
         quiet,
         custom_attributes,
+        droid_cli_path,
     }
 }
 
@@ -989,6 +1003,7 @@ mod tests {
             api_key: None,
             quiet: false,
             custom_attributes: HashMap::new(),
+            droid_cli_path: None,
         }
     }
 
@@ -1097,6 +1112,7 @@ mod tests {
             api_key: None,
             quiet: false,
             custom_attributes: HashMap::new(),
+            droid_cli_path: None,
         }
     }
 
@@ -1214,6 +1230,7 @@ mod tests {
             api_key: None,
             quiet: false,
             custom_attributes: HashMap::new(),
+            droid_cli_path: None,
         }
     }
 

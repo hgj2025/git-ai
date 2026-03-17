@@ -338,6 +338,7 @@ pub fn rewrite_authorship_after_squash_or_rebase(
                     GitAiError::Generic("Failed to serialize authorship log".to_string())
                 })?;
                 crate::git::refs::notes_add(repo, merge_commit_sha, &authorship_json)?;
+                crate::authorship::droid_push::push_notes_to_droid(repo, merge_commit_sha, &authorship_json);
             }
         } else {
             // No files changed, nothing to do
@@ -422,6 +423,8 @@ pub fn rewrite_authorship_after_squash_or_rebase(
         .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
 
     crate::git::refs::notes_add(repo, merge_commit_sha, &authorship_json)?;
+
+    crate::authorship::droid_push::push_notes_to_droid(repo, merge_commit_sha, &authorship_json);
 
     debug_log(&format!(
         "✓ Saved authorship log for merge commit {}",
@@ -742,6 +745,10 @@ pub fn rewrite_authorship_after_rebase_v2(
 
     if !pending_note_entries.is_empty() {
         crate::git::refs::notes_add_batch(repo, &pending_note_entries)?;
+
+        for (sha, json) in &pending_note_entries {
+            crate::authorship::droid_push::push_notes_to_droid(repo, sha, json);
+        }
     }
 
     for (commit_sha, file_count) in pending_note_debug {
@@ -950,6 +957,8 @@ pub fn rewrite_authorship_after_cherry_pick(
         };
 
         crate::git::refs::notes_add(repo, new_commit, &authorship_json)?;
+
+        crate::authorship::droid_push::push_notes_to_droid(repo, new_commit, &authorship_json);
 
         debug_log(&format!(
             "Saved authorship log for cherry-picked commit {} ({} files)",
@@ -1516,6 +1525,8 @@ pub fn rewrite_authorship_after_commit_amend(
         .map_err(|_| GitAiError::Generic("Failed to serialize authorship log".to_string()))?;
     crate::git::refs::notes_add(repo, amended_commit, &authorship_json)?;
 
+    crate::authorship::droid_push::push_notes_to_droid(repo, amended_commit, &authorship_json);
+
     // Save INITIAL file for uncommitted attributions
     if !initial_attributions.files.is_empty() {
         let new_working_log = repo.storage.working_log_for_base_commit(amended_commit);
@@ -1948,6 +1959,11 @@ fn remap_notes_for_commit_pairs(
 
     let count = entries.len();
     crate::git::refs::notes_add_batch(repo, &entries)?;
+
+    for (sha, json) in &entries {
+        crate::authorship::droid_push::push_notes_to_droid(repo, sha, json);
+    }
+
     Ok(count)
 }
 
@@ -2081,6 +2097,11 @@ fn try_fast_path_rebase_note_remap(
     let remapped_count = remapped_note_entries.len();
     let write_start = std::time::Instant::now();
     crate::git::refs::notes_add_batch(repo, &remapped_note_entries)?;
+
+    for (sha, json) in &remapped_note_entries {
+        crate::authorship::droid_push::push_notes_to_droid(repo, sha, json);
+    }
+
     debug_performance_log(&format!(
         "Fast-path rebase note remap: wrote {} remapped notes in {}ms",
         remapped_count,
@@ -2170,6 +2191,11 @@ fn try_fast_path_cherry_pick_note_remap(
     let remapped_count = remapped_note_entries.len();
     let write_start = std::time::Instant::now();
     crate::git::refs::notes_add_batch(repo, &remapped_note_entries)?;
+
+    for (sha, json) in &remapped_note_entries {
+        crate::authorship::droid_push::push_notes_to_droid(repo, sha, json);
+    }
+
     debug_performance_log(&format!(
         "Fast-path cherry-pick note remap: wrote {} remapped notes in {}ms",
         remapped_count,

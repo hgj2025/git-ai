@@ -110,6 +110,7 @@ fn print_config_help() {
     eprintln!("  include_prompts_in_repositories  Repos to include for prompt storage (array)");
     eprintln!("  default_prompt_storage       Fallback storage mode for non-included repos");
     eprintln!("  quiet                        Suppress chart output after commits (bool)");
+    eprintln!("  droid_cli_path               Path to droid CLI binary for note pushing");
     eprintln!();
     eprintln!("Repository Patterns:");
     eprintln!("  For exclude/allow/exclude_prompts_in_repositories, you can provide:");
@@ -304,6 +305,10 @@ fn show_all_config() -> Result<(), String> {
 
     effective_config.insert("quiet".to_string(), Value::Bool(runtime_config.is_quiet()));
 
+    if let Some(ref path) = file_config.droid_cli_path {
+        effective_config.insert("droid_cli_path".to_string(), Value::String(path.clone()));
+    }
+
     // Feature flags - show effective flags with defaults applied
     let flags_value = serde_json::to_value(runtime_config.get_feature_flags())
         .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
@@ -392,6 +397,13 @@ fn get_config_value(key: &str) -> Result<(), String> {
                 }
             }
             "quiet" => Value::Bool(runtime_config.is_quiet()),
+            "droid_cli_path" => {
+                if let Some(ref path) = file_config.droid_cli_path {
+                    Value::String(path.clone())
+                } else {
+                    Value::Null
+                }
+            }
             _ => return Err(format!("Unknown config key: {}", key)),
         };
 
@@ -552,6 +564,11 @@ fn set_config_value(key: &str, value: &str, add_mode: bool) -> Result<(), String
                 file_config.quiet = Some(bool_value);
                 crate::config::save_file_config(&file_config)?;
                 eprintln!("[quiet]: {}", bool_value);
+            }
+            "droid_cli_path" => {
+                file_config.droid_cli_path = Some(value.to_string());
+                crate::config::save_file_config(&file_config)?;
+                eprintln!("[droid_cli_path]: {}", value);
             }
             _ => return Err(format!("Unknown config key: {}", key)),
         }
@@ -722,6 +739,13 @@ fn unset_config_value(key: &str) -> Result<(), String> {
                 crate::config::save_file_config(&file_config)?;
                 if let Some(v) = old_value {
                     eprintln!("- [quiet]: {}", v);
+                }
+            }
+            "droid_cli_path" => {
+                let old_value = file_config.droid_cli_path.take();
+                crate::config::save_file_config(&file_config)?;
+                if let Some(v) = old_value {
+                    eprintln!("- [droid_cli_path]: {}", v);
                 }
             }
             _ => return Err(format!("Unknown config key: {}", key)),
