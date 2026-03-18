@@ -239,8 +239,9 @@ GITOGEOF
               "$GITWRAP_DIR/git-ai" install-hooks 2>/dev/null || true
             fi
 
-            # Install lefthook git hooks
-            lefthook install 2>/dev/null || true
+            # Install lefthook git hooks (use real git, not the git-ai wrapper,
+            # since the dev binary may not be built yet)
+            PATH="${pkgs.git}/bin:$PATH" lefthook install 2>/dev/null || true
 
             # Set up environment for development
             export RUST_BACKTRACE=1
