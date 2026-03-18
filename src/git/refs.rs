@@ -310,34 +310,39 @@ pub fn notes_add_blob_batch(
     fast_import_args.push("--quiet".to_string());
     exec_git_stdin(&fast_import_args, &script)?;
 
-    let hook_entries = (|| -> Result<Vec<(String, String)>, GitAiError> {
-        let mut unique_blob_oids: Vec<String> = deduped_entries
-            .iter()
-            .map(|(_commit_sha, blob_oid)| blob_oid.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        unique_blob_oids.sort();
-        let blob_contents = batch_read_blob_contents(repo, &unique_blob_oids)?;
+    let has_post_notes_updated_hooks = crate::config::Config::get()
+        .git_ai_hook_commands("post_notes_updated")
+        .is_some_and(|commands| !commands.is_empty());
+    if has_post_notes_updated_hooks {
+        let hook_entries = (|| -> Result<Vec<(String, String)>, GitAiError> {
+            let mut unique_blob_oids: Vec<String> = deduped_entries
+                .iter()
+                .map(|(_commit_sha, blob_oid)| blob_oid.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            unique_blob_oids.sort();
+            let blob_contents = batch_read_blob_contents(repo, &unique_blob_oids)?;
 
-        Ok(deduped_entries
-            .iter()
-            .filter_map(|(commit_sha, blob_oid)| {
-                blob_contents
-                    .get(blob_oid)
-                    .map(|note_content| (commit_sha.clone(), note_content.clone()))
-            })
-            .collect())
-    })();
-    match hook_entries {
-        Ok(entries) if !entries.is_empty() => {
-            crate::authorship::git_ai_hooks::post_notes_updated(repo, &entries)
+            Ok(deduped_entries
+                .iter()
+                .filter_map(|(commit_sha, blob_oid)| {
+                    blob_contents
+                        .get(blob_oid)
+                        .map(|note_content| (commit_sha.clone(), note_content.clone()))
+                })
+                .collect())
+        })();
+        match hook_entries {
+            Ok(entries) if !entries.is_empty() => {
+                crate::authorship::git_ai_hooks::post_notes_updated(repo, &entries)
+            }
+            Ok(_) => {}
+            Err(e) => debug_log(&format!(
+                "Failed to prepare post_notes_updated payload for notes_add_blob_batch: {}",
+                e
+            )),
         }
-        Ok(_) => {}
-        Err(e) => debug_log(&format!(
-            "Failed to prepare post_notes_updated payload for notes_add_blob_batch: {}",
-            e
-        )),
     }
 
     Ok(())
