@@ -560,11 +560,12 @@ fn test_continue_json_schema() {
 
         // Verify messages structure
         if let Some(messages) = prompt["messages"].as_array()
-            && !messages.is_empty() {
-                let msg = &messages[0];
-                assert!(msg.get("role").is_some(), "message should have role");
-                assert!(msg.get("text").is_some(), "message should have text");
-            }
+            && !messages.is_empty()
+        {
+            let msg = &messages[0];
+            assert!(msg.get("role").is_some(), "message should have role");
+            assert!(msg.get("text").is_some(), "message should have text");
+        }
     }
 }
 

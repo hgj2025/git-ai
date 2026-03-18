@@ -380,7 +380,8 @@ fn test_rebase_directory_detection() {
 fn test_rebase_event_sequence_start_complete() {
     use git_ai::git::rewrite_log::{RebaseCompleteEvent, RebaseStartEvent};
 
-    let events = [RewriteLogEvent::rebase_start(RebaseStartEvent::new_with_onto(
+    let events = [
+        RewriteLogEvent::rebase_start(RebaseStartEvent::new_with_onto(
             "abc123".to_string(),
             false,
             None,
@@ -391,7 +392,8 @@ fn test_rebase_event_sequence_start_complete() {
             false,
             vec!["commit1".to_string()],
             vec!["commit2".to_string()],
-        ))];
+        )),
+    ];
 
     assert_eq!(events.len(), 2);
 
@@ -410,12 +412,14 @@ fn test_rebase_event_sequence_start_complete() {
 fn test_rebase_event_sequence_start_abort() {
     use git_ai::git::rewrite_log::{RebaseAbortEvent, RebaseStartEvent};
 
-    let events = [RewriteLogEvent::rebase_start(RebaseStartEvent::new_with_onto(
+    let events = [
+        RewriteLogEvent::rebase_start(RebaseStartEvent::new_with_onto(
             "abc123".to_string(),
             false,
             None,
         )),
-        RewriteLogEvent::rebase_abort(RebaseAbortEvent::new("abc123".to_string()))];
+        RewriteLogEvent::rebase_abort(RebaseAbortEvent::new("abc123".to_string())),
+    ];
 
     assert_eq!(events.len(), 2);
 

@@ -717,9 +717,7 @@ fn test_enterprise_dsn_precedence() {
     assert_eq!(result, Some("https://env@sentry.io/2".to_string()));
 
     // Without config or env, build-time is used
-    let result: Option<String> = None
-        .or(None::<String>)
-        .or_else(|| build_dsn.clone());
+    let result: Option<String> = None.or(None::<String>).or_else(|| build_dsn.clone());
     assert_eq!(result, Some("https://build@sentry.io/3".to_string()));
 }
 

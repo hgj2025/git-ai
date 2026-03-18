@@ -102,10 +102,12 @@ fn test_ci_event_merge_structure() {
 #[test]
 fn test_ci_local_flag_parsing_structure() {
     // Test that flag parsing logic expectations are correct
-    let args = ["--merge-commit-sha".to_string(),
+    let args = [
+        "--merge-commit-sha".to_string(),
         "abc123".to_string(),
         "--base-ref".to_string(),
-        "main".to_string()];
+        "main".to_string(),
+    ];
 
     // Verify flag structure
     assert!(args.contains(&"--merge-commit-sha".to_string()));
@@ -115,10 +117,12 @@ fn test_ci_local_flag_parsing_structure() {
 #[test]
 fn test_ci_local_flag_values() {
     // Test flag value extraction logic
-    let args = ["--head-ref".to_string(),
+    let args = [
+        "--head-ref".to_string(),
         "feature-branch".to_string(),
         "--head-sha".to_string(),
-        "def456".to_string()];
+        "def456".to_string(),
+    ];
 
     // Find flag values
     let mut i = 0;
@@ -176,11 +180,13 @@ fn test_ci_missing_flag_value_detection() {
 
 #[test]
 fn test_ci_required_flags_for_merge() {
-    let required_flags = ["--merge-commit-sha",
+    let required_flags = [
+        "--merge-commit-sha",
         "--base-ref",
         "--head-ref",
         "--head-sha",
-        "--base-sha"];
+        "--base-sha",
+    ];
 
     assert_eq!(required_flags.len(), 5);
     assert!(required_flags.contains(&"--merge-commit-sha"));

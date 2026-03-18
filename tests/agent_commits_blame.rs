@@ -531,9 +531,11 @@ fn test_agent_blame_json_mixed_human_agent() {
             let parts: Vec<&str> = range_key.split('-').collect();
             if parts.len() == 2
                 && let (Ok(start), Ok(end)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>())
-                    && start <= 2 && end >= 2 {
-                        line2_prompt_hash = Some(val_str.to_string());
-                    }
+                && start <= 2
+                && end >= 2
+            {
+                line2_prompt_hash = Some(val_str.to_string());
+            }
         }
     }
 

@@ -119,9 +119,11 @@ fn test_notes_existence_in_option() {
 
 #[test]
 fn test_notes_existence_in_vec() {
-    let results = [NotesExistence::Found,
+    let results = [
+        NotesExistence::Found,
         NotesExistence::NotFound,
-        NotesExistence::Found];
+        NotesExistence::Found,
+    ];
     assert_eq!(results.len(), 3);
     assert_eq!(results[0], NotesExistence::Found);
     assert_eq!(results[1], NotesExistence::NotFound);
