@@ -3,8 +3,11 @@ mod repos;
 
 use repos::test_repo::TestRepo;
 use serial_test::serial;
+#[cfg(unix)]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 struct EnvVarGuard {
     key: &'static str,
