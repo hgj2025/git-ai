@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# git-ai 开发者一键安装
+# git-ai CLI 开发者安装
 #
-# 用法（默认上报到 http://localhost:8080）：
+# 首次安装（编译 + hooks + 配置）：
 #   curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh | bash
+#
+# 在新仓库中执行（跳过编译，只装 hooks）：
+#   curl -fsSL ... | bash
 #
 # 指定服务地址：
 #   curl ... | bash -s -- --server http://your-server:8080
@@ -35,15 +38,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo ""
-echo -e "${BOLD}git-ai 开发者一键安装${NC}"
+echo -e "${BOLD}git-ai 开发者安装${NC}"
 echo -e "上报地址：${BLUE}${SERVER}${NC}"
 echo ""
 
-# ─── 1. 安装 git-ai ───────────────────────────────────────────────────────
-step "安装 git-ai"
+# ─── 1. 安装 CLI（已安装则跳过）─────────────────────────────────────────
+step "检查 git-ai CLI"
 
-if command -v git-ai &>/dev/null; then
-    success "已安装：$(git-ai --version 2>/dev/null || echo 'unknown')"
+# 优先检查已安装的二进制，不依赖 PATH
+if [[ -x "$BIN" ]]; then
+    success "已安装：$("$BIN" --version 2>/dev/null || echo 'unknown')，跳过编译"
+    # 确保 PATH 中能找到
+    export PATH="$INSTALL_DIR/bin:$PATH"
+elif command -v git-ai &>/dev/null; then
+    success "已安装：$(git-ai --version 2>/dev/null || echo 'unknown')，跳过编译"
 else
     # 确保 cargo 可用
     [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env" 2>/dev/null || true
@@ -52,13 +60,19 @@ else
         exit 1
     fi
 
-    info "克隆源码…"
+    info "克隆源码（仅 CLI）…"
     rm -rf "$INSTALL_DIR/src"
-    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src"
+    git clone --depth 1 --filter=blob:none --sparse "$REPO.git" "$INSTALL_DIR/src"
+    cd "$INSTALL_DIR/src"
+    git sparse-checkout set src Cargo.toml Cargo.lock
+    cd - >/dev/null
 
-    info "编译中（首次较慢）…"
+    info "编译中（首次约 2-5 分钟，请耐心等待）…"
     mkdir -p "$INSTALL_DIR/bin"
-    cargo build --release --manifest-path "$INSTALL_DIR/src/Cargo.toml"
+    if ! cargo build --release --manifest-path "$INSTALL_DIR/src/Cargo.toml"; then
+        error "编译失败，请检查上方错误信息"
+        exit 1
+    fi
     cp "$INSTALL_DIR/src/target/release/git-ai" "$BIN"
 
     # 清理：只保留二进制
@@ -68,10 +82,20 @@ else
     if [[ ":$PATH:" != *":$INSTALL_DIR/bin:"* ]]; then
         SHELL_RC="$HOME/.zshrc"
         [[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
-        echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
+        if ! grep -qsF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
+            echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
+            info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
+        fi
         export PATH="$INSTALL_DIR/bin:$PATH"
-        info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
     fi
+
+    # 禁用原项目遥测，只保留我们自己的 metrics-server 上报
+    mkdir -p "$INSTALL_DIR"
+    cat > "$INSTALL_DIR/config.json" <<'CFG'
+{
+  "telemetry_oss_disabled": true
+}
+CFG
 
     success "安装完成：$("$BIN" --version 2>/dev/null || echo '')"
 fi
@@ -81,7 +105,7 @@ step "安装 git hooks"
 
 if git rev-parse --git-dir &>/dev/null; then
     CURRENT_REPO=$(git rev-parse --show-toplevel)
-    if git-ai install-hooks --quiet 2>/dev/null; then
+    if "$BIN" install-hooks --quiet 2>/dev/null || git-ai install-hooks --quiet 2>/dev/null; then
         success "已安装 hooks：$CURRENT_REPO"
     else
         warn "hooks 安装失败，之后可手动运行：git-ai install-hooks"
@@ -103,11 +127,16 @@ else
     info "请在项目目录运行：git-ai install-hooks"
 fi
 
-# ─── 4. 配置上报 ──────────────────────────────────────────────────────────
+# ─── 3. 配置上报（全局，只需配一次）──────────────────────────────────────
 step "配置统计上报"
 
-git config --global git-ai.metrics-server "$SERVER"
-success "上报地址：$SERVER"
+CURRENT_SERVER=$(git config --global git-ai.metrics-server 2>/dev/null || true)
+if [[ "$CURRENT_SERVER" == "$SERVER" ]]; then
+    info "上报地址已配置：$SERVER"
+else
+    git config --global git-ai.metrics-server "$SERVER"
+    success "上报地址：$SERVER"
+fi
 
 if curl -sf --max-time 3 "$SERVER/api/stats" >/dev/null 2>&1; then
     success "服务连接正常"

@@ -4,11 +4,31 @@
 
 轻量统计服务：开发者每次 `git push` 后自动上报 AI 指标，Go 单二进制 + SQLite 存储，内嵌 Dashboard，无需 Docker/PostgreSQL/Grafana。
 
+## 架构说明
+
+git-ai 分为两个独立组件，按需安装：
+
+| 组件 | 适用角色 | 语言 | 说明 |
+|------|----------|------|------|
+| **CLI** (`git-ai`) | 开发者 | Rust | git hooks + AI 归因 + 数据上报 |
+| **Server** (`git-ai-server`) | 管理员/团队 leader | Go | 接收上报数据 + Dashboard 看板 |
+
+> **开发者只需安装 CLI**，无需部署 Server。Server 由团队管理员统一部署一次即可。
+
 ---
 
-## 服务端：一键部署
+## 服务端：一键部署（管理员）
 
-### 方式一：从源码构建（需要 Go 1.22+）
+### 方式一：一键脚本（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/server-setup.sh | bash
+
+# 指定参数
+curl ... | bash -s -- --port 8080 --db /data/metrics.db --token your-secret
+```
+
+### 方式二：从源码手动构建（需要 Go 1.22+）
 
 ```bash
 git clone https://github.com/hgj2025/git-ai.git
@@ -17,7 +37,7 @@ go build -o git-ai-server .
 ./git-ai-server --port 8080 --db /data/metrics.db --token your-secret
 ```
 
-### 方式二：下载预编译二进制
+### 方式三：下载预编译二进制
 
 ```bash
 curl -fsSL https://github.com/hgj2025/git-ai/releases/latest/download/git-ai-server-$(uname -s)-$(uname -m) \

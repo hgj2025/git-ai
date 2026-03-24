@@ -99,26 +99,22 @@ impl ApiContext {
         config::Config::get().api_base_url().to_string()
     }
 
-    /// Create a GET request with common headers (User-Agent, X-Distinct-ID)
-    /// Use this for all HTTP GET requests to ensure consistent headers.
+    /// Create a GET request with common headers (User-Agent)
     pub fn http_get(url: &str) -> minreq::Request {
         minreq::get(url)
             .with_header(
                 "User-Agent",
                 format!("git-ai/{}", env!("CARGO_PKG_VERSION")),
             )
-            .with_header("X-Distinct-ID", config::get_or_create_distinct_id())
     }
 
-    /// Create a POST request with common headers (User-Agent, X-Distinct-ID)
-    /// Use this for all HTTP POST requests to ensure consistent headers.
+    /// Create a POST request with common headers (User-Agent)
     pub fn http_post(url: &str) -> minreq::Request {
         minreq::post(url)
             .with_header(
                 "User-Agent",
                 format!("git-ai/{}", env!("CARGO_PKG_VERSION")),
             )
-            .with_header("X-Distinct-ID", config::get_or_create_distinct_id())
     }
 
     /// Create a new API context, automatically using stored credentials if available
