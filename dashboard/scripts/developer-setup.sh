@@ -122,8 +122,15 @@ else
     info "PATH already configured ($SHELL_RC)"
 fi
 
-# --- 2. install hooks for current repo ---
+# --- 2. enable git hooks and install for current repo ---
 step "install git hooks"
+
+# ensure git_hooks_enabled feature flag is on (required for repo-level hooks)
+if "$BIN" config set feature_flags.git_hooks_enabled true &>/dev/null; then
+    success "git_hooks_enabled = true"
+else
+    warn "failed to set git_hooks_enabled, run manually: git-ai config set feature_flags.git_hooks_enabled true"
+fi
 
 if git rev-parse --git-dir &>/dev/null; then
     CURRENT_REPO=$(git rev-parse --show-toplevel)
@@ -131,6 +138,13 @@ if git rev-parse --git-dir &>/dev/null; then
         success "hooks installed: $CURRENT_REPO"
     else
         warn "hooks install failed, run manually: git-ai install-hooks"
+    fi
+
+    # ensure repo-level git hooks (pre-commit, post-commit, etc.) are installed
+    if "$BIN" git-hooks ensure 2>/dev/null; then
+        success "repo hooks installed: $CURRENT_REPO"
+    else
+        warn "repo hooks install failed, run manually: git-ai git-hooks ensure"
     fi
 
     # configure git notes fetch (push is handled by git-ai post-push hook)

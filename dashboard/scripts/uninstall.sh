@@ -42,13 +42,22 @@ else
     info "未找到 git-ai，跳过 hooks 卸载"
 fi
 
-# 清理当前仓库的 git notes 配置
+# 清理当前仓库的 git notes 配置和仓库级 hooks
 if git rev-parse --git-dir &>/dev/null; then
+    REPO_GIT_DIR="$(git rev-parse --git-dir)"
+
     remote=$(git remote 2>/dev/null | head -1)
     if [[ -n "$remote" ]]; then
         git config --unset-all remote."$remote".push "refs/notes/ai" 2>/dev/null || true
         git config --unset-all remote."$remote".fetch "refs/notes/ai" 2>/dev/null || true
         success "已清理当前仓库 git notes 配置"
+    fi
+
+    # 还原 core.hooksPath（如果指向 git-ai 管理的 hooks 目录则移除）
+    hooks_path=$(git config --local core.hooksPath 2>/dev/null || true)
+    if [[ -n "$hooks_path" ]] && [[ "$hooks_path" == *".git/ai/hooks"* || "$hooks_path" == *"git-ai"* ]]; then
+        git config --local --unset core.hooksPath 2>/dev/null || true
+        success "已还原 core.hooksPath"
     fi
 fi
 
@@ -102,6 +111,36 @@ if [[ -d "$INSTALL_DIR" ]]; then
     success "已删除 $INSTALL_DIR"
 else
     info "$INSTALL_DIR 不存在，跳过"
+fi
+
+# ─── 6. 清理 Claude Code 空 hooks 骨架 ────────────────────────────────────
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+if [[ -f "$CLAUDE_SETTINGS" ]] && command -v python3 &>/dev/null; then
+    python3 -c "
+import json, sys
+path = sys.argv[1]
+with open(path) as f: d = json.load(f)
+hooks = d.get('hooks', {})
+changed = False
+for key in list(hooks):
+    if isinstance(hooks[key], list) and all(not e.get('hooks') for e in hooks[key]):
+        del hooks[key]
+        changed = True
+if not hooks and 'hooks' in d:
+    del d['hooks']
+    changed = True
+if changed:
+    with open(path, 'w') as f: json.dump(d, f, indent=2, ensure_ascii=False)
+    print('[ok] cleaned Claude Code settings.json')
+" "$CLAUDE_SETTINGS" 2>/dev/null && true
+fi
+
+# ─── 7. 清理仓库级 .git/ai/ 目录 ─────────────────────────────────────────
+# 放在删除安装目录之后，避免 uninstall-hooks 内部再创建空目录
+if [[ -n "${REPO_GIT_DIR:-}" ]] && [[ -d "$REPO_GIT_DIR/ai" ]]; then
+    step "清理仓库数据"
+    rm -rf "$REPO_GIT_DIR/ai"
+    success "已清理 $REPO_GIT_DIR/ai"
 fi
 
 # ─── 完成 ──────────────────────────────────────────────────────────────────
