@@ -60,7 +60,15 @@ else
 
     info "克隆源码…"
     rm -rf "$INSTALL_DIR/src"
-    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src"
+    # 使用系统 git 避免 git-ai shim 干扰
+    STD_GIT=$(command -v git)
+    for candidate in /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git; do
+        if [[ -x "$candidate" ]] && [[ "$candidate" != *"git-ai"* ]]; then
+            STD_GIT="$candidate"
+            break
+        fi
+    done
+    "$STD_GIT" clone --depth 1 "$REPO.git" "$INSTALL_DIR/src"
 
     info "编译中（首次约 2-5 分钟，请耐心等待）…"
     mkdir -p "$INSTALL_DIR/bin"
