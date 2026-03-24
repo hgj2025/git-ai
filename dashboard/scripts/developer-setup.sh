@@ -114,15 +114,14 @@ if git rev-parse --git-dir &>/dev/null; then
         warn "hooks install failed, run manually: git-ai install-hooks"
     fi
 
-    # configure git notes push
+    # configure git notes fetch (push is handled by git-ai post-push hook)
     remote=$(git remote 2>/dev/null | head -1)
     if [[ -n "$remote" ]]; then
-        if ! git config --get-all remote."$remote".push 2>/dev/null | grep -q "notes/ai"; then
-            git config --add remote."$remote".push "refs/notes/ai:refs/notes/ai"
+        if ! git config --get-all remote."$remote".fetch 2>/dev/null | grep -q "notes/ai"; then
             git config --add remote."$remote".fetch "+refs/notes/ai:refs/notes/ai"
-            success "git notes push configured"
+            success "git notes fetch configured"
         else
-            info "git notes push already configured"
+            info "git notes already configured"
         fi
     fi
 else
