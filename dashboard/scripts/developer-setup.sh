@@ -48,8 +48,6 @@ step "检查 git-ai CLI"
 # 优先检查已安装的二进制，不依赖 PATH
 if [[ -x "$BIN" ]]; then
     success "已安装：$("$BIN" --version 2>/dev/null || echo 'unknown')，跳过编译"
-    # 确保 PATH 中能找到
-    export PATH="$INSTALL_DIR/bin:$PATH"
 elif command -v git-ai &>/dev/null; then
     success "已安装：$(git-ai --version 2>/dev/null || echo 'unknown')，跳过编译"
 else
@@ -60,12 +58,9 @@ else
         exit 1
     fi
 
-    info "克隆源码（仅 CLI）…"
+    info "克隆源码…"
     rm -rf "$INSTALL_DIR/src"
-    git clone --depth 1 --filter=blob:none --sparse "$REPO.git" "$INSTALL_DIR/src"
-    cd "$INSTALL_DIR/src"
-    git sparse-checkout set src Cargo.toml Cargo.lock
-    cd - >/dev/null
+    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src"
 
     info "编译中（首次约 2-5 分钟，请耐心等待）…"
     mkdir -p "$INSTALL_DIR/bin"
@@ -78,26 +73,20 @@ else
     # 清理：只保留二进制
     rm -rf "$INSTALL_DIR/src"
 
-    # 加入 PATH
-    if [[ ":$PATH:" != *":$INSTALL_DIR/bin:"* ]]; then
-        SHELL_RC="$HOME/.zshrc"
-        [[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
-        if ! grep -qsF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
-            echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
-            info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
-        fi
-        export PATH="$INSTALL_DIR/bin:$PATH"
-    fi
-
-    # 禁用原项目遥测，只保留我们自己的 metrics-server 上报
-    mkdir -p "$INSTALL_DIR"
-    cat > "$INSTALL_DIR/config.json" <<'CFG'
-{
-  "telemetry_oss_disabled": true
-}
-CFG
-
     success "安装完成：$("$BIN" --version 2>/dev/null || echo '')"
+fi
+
+# 确保 PATH 中包含 git-ai（不管是新装还是已装）
+export PATH="$INSTALL_DIR/bin:$PATH"
+SHELL_RC="$HOME/.zshrc"
+[[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
+if ! grep -qsF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
+    echo "" >> "$SHELL_RC"
+    echo "# Added by git-ai installer" >> "$SHELL_RC"
+    echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
+    info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
+else
+    info "PATH 已配置（$SHELL_RC）"
 fi
 
 # ─── 2. 当前仓库安装 hooks + notes 推送 ──────────────────────────────────
