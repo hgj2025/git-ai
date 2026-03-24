@@ -29,4 +29,5 @@ pub mod squash_authorship;
 pub mod status;
 pub mod sync_prompts;
 pub mod upgrade;
+pub mod upload_metrics;
 pub mod whoami;

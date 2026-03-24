@@ -83,6 +83,9 @@ pub struct Config {
     quiet: bool,
     custom_attributes: HashMap<String, String>,
     git_ai_hooks: HashMap<String, Vec<String>>,
+    metrics_server: Option<String>,
+    metrics_token: Option<String>,
+    metrics_repo: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
@@ -154,6 +157,12 @@ pub struct FileConfig {
     pub custom_attributes: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_ai_hooks: Option<HashMap<String, Vec<String>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_server: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_repo: Option<String>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -389,6 +398,21 @@ impl Config {
     /// Returns the API key if configured
     pub fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
+    }
+
+    /// Returns the metrics server URL if configured
+    pub fn metrics_server(&self) -> Option<&str> {
+        self.metrics_server.as_deref()
+    }
+
+    /// Returns the metrics server auth token if configured
+    pub fn metrics_token(&self) -> Option<&str> {
+        self.metrics_token.as_deref()
+    }
+
+    /// Returns the repo name override for metrics reporting
+    pub fn metrics_repo(&self) -> Option<&str> {
+        self.metrics_repo.as_deref()
     }
 
     /// Returns true if quiet mode is enabled (suppresses chart output after commits)
@@ -667,6 +691,19 @@ fn build_config() -> Config {
         })
         .collect::<HashMap<String, Vec<String>>>();
 
+    let metrics_server = env::var("GIT_AI_METRICS_SERVER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| file_cfg.as_ref().and_then(|c| c.metrics_server.clone()));
+    let metrics_token = env::var("GIT_AI_METRICS_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| file_cfg.as_ref().and_then(|c| c.metrics_token.clone()));
+    let metrics_repo = env::var("GIT_AI_METRICS_REPO")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| file_cfg.as_ref().and_then(|c| c.metrics_repo.clone()));
+
     #[cfg(any(test, feature = "test-support"))]
     {
         let mut config = Config {
@@ -688,6 +725,9 @@ fn build_config() -> Config {
             quiet,
             custom_attributes: custom_attributes.clone(),
             git_ai_hooks: git_ai_hooks.clone(),
+            metrics_server: metrics_server.clone(),
+            metrics_token: metrics_token.clone(),
+            metrics_repo: metrics_repo.clone(),
         };
         apply_test_config_patch(&mut config);
         config
@@ -713,6 +753,9 @@ fn build_config() -> Config {
         quiet,
         custom_attributes,
         git_ai_hooks,
+        metrics_server,
+        metrics_token,
+        metrics_repo,
     }
 }
 
@@ -1029,6 +1072,9 @@ mod tests {
             quiet: false,
             custom_attributes: HashMap::new(),
             git_ai_hooks: HashMap::new(),
+            metrics_server: None,
+            metrics_token: None,
+            metrics_repo: None,
         }
     }
 
@@ -1138,6 +1184,9 @@ mod tests {
             quiet: false,
             custom_attributes: HashMap::new(),
             git_ai_hooks: HashMap::new(),
+            metrics_server: None,
+            metrics_token: None,
+            metrics_repo: None,
         }
     }
 
@@ -1256,6 +1305,9 @@ mod tests {
             quiet: false,
             custom_attributes: HashMap::new(),
             git_ai_hooks: HashMap::new(),
+            metrics_server: None,
+            metrics_token: None,
+            metrics_repo: None,
         }
     }
 

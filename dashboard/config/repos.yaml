@@ -1,0 +1,5 @@
+repos:
+  - name: git-ai
+    url: git@github.com:hgj2025/git-ai.git
+    auth: ssh
+    default_branch: main

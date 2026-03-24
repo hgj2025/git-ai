@@ -1,0 +1,30 @@
+repos:
+  # SSH 认证（推荐）
+  - name: backend
+    url: git@github.com:your-org/backend.git
+    auth: ssh
+    # ssh_key: /root/.ssh/id_rsa_backend  # 可选：指定特定 key
+
+  # HTTPS Token 认证
+  - name: frontend
+    url: https://github.com/your-org/frontend.git
+    auth: token
+    token_env: GITHUB_TOKEN  # 对应 .env 中的环境变量名
+
+  # GitLab 示例
+  - name: mobile
+    url: https://gitlab.com/your-org/mobile.git
+    auth: token
+    token_env: GITLAB_TOKEN
+
+  # 多个 token（不同仓库用不同 token）
+  - name: infra
+    url: https://github.com/your-org/infra.git
+    auth: token
+    token_env: GITHUB_TOKEN_INFRA
+
+  # 默认 branch（默认 main）
+  - name: legacy-service
+    url: git@github.com:your-org/legacy.git
+    auth: ssh
+    default_branch: master

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>git-ai 团队 AI 代码看板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+  header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; font-weight: 600; color: #a78bfa; }
+  .controls { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  select, button { background: #2d3148; border: 1px solid #3d4168; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  select:focus, button:focus { outline: 2px solid #a78bfa; }
+  button:hover { background: #3d4168; }
+  button.primary { background: #7c3aed; border-color: #7c3aed; }
+  button.primary:hover { background: #6d28d9; }
+
+  .grid { display: grid; gap: 16px; padding: 20px; }
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .charts-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .charts-row, .charts-row-3 { grid-template-columns: 1fr; } }
+
+  .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px; padding: 16px; }
+  .stat-card { text-align: center; padding: 20px 16px; }
+  .stat-card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .stat-card .value { font-size: 32px; font-weight: 700; }
+  .stat-card .sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+  .c-purple { color: #a78bfa; }
+  .c-green  { color: #34d399; }
+  .c-blue   { color: #60a5fa; }
+  .c-orange { color: #fb923c; }
+
+  .card-title { font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; }
+  .chart-wrap { position: relative; height: 220px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 10px; border-bottom: 1px solid #2d3148; }
+  td { padding: 8px 10px; border-bottom: 1px solid #1e2235; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1e2235; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-tool { background: #1e3a5f; color: #60a5fa; }
+  .rate { font-weight: 600; }
+  .rate.high { color: #34d399; }
+  .rate.mid  { color: #fbbf24; }
+  .rate.low  { color: #f87171; }
+
+  .loading { text-align: center; color: #64748b; padding: 40px; }
+  .error { color: #f87171; padding: 12px; border-radius: 6px; background: #2d1515; margin: 16px; }
+
+  .progress-bar { height: 4px; background: #2d3148; border-radius: 2px; margin-top: 6px; }
+  .progress-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #7c3aed, #a78bfa); transition: width 0.5s; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ git-ai 团队 AI 看板</h1>
+  <div class="controls">
+    <select id="selDays">
+      <option value="7">最近 7 天</option>
+      <option value="30" selected>最近 30 天</option>
+      <option value="90">最近 90 天</option>
+      <option value="180">最近 180 天</option>
+    </select>
+    <select id="selRepo"><option value="all">所有仓库</option></select>
+    <button class="primary" onclick="load()">刷新</button>
+  </div>
+</header>
+
+<div class="grid" id="app">
+  <div class="loading">加载中…</div>
+</div>
+
+<script>
+let charts = {};
+
+function rateClass(r) {
+  if (r >= 0.65) return 'high';
+  if (r >= 0.40) return 'mid';
+  return 'low';
+}
+function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1)+'k' : n; }
+function pct(r) { return (r*100).toFixed(1)+'%'; }
+
+const COLORS = ['#a78bfa','#60a5fa','#34d399','#fb923c','#f472b6','#fbbf24','#38bdf8','#4ade80'];
+const chartDefaults = {
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } },
+  }
+};
+
+function makeChart(id, type, data, opts) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, { type, data, options: { ...chartDefaults, ...opts } });
+}
+
+async function loadRepos() {
+  try {
+    const r = await fetch('/api/repos');
+    const repos = await r.json();
+    const sel = document.getElementById('selRepo');
+    repos.forEach(repo => {
+      const o = document.createElement('option');
+      o.value = repo; o.textContent = repo;
+      sel.appendChild(o);
+    });
+  } catch(e) {}
+}
+
+async function load() {
+  const days = document.getElementById('selDays').value;
+  const repo = document.getElementById('selRepo').value;
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="loading">加载中…</div>';
+
+  let stats;
+  try {
+    const r = await fetch(`/api/stats?days=${days}&repo=${repo}`);
+    if (!r.ok) throw new Error(await r.text());
+    stats = await r.json();
+  } catch(e) {
+    app.innerHTML = `<div class="error">加载失败：${e.message}</div>`;
+    return;
+  }
+
+  const s = stats.summary;
+  app.innerHTML = `
+    <div class="stats-row">
+      <div class="card stat-card">
+        <div class="label">AI 生成行数</div>
+        <div class="value c-purple">${fmt(s.total_ai_lines)}</div>
+        <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">直接接受行数</div>
+        <div class="value c-green">${fmt(s.accepted_lines)}</div>
+        <div class="sub">修改后接受 ${fmt(s.total_ai_lines - s.accepted_lines)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">AI 接受率</div>
+        <div class="value c-blue">${pct(s.acceptance_rate)}</div>
+        <div class="sub">${s.acceptance_rate>=0.65?'质量优秀':s.acceptance_rate>=0.4?'质量良好':'需要优化'}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="label">AI Commits</div>
+        <div class="value c-orange">${fmt(s.total_commits)}</div>
+        <div class="sub">活跃开发者 ${s.active_devs} 人</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="card">
+        <div class="card-title">每日 AI 代码量趋势</div>
+        <div class="chart-wrap"><canvas id="cDaily"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">工具使用分布</div>
+        <div class="chart-wrap"><canvas id="cTools"></canvas></div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="card">
+        <div class="card-title">模型接受率对比</div>
+        <div class="chart-wrap"><canvas id="cModels"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">仓库概览</div>
+        <div id="tRepos" class="table-wrap"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">开发者排行</div>
+      <div id="tDevs"></div>
+    </div>
+  `;
+
+  // Daily trend chart
+  const daily = stats.daily || [];
+  makeChart('cDaily', 'line', {
+    labels: daily.map(d => d.date),
+    datasets: [
+      { label: 'AI 生成行', data: daily.map(d => d.ai_lines), borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.1)', fill: true, tension: 0.3 },
+      { label: '接受行', data: daily.map(d => d.accepted_lines), borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)', fill: true, tension: 0.3 },
+    ]
+  }, { plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: '#1e2235' } }, y: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } } }, responsive: true, maintainAspectRatio: false });
+
+  // Tools doughnut
+  const tools = stats.tools || [];
+  makeChart('cTools', 'doughnut', {
+    labels: tools.map(t => t.tool || '未知'),
+    datasets: [{ data: tools.map(t => t.ai_lines), backgroundColor: COLORS, borderWidth: 0 }]
+  }, { plugins: { legend: { position: 'right', labels: { color: '#94a3b8', font: { size: 12 } } } }, responsive: true, maintainAspectRatio: false, scales: {} });
+
+  // Models bar
+  const models = (stats.models || []).slice(0, 10);
+  makeChart('cModels', 'bar', {
+    labels: models.map(m => m.model || '未知'),
+    datasets: [{ label: '接受率', data: models.map(m => +(m.acceptance_rate*100).toFixed(1)), backgroundColor: COLORS[0], borderRadius: 4 }]
+  }, { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#64748b', callback: v => v+'%' }, grid: { color: '#1e2235' }, max: 100 }, y: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } } }, responsive: true, maintainAspectRatio: false });
+
+  // Repos table
+  const repos = stats.repos || [];
+  document.getElementById('tRepos').innerHTML = `
+    <table>
+      <tr><th>仓库</th><th>Commits</th><th>AI 行数</th><th>接受率</th></tr>
+      ${repos.map(r => `<tr>
+        <td>${r.repo}</td>
+        <td>${r.commits}</td>
+        <td>${fmt(r.ai_lines)}</td>
+        <td><span class="rate ${rateClass(r.acceptance_rate)}">${pct(r.acceptance_rate)}</span></td>
+      </tr>`).join('')}
+    </table>`;
+
+  // Devs table
+  const devs = stats.developers || [];
+  document.getElementById('tDevs').innerHTML = `
+    <table>
+      <tr><th>开发者</th><th>Commits</th><th>AI 行数</th><th>接受行数</th><th>接受率</th></tr>
+      ${devs.map(d => `<tr>
+        <td>${d.name || d.email}</td>
+        <td>${d.commits}</td>
+        <td>${fmt(d.ai_lines)}</td>
+        <td>${fmt(d.accepted_lines)}</td>
+        <td><span class="rate ${rateClass(d.acceptance_rate)}">${pct(d.acceptance_rate)}</span></td>
+      </tr>`).join('')}
+    </table>`;
+}
+
+loadRepos().then(() => load());
+</script>
+</body>
+</html>

@@ -874,6 +874,72 @@ pub struct RemoveRepoHooksReport {
     pub managed_hooks_path: PathBuf,
 }
 
+const POST_PUSH_HOOK_MARKER: &str = "# git-ai post-push metrics";
+
+/// Install (or update) the post-push hook that asynchronously uploads AI metrics.
+/// The hook is a plain shell script (not a symlink to the git-ai binary) placed in
+/// the managed hooks directory so that `core.hooksPath` picks it up.
+fn ensure_post_push_hook_installed(
+    managed_hooks_dir: &Path,
+    binary_path: &Path,
+    dry_run: bool,
+) -> Result<bool, GitAiError> {
+    let hook_path = managed_hooks_dir.join("post-push");
+    let binary_str = binary_path.to_string_lossy();
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+{marker}
+# Asynchronously report AI metrics to the team dashboard after each push.
+# Requires git-ai.metrics-server to be configured:
+#   git config --global git-ai.metrics-server "http://your-server:8080"
+BINARY="{binary}"
+if [ -z "$(git config --get git-ai.metrics-server 2>/dev/null)" ]; then
+  exit 0
+fi
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$remote_sha" ]; then
+    range="$local_sha"
+    commits=$(git rev-list "$range" 2>/dev/null | head -200)
+  else
+    commits=$(git rev-list --reverse "$remote_sha".."$local_sha" 2>/dev/null)
+  fi
+  for sha in $commits; do
+    "$BINARY" upload-metrics --commit "$sha" --background 2>/dev/null &
+  done
+done
+exit 0
+"#,
+        marker = POST_PUSH_HOOK_MARKER,
+        binary = binary_str,
+    );
+
+    // Check if existing hook already matches
+    if hook_path.exists() {
+        if let Ok(existing) = fs::read_to_string(&hook_path) {
+            if existing == script {
+                return Ok(false);
+            }
+            // If it's not our hook (no marker), don't overwrite
+            if !existing.contains(POST_PUSH_HOOK_MARKER) {
+                return Ok(false);
+            }
+        }
+    }
+
+    if !dry_run {
+        fs::write(&hook_path, &script)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755))?;
+        }
+    }
+
+    Ok(true)
+}
+
 pub fn ensure_repo_hooks_installed(
     repo: &Repository,
     dry_run: bool,
@@ -914,6 +980,9 @@ pub fn ensure_repo_hooks_installed(
         forward_hooks_path.as_deref(),
         dry_run,
     )?;
+
+    // Install post-push hook for metrics reporting
+    changed |= ensure_post_push_hook_installed(&managed_hooks_dir, &binary_path, dry_run)?;
 
     // Skip changing git config when hooks are externally managed
     let feature_flags = config::Config::get().get_feature_flags().clone();

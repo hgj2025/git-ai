@@ -147,6 +147,9 @@ pub fn handle_git_ai(args: &[String]) {
         "whoami" => {
             commands::whoami::handle_whoami(&args[1..]);
         }
+        "upload-metrics" => {
+            commands::upload_metrics::handle(&args[1..]);
+        }
         "exchange-nonce" => {
             commands::exchange_nonce::handle_exchange_nonce(&args[1..]);
         }
@@ -292,6 +295,7 @@ fn print_help() {
     eprintln!("    --launch              Launch agent CLI with restored context");
     eprintln!("    --clipboard           Copy context to system clipboard");
     eprintln!("    --json                Output context as structured JSON");
+    eprintln!("  upload-metrics     Upload AI metrics for a commit to the team dashboard server");
     eprintln!("  login              Authenticate with Git AI");
     eprintln!("  logout             Clear stored credentials");
     eprintln!("  whoami             Show auth state and login identity");
