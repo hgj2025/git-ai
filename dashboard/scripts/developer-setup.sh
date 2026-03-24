@@ -2,16 +2,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # git-ai 开发者一键安装
 #
-# 用法：
-#   curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh \
-#     | bash -s -- --server http://your-server:8080
+# 用法（默认上报到 http://localhost:8080）：
+#   curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh | bash
 #
-#   带 Token：
-#   curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh \
-#     | bash -s -- --server http://your-server:8080 --token your-secret
+# 指定服务地址：
+#   curl ... | bash -s -- --server http://your-server:8080
 #
-# 也支持环境变量：
-#   GIT_AI_METRICS_SERVER=http://your-server:8080 bash developer-setup.sh
+# 带 Token：
+#   curl ... | bash -s -- --server http://your-server:8080 --token your-secret
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -26,7 +24,8 @@ error()   { echo -e "${RED}[error]${NC} $*" >&2; }
 step()    { echo -e "\n${BOLD}▶ $*${NC}"; }
 
 # ─── 解析参数 ──────────────────────────────────────────────────────────────
-METRICS_SERVER="${GIT_AI_METRICS_SERVER:-}"
+DEFAULT_SERVER="http://localhost:8080"
+METRICS_SERVER="${GIT_AI_METRICS_SERVER:-$DEFAULT_SERVER}"
 METRICS_TOKEN="${GIT_AI_METRICS_TOKEN:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -36,15 +35,6 @@ while [[ $# -gt 0 ]]; do
         *)         shift ;;
     esac
 done
-
-if [[ -z "$METRICS_SERVER" ]]; then
-    error "缺少 --server 参数"
-    echo ""
-    echo "用法："
-    echo "  curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh \\"
-    echo "    | bash -s -- --server http://your-server:8080"
-    exit 1
-fi
 
 echo ""
 echo -e "${BOLD}git-ai 开发者一键安装${NC}"

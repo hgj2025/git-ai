@@ -65,7 +65,10 @@ http://your-server:8080
 服务启动后，把以下命令发给团队成员，运行一次即完成全部配置：
 
 ```bash
-# 一键安装（将 your-server:8080 替换为实际部署地址）
+# 一键安装（默认上报到 http://localhost:8080）
+curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh | bash
+
+# 指定服务地址
 curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh \
   | bash -s -- --server http://your-server:8080
 
@@ -74,31 +77,12 @@ curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scrip
   | bash -s -- --server http://your-server:8080 --token your-secret
 ```
 
-或者通过服务端快捷入口（自动注入地址和 Token）：
-```bash
-curl -fsSL http://your-server:8080/install.sh | bash
-```
-
 ### 一键卸载
 ```bash
 curl -fsSL http://your-server:8080/uninstall.sh | bash
 ```
 
 安装完成后，每次 `git push` 会自动在后台上报 AI 指标，不影响 push 速度。
-
-### 本地测试
-
-```bash
-# 安装（上报到本地服务）
-curl -fsSL https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh \
-  | bash -s -- --server http://localhost:8080
-
-# 或通过本地服务快捷入口
-curl -fsSL http://localhost:8080/install.sh | bash
-
-# 卸载
-curl -fsSL http://localhost:8080/uninstall.sh | bash
-```
 
 ### 手动验证
 ```bash
