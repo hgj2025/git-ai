@@ -7,12 +7,13 @@
 #
 # 指定服务地址：
 #   curl ... | bash -s -- --server http://your-server:8080
-#
-# 带 Token：
-#   curl ... | bash -s -- --server http://your-server:8080 --token your-secret
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+
+REPO="https://github.com/hgj2025/git-ai"
+INSTALL_DIR="$HOME/.git-ai"
+BIN="$INSTALL_DIR/bin/git-ai"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'
 RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
@@ -24,127 +25,103 @@ error()   { echo -e "${RED}[error]${NC} $*" >&2; }
 step()    { echo -e "\n${BOLD}▶ $*${NC}"; }
 
 # ─── 解析参数 ──────────────────────────────────────────────────────────────
-DEFAULT_SERVER="http://localhost:8080"
-METRICS_SERVER="${GIT_AI_METRICS_SERVER:-$DEFAULT_SERVER}"
-METRICS_TOKEN="${GIT_AI_METRICS_TOKEN:-}"
+SERVER="${GIT_AI_METRICS_SERVER:-http://localhost:8080}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --server)  METRICS_SERVER="$2"; shift 2 ;;
-        --token)   METRICS_TOKEN="$2"; shift 2 ;;
-        *)         shift ;;
+        --server) SERVER="$2"; shift 2 ;;
+        *)        shift ;;
     esac
 done
 
 echo ""
 echo -e "${BOLD}git-ai 开发者一键安装${NC}"
-echo -e "上报地址：${BLUE}${METRICS_SERVER}${NC}"
+echo -e "上报地址：${BLUE}${SERVER}${NC}"
 echo ""
 
-# ─── 1. 检测 / 安装 git-ai CLI ─────────────────────────────────────────────
-step "检查 git-ai"
+# ─── 1. 安装 git-ai ───────────────────────────────────────────────────────
+step "安装 git-ai"
 
 if command -v git-ai &>/dev/null; then
-    success "git-ai 已安装：$(git-ai --version 2>/dev/null || echo 'unknown')"
+    success "已安装：$(git-ai --version 2>/dev/null || echo 'unknown')"
 else
-    info "git-ai 未安装，正在安装…"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        if command -v brew &>/dev/null; then
-            brew install git-ai-project/tap/git-ai
-        else
-            curl -fsSL https://usegitai.com/install.sh | bash
-        fi
-    elif [[ "$(uname)" == "Linux" ]]; then
-        curl -fsSL https://usegitai.com/install.sh | bash
-    else
-        error "不支持的系统，请手动安装：https://usegitai.com/docs/installation"
+    # 确保 cargo 可用
+    [[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env" 2>/dev/null || true
+    if ! command -v cargo &>/dev/null; then
+        error "需要 Rust 工具链：curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
         exit 1
     fi
-    success "git-ai 安装完成：$(git-ai --version 2>/dev/null || echo '')"
+
+    info "克隆源码…"
+    rm -rf "$INSTALL_DIR/src"
+    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src" 2>/dev/null
+
+    info "编译中（首次较慢）…"
+    mkdir -p "$INSTALL_DIR/bin"
+    cargo build --release --manifest-path "$INSTALL_DIR/src/Cargo.toml" 2>/dev/null
+    cp "$INSTALL_DIR/src/target/release/git-ai" "$BIN"
+
+    # 清理：只保留二进制
+    rm -rf "$INSTALL_DIR/src"
+
+    # 加入 PATH
+    if [[ ":$PATH:" != *":$INSTALL_DIR/bin:"* ]]; then
+        SHELL_RC="$HOME/.zshrc"
+        [[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
+        echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
+        export PATH="$INSTALL_DIR/bin:$PATH"
+        info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
+    fi
+
+    success "安装完成：$("$BIN" --version 2>/dev/null || echo '')"
 fi
 
-# ─── 2. 扫描 git 仓库 ──────────────────────────────────────────────────────
-step "扫描本地 git 仓库"
+# ─── 2. 当前仓库安装 hooks + notes 推送 ──────────────────────────────────
+step "安装 git hooks"
 
-SEARCH_DIRS=("$HOME/Code" "$HOME/Projects" "$HOME/workspace" "$HOME/src" "$HOME/dev")
+if git rev-parse --git-dir &>/dev/null; then
+    CURRENT_REPO=$(git rev-parse --show-toplevel)
+    if git-ai install-hooks --quiet 2>/dev/null; then
+        success "已安装 hooks：$CURRENT_REPO"
+    else
+        warn "hooks 安装失败，之后可手动运行：git-ai install-hooks"
+    fi
 
-FOUND_REPOS=()
-for d in "${SEARCH_DIRS[@]}"; do
-    [[ -d "$d" ]] || continue
-    while IFS= read -r repo; do
-        FOUND_REPOS+=("$repo")
-    done < <(find "$d" -maxdepth 3 -name ".git" -type d 2>/dev/null | xargs -I{} dirname {})
-done
-
-if [[ ${#FOUND_REPOS[@]} -eq 0 ]]; then
-    warn "在 ${SEARCH_DIRS[*]} 下未找到 git 仓库"
-    warn "之后可在项目目录手动运行：git-ai install-hooks"
-else
-    info "找到 ${#FOUND_REPOS[@]} 个 git 仓库"
-fi
-
-# ─── 3. 安装 hooks ─────────────────────────────────────────────────────────
-if [[ ${#FOUND_REPOS[@]} -gt 0 ]]; then
-    step "安装 git hooks"
-    HOOK_INSTALLED=0
-    for repo in "${FOUND_REPOS[@]}"; do
-        echo -n "  $repo … "
-        if (cd "$repo" && git-ai install-hooks --quiet 2>/dev/null); then
-            echo -e "${GREEN}ok${NC}"
-            ((HOOK_INSTALLED++)) || true
-        else
-            echo -e "${YELLOW}跳过${NC}"
-        fi
-    done
-    success "已在 $HOOK_INSTALLED 个仓库安装 hooks"
-fi
-
-# ─── 4. 配置 git notes 自动推送 ────────────────────────────────────────────
-if [[ ${#FOUND_REPOS[@]} -gt 0 ]]; then
-    step "配置 git notes 自动推送"
-    NOTES_CONFIGURED=0
-    for repo in "${FOUND_REPOS[@]}"; do
-        (
-            cd "$repo"
-            remote=$(git remote 2>/dev/null | head -1)
-            [[ -z "$remote" ]] && exit 0
-            existing=$(git config --get-all remote."$remote".push 2>/dev/null | grep "notes/ai" || true)
-            [[ -n "$existing" ]] && exit 0
+    # 配置 git notes 推送
+    remote=$(git remote 2>/dev/null | head -1)
+    if [[ -n "$remote" ]]; then
+        if ! git config --get-all remote."$remote".push 2>/dev/null | grep -q "notes/ai"; then
             git config --add remote."$remote".push "refs/notes/ai:refs/notes/ai"
             git config --add remote."$remote".fetch "+refs/notes/ai:refs/notes/ai"
-        ) 2>/dev/null && ((NOTES_CONFIGURED++)) || true
-    done
-    success "已在 $NOTES_CONFIGURED 个仓库配置 notes 推送"
+            success "已配置 git notes 推送"
+        else
+            info "git notes 推送已配置"
+        fi
+    fi
+else
+    warn "当前目录不是 git 仓库，跳过 hooks 安装"
+    info "请在项目目录运行：git-ai install-hooks"
 fi
 
-# ─── 5. 配置统计上报 ───────────────────────────────────────────────────────
+# ─── 4. 配置上报 ──────────────────────────────────────────────────────────
 step "配置统计上报"
 
-git config --global git-ai.metrics-server "$METRICS_SERVER"
-success "上报地址：$METRICS_SERVER"
+git config --global git-ai.metrics-server "$SERVER"
+success "上报地址：$SERVER"
 
-if [[ -n "$METRICS_TOKEN" ]]; then
-    git config --global git-ai.metrics-token "$METRICS_TOKEN"
-    success "认证 Token 已配置"
-fi
-
-# 验证连通性
-if curl -sf --max-time 3 "$METRICS_SERVER/api/stats" >/dev/null 2>&1; then
+if curl -sf --max-time 3 "$SERVER/api/stats" >/dev/null 2>&1; then
     success "服务连接正常"
 else
-    warn "无法连接 $METRICS_SERVER（服务可能未启动，不影响后续使用）"
+    warn "无法连接 $SERVER（不影响后续使用）"
 fi
 
 # ─── 完成 ──────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}✅ 安装完成！${NC}"
 echo ""
-echo "正常写代码、使用 AI 工具、git commit & push 即可。"
-echo "AI 使用数据会自动记录，push 时自动上报到团队看板。"
+echo "正常 commit & push 即可，AI 数据会自动上报。"
 echo ""
-echo -e "  看板地址：${BLUE}${METRICS_SERVER}${NC}"
-echo ""
-echo "常用命令："
-echo "  git-ai stats                    查看本地 AI 统计"
-echo "  git-ai upload-metrics --verbose 手动上报（调试用）"
+echo -e "  看板：${BLUE}${SERVER}${NC}"
+echo "  统计：git-ai stats"
+echo "  调试：git-ai upload-metrics --verbose"
 echo ""
