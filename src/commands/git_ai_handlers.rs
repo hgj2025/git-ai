@@ -380,6 +380,24 @@ fn handle_checkpoint(args: &[String]) {
                     }
                 }
             }
+            "aiden" => {
+                match ClaudePreset.run(AgentCheckpointFlags {
+                    hook_input: hook_input.clone(),
+                }) {
+                    Ok(mut agent_run) => {
+                        // Override tool name to "aiden" instead of "claude"
+                        agent_run.agent_id.tool = "aiden".to_string();
+                        if agent_run.repo_working_dir.is_some() {
+                            repository_working_dir = agent_run.repo_working_dir.clone().unwrap();
+                        }
+                        agent_run_result = Some(agent_run);
+                    }
+                    Err(e) => {
+                        eprintln!("Aiden preset error: {}", e);
+                        std::process::exit(0);
+                    }
+                }
+            }
             "codex" => {
                 match CodexPreset.run(AgentCheckpointFlags {
                     hook_input: hook_input.clone(),

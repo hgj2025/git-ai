@@ -1,3 +1,4 @@
+mod aiden;
 mod amp;
 mod claude_code;
 mod codex;
@@ -10,6 +11,7 @@ mod opencode;
 mod vscode;
 mod windsurf;
 
+pub use aiden::AidenInstaller;
 pub use amp::AmpInstaller;
 pub use claude_code::ClaudeCodeInstaller;
 pub use codex::CodexInstaller;
@@ -27,6 +29,7 @@ use super::hook_installer::HookInstaller;
 /// Get all available hook installers
 pub fn get_all_installers() -> Vec<Box<dyn HookInstaller>> {
     vec![
+        Box::new(AidenInstaller),
         Box::new(ClaudeCodeInstaller),
         Box::new(CodexInstaller),
         Box::new(CursorInstaller),
