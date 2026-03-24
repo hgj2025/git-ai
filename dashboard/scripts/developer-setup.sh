@@ -88,6 +88,25 @@ else
     success "installed: $("$BIN" --version 2>/dev/null || echo '')"
 fi
 
+# ensure git shim and git-og symlinks exist
+if [[ ! -L "$INSTALL_DIR/bin/git" ]]; then
+    ln -sf "$BIN" "$INSTALL_DIR/bin/git"
+    info "created git shim symlink"
+fi
+if [[ ! -L "$INSTALL_DIR/bin/git-og" ]]; then
+    STD_GIT_PATH=""
+    for candidate in /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git; do
+        if [[ -x "$candidate" ]] && [[ "$candidate" != *"git-ai"* ]]; then
+            STD_GIT_PATH="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$STD_GIT_PATH" ]]; then
+        ln -sf "$STD_GIT_PATH" "$INSTALL_DIR/bin/git-og"
+        info "created git-og symlink -> $STD_GIT_PATH"
+    fi
+fi
+
 # ensure PATH includes git-ai (regardless of install path)
 export PATH="$INSTALL_DIR/bin:$PATH"
 SHELL_RC="$HOME/.zshrc"
@@ -129,14 +148,35 @@ else
     info "run in a project dir: git-ai install-hooks"
 fi
 
-# --- 3. configure metrics server (global, once) ---
+# --- 3. configure metrics server ---
 step "configure metrics"
 
-CURRENT_SERVER=$(git config --global git-ai.metrics-server 2>/dev/null || true)
-if [[ "$CURRENT_SERVER" == "$SERVER" ]]; then
-    info "metrics server already set: $SERVER"
+CONFIG_JSON="$INSTALL_DIR/config.json"
+mkdir -p "$INSTALL_DIR"
+
+if [[ -f "$CONFIG_JSON" ]]; then
+    # update metrics_server in existing config
+    CURRENT_SERVER=$(sed -n 's/.*"metrics_server"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "$CONFIG_JSON" | head -1)
+    if [[ "$CURRENT_SERVER" == "$SERVER" ]]; then
+        info "metrics server already set: $SERVER"
+    else
+        # add or update metrics_server field
+        if grep -q '"metrics_server"' "$CONFIG_JSON" 2>/dev/null; then
+            sed -i.bak "s|\"metrics_server\"[[:space:]]*:.*|\"metrics_server\": \"$SERVER\"|" "$CONFIG_JSON"
+            rm -f "${CONFIG_JSON}.bak"
+        else
+            # insert before the closing brace
+            sed -i.bak "s|}|,\"metrics_server\": \"$SERVER\"}|" "$CONFIG_JSON"
+            rm -f "${CONFIG_JSON}.bak"
+        fi
+        success "metrics server: $SERVER"
+    fi
 else
-    git config --global git-ai.metrics-server "$SERVER"
+    cat > "$CONFIG_JSON" <<CFGEOF
+{
+  "metrics_server": "$SERVER"
+}
+CFGEOF
     success "metrics server: $SERVER"
 fi
 
