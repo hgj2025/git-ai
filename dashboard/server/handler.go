@@ -87,50 +87,28 @@ func serverBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+const setupScriptURL = "https://raw.githubusercontent.com/hgj2025/git-ai/main/dashboard/scripts/developer-setup.sh"
+
 func handleInstallScript(token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		baseURL := serverBaseURL(r)
 
-		// Read embedded setup.sh and inject server config at the top
-		setupBytes, err := staticFiles.ReadFile("static/setup.sh")
-		if err != nil {
-			http.Error(w, "setup script not found", http.StatusInternalServerError)
-			return
-		}
-
-		// Inject server/token as defaults before the script runs
-		inject := fmt.Sprintf(
-			"# --- injected by git-ai-server ---\n"+
-				"export GIT_AI_METRICS_SERVER=\"%s\"\n",
-			baseURL,
-		)
+		// Generate a thin wrapper that downloads the real script from GitHub
+		// and passes this server's address as --server argument
+		tokenArg := ""
 		if token != "" {
-			inject += fmt.Sprintf("export GIT_AI_METRICS_TOKEN=\"%s\"\n", token)
+			tokenArg = fmt.Sprintf(" --token '%s'", token)
 		}
-		inject += "# -----------------------------------\n"
 
-		// Insert after the shebang line
-		setup := string(setupBytes)
-		shebangEnd := 0
-		if len(setup) > 0 && setup[0] == '#' {
-			if nl := indexOf(setup, '\n'); nl >= 0 {
-				shebangEnd = nl + 1
-			}
-		}
-		script := setup[:shebangEnd] + inject + setup[shebangEnd:]
+		script := fmt.Sprintf(`#!/usr/bin/env bash
+# git-ai 开发者一键安装（由 %s 生成）
+set -euo pipefail
+curl -fsSL '%s' | bash -s -- --server '%s'%s
+`, baseURL, setupScriptURL, baseURL, tokenArg)
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprint(w, script)
 	}
-}
-
-func indexOf(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
 }
 
 var uninstallScript = `#!/usr/bin/env bash
