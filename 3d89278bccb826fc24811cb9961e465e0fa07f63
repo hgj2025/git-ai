@@ -1,0 +1,94 @@
+src/commands/mod.rs
+  d57d3aeba1d72701 32
+dashboard/collector/notes_parser.py
+  c2623b7406900b1f 1-193
+src/config.rs
+  d57d3aeba1d72701 86-88,160-165,403-417,694-706,728-730,756-758,1075-1077,1187-1189,1308-1310
+dashboard/collector/main.py
+  c2623b7406900b1f 1-183
+dashboard/server/static/index.html
+  d57d3aeba1d72701 1-241
+dashboard/SETUP_GUIDE.md
+  c2623b7406900b1f 1-443
+dashboard/collector/repo_manager.py
+  c2623b7406900b1f 1-149
+dashboard/server/handler.go
+  d57d3aeba1d72701 1-214
+dashboard/scripts/developer-setup.sh
+  c2623b7406900b1f 1-7,13-25,49-145,172-188,190-210,212-215,222-224,227
+  d57d3aeba1d72701 8-12,26-48,146-171,189,211,216-221,225-226
+dashboard/.env.example
+  c2623b7406900b1f 1-23
+dashboard/server/go.mod
+  d57d3aeba1d72701 1-21
+src/commands/git_ai_handlers.rs
+  d57d3aeba1d72701 150-152,298
+dashboard/grafana/provisioning/dashboards/dashboards.yaml
+  c2623b7406900b1f 1-12
+dashboard/server/main.go
+  d57d3aeba1d72701 1-65
+dashboard/config/repos.yaml
+  d57d3aeba1d72701 1-5
+dashboard/collector/requirements.txt
+  c2623b7406900b1f 1-2
+dashboard/collector/db.py
+  c2623b7406900b1f 1-179
+dashboard/database/schema.sql
+  d57d3aeba1d72701 174
+  c2623b7406900b1f 1-173,175-183
+dashboard/grafana/provisioning/datasources/postgres.yaml
+  c2623b7406900b1f 1-20
+src/commands/git_hook_handlers.rs
+  d57d3aeba1d72701 877-942,984-986
+dashboard/grafana/provisioning/dashboards/team_ai.json
+  c2623b7406900b1f 1-445
+dashboard/collector/config.py
+  c2623b7406900b1f 1-67
+dashboard/docker-compose.yml
+  c2623b7406900b1f 1-70
+dashboard/config/repos.example.yaml
+  c2623b7406900b1f 1-30
+dashboard/server/README.md
+  d57d3aeba1d72701 1-143
+dashboard/server/db.go
+  d57d3aeba1d72701 1-310
+dashboard/README.md
+  c2623b7406900b1f 1-238
+src/commands/upload_metrics.rs
+  d57d3aeba1d72701 1-402
+dashboard/collector/Dockerfile
+  c2623b7406900b1f 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "3d89278bccb826fc24811cb9961e465e0fa07f63",
+  "prompts": {
+    "c2623b7406900b1f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76b15e3-e36e-426b-85d1-0347ea741707",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "郝国建 <haoguojian@bytedance.com>",
+      "messages": [],
+      "total_additions": 2427,
+      "total_deletions": 0,
+      "accepted_lines": 2419,
+      "overriden_lines": 0
+    },
+    "d57d3aeba1d72701": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "16cd739a-14fd-4454-ac84-5b260b22180e",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "郝国建 <haoguojian@bytedance.com>",
+      "messages": [],
+      "total_additions": 1643,
+      "total_deletions": 59,
+      "accepted_lines": 1592,
+      "overriden_lines": 0
+    }
+  }
+}
