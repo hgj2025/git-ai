@@ -54,11 +54,11 @@ else
 
     info "克隆源码…"
     rm -rf "$INSTALL_DIR/src"
-    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src" 2>/dev/null
+    git clone --depth 1 "$REPO.git" "$INSTALL_DIR/src"
 
     info "编译中（首次较慢）…"
     mkdir -p "$INSTALL_DIR/bin"
-    cargo build --release --manifest-path "$INSTALL_DIR/src/Cargo.toml" 2>/dev/null
+    cargo build --release --manifest-path "$INSTALL_DIR/src/Cargo.toml"
     cp "$INSTALL_DIR/src/target/release/git-ai" "$BIN"
 
     # 清理：只保留二进制
