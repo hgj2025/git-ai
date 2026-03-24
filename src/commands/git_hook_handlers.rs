@@ -32,6 +32,7 @@ const REPO_HOOK_STATE_SCHEMA_VERSION: &str = "repo_hooks/2";
 const REBASE_HOOK_MASK_STATE_SCHEMA_VERSION: &str = "rebase_hook_mask/1";
 const CHERRY_PICK_BATCH_STATE_SCHEMA_VERSION: &str = "cherry_pick_batch/1";
 const REBASE_HOOK_MASK_SUFFIX: &str = ".gitai-masked";
+const MANAGED_HOOK_MARKER: &str = "# git-ai managed hook";
 
 pub const ENV_SKIP_ALL_HOOKS: &str = "GIT_AI_SKIP_ALL_HOOKS";
 // Intentionally avoid a GIT_* prefix so git alias shell-command tests don't
@@ -154,8 +155,28 @@ struct CherryPickBatchState {
 }
 
 #[cfg(unix)]
-fn install_hook_entry(target: &Path, entry_path: &Path) -> Result<(), GitAiError> {
-    std::os::unix::fs::symlink(target, entry_path)?;
+fn install_hook_entry(_target: &Path, entry_path: &Path) -> Result<(), GitAiError> {
+    let hook_name = entry_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    // Dynamically locate git-ai on PATH at runtime instead of hardcoding an absolute path.
+    // If git-ai is uninstalled (binary removed + PATH cleaned), `command -v` fails → exit 0.
+    let script = format!(
+        r#"#!/usr/bin/env bash
+{marker}
+BINARY="$(command -v git-ai 2>/dev/null)"
+if [ -z "$BINARY" ] || [ ! -x "$BINARY" ]; then
+  exit 0
+fi
+exec -a "{hook_name}" "$BINARY" "$@"
+"#,
+        marker = MANAGED_HOOK_MARKER,
+        hook_name = hook_name,
+    );
+    fs::write(entry_path, &script)?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(entry_path, fs::Permissions::from_mode(0o755))?;
     Ok(())
 }
 
@@ -559,9 +580,14 @@ fn ensure_hook_entry_installed(
 ) -> Result<bool, GitAiError> {
     if hook_path.exists() || hook_path.symlink_metadata().is_ok() {
         #[cfg(unix)]
-        let should_replace = match fs::read_link(hook_path) {
-            Ok(target) => normalize_path(&target) != normalize_path(binary_path),
-            Err(_) => true,
+        let should_replace = if hook_path.symlink_metadata().ok().map_or(false, |m| m.file_type().is_symlink()) {
+            // Legacy symlink hook — always replace with wrapper script
+            true
+        } else {
+            match fs::read_to_string(hook_path) {
+                Ok(content) => !content.contains(MANAGED_HOOK_MARKER),
+                Err(_) => true,
+            }
         };
 
         #[cfg(windows)]
