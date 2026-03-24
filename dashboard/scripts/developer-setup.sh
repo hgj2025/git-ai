@@ -14,6 +14,18 @@
 
 set -euo pipefail
 
+# 确保 SHELL 变量存在（curl | bash 时可能未定义）
+if [[ -z "${SHELL:-}" ]]; then
+    if command -v zsh &>/dev/null; then
+        SHELL="$(command -v zsh)"
+    elif command -v bash &>/dev/null; then
+        SHELL="$(command -v bash)"
+    else
+        SHELL="/bin/sh"
+    fi
+    export SHELL
+fi
+
 REPO="https://github.com/hgj2025/git-ai"
 INSTALL_DIR="$HOME/.git-ai"
 BIN="$INSTALL_DIR/bin/git-ai"
