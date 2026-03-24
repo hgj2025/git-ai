@@ -1,24 +1,31 @@
 # git-ai 团队 AI 看板
 
+> 项目地址：https://github.com/hgj2025/git-ai
+
 轻量统计服务：开发者每次 `git push` 后自动上报 AI 指标，Go 单二进制 + SQLite 存储，内嵌 Dashboard，无需 Docker/PostgreSQL/Grafana。
 
 ---
 
-## 服务端：一键安装
+## 服务端：一键部署
 
-### 前置条件
-- Go 1.22+（仅构建时需要，运行时无依赖）
+### 方式一：从源码构建（需要 Go 1.22+）
 
-### 构建
 ```bash
-cd dashboard/server
+git clone https://github.com/hgj2025/git-ai.git
+cd git-ai/dashboard/server
 go build -o git-ai-server .
+./git-ai-server --port 8080 --db /data/metrics.db --token your-secret
 ```
 
-### 启动
+### 方式二：下载预编译二进制
+
 ```bash
-./git-ai-server --port 8080 --db /data/metrics.db
+curl -fsSL https://github.com/hgj2025/git-ai/releases/latest/download/git-ai-server-$(uname -s)-$(uname -m) \
+  -o git-ai-server && chmod +x git-ai-server
+./git-ai-server --port 8080 --db /data/metrics.db --token your-secret
 ```
+
+### 启动参数
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
@@ -27,6 +34,7 @@ go build -o git-ai-server .
 | `--token` | `GIT_AI_SERVER_TOKEN` | 空（无认证） | Bearer Token，非空时校验 |
 
 ### 后台运行（systemd）
+
 ```ini
 # /etc/systemd/system/git-ai-server.service
 [Unit]
@@ -57,16 +65,26 @@ http://your-server:8080
 服务启动后，把以下命令发给团队成员，运行一次即完成全部配置：
 
 ```bash
-# 安装（服务地址自动注入）
+# 一键安装（将 your-server:8080 替换为实际部署地址）
 curl -fsSL http://your-server:8080/install.sh | bash
 
-# 卸载
+# 一键卸载
 curl -fsSL http://your-server:8080/uninstall.sh | bash
 ```
 
-`install.sh` 由服务端动态生成，自动将服务地址和 Token 注入脚本，开发者无需手动配置任何参数。
+> `install.sh` 由服务端动态生成，自动将服务地址和 Token 注入脚本，开发者无需手动填写任何参数。
 
 安装完成后，每次 `git push` 会自动在后台上报 AI 指标，不影响 push 速度。
+
+### 本地测试（服务跑在本机）
+
+```bash
+# 安装
+curl -fsSL http://localhost:8080/install.sh | bash
+
+# 卸载
+curl -fsSL http://localhost:8080/uninstall.sh | bash
+```
 
 ### 手动验证
 ```bash
@@ -77,7 +95,7 @@ git config --global git-ai.metrics-server
 git-ai upload-metrics --verbose
 
 # 查看看板
-open http://your-server:8080
+open http://localhost:8080
 ```
 
 ---
