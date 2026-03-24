@@ -104,9 +104,9 @@ if ! grep -qsF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
     echo "" >> "$SHELL_RC"
     echo "# Added by git-ai installer" >> "$SHELL_RC"
     echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >> "$SHELL_RC"
-    info "已添加 $INSTALL_DIR/bin 到 PATH（$SHELL_RC）"
+    info "已添加 $INSTALL_DIR/bin 到 PATH($SHELL_RC)"
 else
-    info "PATH 已配置（$SHELL_RC）"
+    info "PATH 已配置($SHELL_RC)"
 fi
 
 # ─── 2. 当前仓库安装 hooks + notes 推送 ──────────────────────────────────
@@ -150,7 +150,7 @@ fi
 if curl -sf --max-time 3 "$SERVER/api/stats" >/dev/null 2>&1; then
     success "服务连接正常"
 else
-    warn "无法连接 $SERVER（不影响后续使用）"
+    warn "无法连接 $SERVER(不影响后续使用)"
 fi
 
 # ─── 完成 ──────────────────────────────────────────────────────────────────
