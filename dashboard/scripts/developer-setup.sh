@@ -87,7 +87,7 @@ fi
 # 确保 PATH 中包含 git-ai（不管是新装还是已装）
 export PATH="$INSTALL_DIR/bin:$PATH"
 SHELL_RC="$HOME/.zshrc"
-[[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
+[[ "${SHELL:-}" == */bash ]] && SHELL_RC="$HOME/.bashrc"
 if ! grep -qsF "$INSTALL_DIR/bin" "$SHELL_RC" 2>/dev/null; then
     echo "" >> "$SHELL_RC"
     echo "# Added by git-ai installer" >> "$SHELL_RC"
